@@ -195,7 +195,7 @@ episodes. The corrected JEPA-MLP checkpoint artifact has `Delta=0.1065` on
 10 held-out outcome rows; this is an independent PointMaze consequence, not a
 cross-environment planning claim. The DINO diagnostic remains negative under
 the same support-matched protocol, which is retained as the explicit
- representation failure boundary.
+representation failure boundary.
 
 ### Horizon-conditioned permission gate and vector-artifact audit
 
