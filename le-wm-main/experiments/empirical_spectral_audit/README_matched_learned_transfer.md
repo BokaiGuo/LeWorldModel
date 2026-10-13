@@ -132,6 +132,28 @@ The representation-condition diagnostic is
 records the historical action-field mismatch and the remaining DINO
 action-to-latent transfer error without using outcome rows for selection.
 
+### Same-backbone architecture intervention
+
+To separate backbone mismatch from predictor-architecture mismatch, the panel
+runner also supports a controlled single-export mode:
+
+```bash
+python experiments/empirical_spectral_audit/train_pointmaze_learned_adapter_panel.py \
+  --single-export results/cross_arch_enriched_20261011/exports/jepa_pointmaze.json \
+  --single-base-name jepa_shared \
+  --architectures mlp residual_mlp standardized_mlp \
+  --stages 5 10 25 50 75 --rank 8 --max-rows 32 --outcome-count 12 \
+  --action-feature-chart raw --output results/pointmaze_same_backbone_adapter_panel_residual_20261013
+```
+
+This produced 75 real learned-adapter checkpoints with five independent seeds
+and an episode-disjoint calibration/outcome split. Under the preregistered
+5% MSE, predictor-spectrum, and action-risk matching rule, the strict audit
+found zero identifiable strata. This is a support failure diagnosis, not a
+positive result: the residual and standardized training contracts still form
+separate quality bands. The artifact is retained to motivate a quality-matched
+intervention rather than relaxing the primary gate.
+
 ### Repair panel and fail-closed gate
 
 The same runner now includes controlled train-only repairs:
@@ -223,3 +245,44 @@ but it has no sample IDs, actions, source states, or target states. The formal
 action-conditioned join is therefore `rejected_fail_closed`; it remains useful
 only as a vector-only temporal diagnostic and cannot be used to enlarge the
 adapter support or produce planning claims.
+
+### 2026-10-13 quality-matched learned intervention and protocol correction
+
+The strict zero-match result was traced to a protocol/identification problem,
+not a missing diagnostic field. Different adapter training contracts changed
+prediction MSE, action-inverse risk, and predictor spectrum together. The
+original small support also amplified this separation, and its record writer
+mixed train and calibration rows under the name `fit`.
+
+The panel runner now enforces the declared split roles: train rows define
+prediction geometry, calibration rows define calibration transition risk, and
+outcome rows define held-out planning consequence. It also supports a
+predeclared, train-only quality anchor: the ordinary MLP at seed 8411 for each
+stage. Other adapter/seed candidates receive a saved train-only distillation
+head and a source-conditioned dynamics correction whose ridge-identified
+spectrum is matched to the anchor. No outcome row is read by the matching
+operation.
+
+An important contract audit then found that calibration transition MSE had been
+written under the name `action_inverse_risk` and marked as independent external
+evidence. That is not a valid ATM: an external ATM requires an independent
+`+a/-a/zero` action-balanced intervention. The panel writer is now fail-closed
+with `independent_external_evidence=false` and records the field semantics
+explicitly. Existing quality-matched records produced before this correction
+must therefore be treated as provisional calibration-risk diagnostics, not as
+the final independent ATM benchmark.
+
+The retrospective quality-matched runs are retained under
+`results/cross_environment_final_strict_20261013/` and
+`results/cross_environment_seed10_strict_20261013/`. They show that the
+matching implementation can form 7 identifiable strata across two environments,
+but they do not establish the requested ATM-conditioned claim because their
+action-risk field was the calibration transition error rather than an
+independent intervention. Even under the provisional audit, the five-seed
+primary gate was not passed (`Delta R=0.05336`, one-sided `p=0.0621`), and the
+ten-seed rerun moved to a negative point estimate (`Delta R=-0.00943`,
+one-sided `p=0.559`). Train-only optimization-time distillation made matching
+worse (4 identifiable strata), so it is retained as a failed repair rather than
+promoted. The next valid experiment is a genuine PointMaze external
+`+a/-a/zero` intervention exporter; no geometry selector should be called
+successful before that artifact exists.

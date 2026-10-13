@@ -12,6 +12,68 @@
 本轮代码与证据完整性审计见
 [IMPLEMENTATION_COMPLETENESS_AUDIT_20261013.md](IMPLEMENTATION_COMPLETENESS_AUDIT_20261013.md)。
 
+## 新增 Workstream：GDD-WM
+
+[Decision Preference → Predictive Geometry (GDD-WM)](docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md)
+是现有 LeWorldModel 研究的新增、独立追踪的 proposed workstream，不替换谱
+transfer、horizon-conditioned memory、PushT 接触控制或既有负结果。其目标是检验：
+
+本次扩展的完整执行计划见
+[GDD-WM：将执行决策知识蒸馏为预测几何](docs/GDD_WM_EXECUTION_GROUNDED_GEOMETRY_PLAN_20261014.md)。
+该文件补充了 Preference Stability、Geometric Distillation Gap、realized/predicted
+双路径损失、RDMC 理论诊断、D0--D4 门禁、student-reachable candidate mining 和
+Euclidean 不可表示时的 quasi-metric fallback。
+
+```text
+execution-grounded preference
+  -> stable candidate preference
+  -> candidate-set-independent predictive geometry
+  -> preserved multi-step prediction
+  -> lower decision regret
+  -> independent held-out planning consequence
+```
+
+机器可读协议见
+[`docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml`](docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml)。
+当前状态固定为 `Proposed / Not Yet Validated`：仓库没有可直接声明为 D-JEPA
+teacher 的 checkpoint/data package，D0 shared candidate dataset、D1 teacher
+stability audit 和 D2 projection-only distillation 尚未运行。现有 PointMaze JEPA
+permission-gate 结果只提供候选基础设施；DINO 的 `rejected_fail_closed` 结果不能
+被重新解释为 teacher preference。
+
+GDD-WM 的执行依赖已有 action-effect permission gate，优先顺序为：
+
+1. D0：冻结 shared candidate-set schema、root-disjoint splits、action support 和
+   teacher/outcome provenance；当前 schema/provenance validator 为
+   `le-wm-main/experiments/gdd_wm/build_shared_candidate_dataset.py`，只接受外部
+   candidate table，不生成 teacher 或 outcome；
+2. D1：在独立 candidate-set bootstrap 上审计 preference stability，并与真实执行
+   consequence 核对；不稳定或 execution-inconsistent 的 pair 不得蒸馏；
+3. D2：先做低容量 projection-only geometry distillation，同时冻结 dynamics，
+   检验 predicted/realized ranking 与 predictive preservation；
+4. 只有 D0–D2 及独立 held-out planning gate 同时通过，才考虑联合 encoder/predictor
+   微调。任何单独的 teacher agreement、realized geometry 改善或 latent MSE 改善都
+   不足以升级 GDD-WM claim。
+
+不能把附件中关于“已生成 ZIP/PATCH、已推送 GitHub 或已完成验证”的描述当作仓库事实；
+当前实际变更仅包括上述研究计划与协议入口，未覆盖既有 artifact。
+
+2026-10-14 已将下一阶段 P0/P1 首批实现落到
+`le-wm-main/experiments/decision_benchmark/`：PointMaze readout 截距修复、独立
+action-identifiability/Jacobian 审计、等时长 goal-conditioned candidate bank、共享候选
+regret evaluator。实现与真实运行边界见
+[`docs/DECISION_BENCHMARK_IMPLEMENTATION_20261014.md`](docs/DECISION_BENCHMARK_IMPLEMENTATION_20261014.md)。
+首个 `paired_order_v2` bank 已通过 D0 schema/provenance 检查，但由于新候选没有 RGB
+realized latent，D1 仍 fail-closed；该结果不构成 GDD-WM 或 frozen visual planning 的正向
+证据。
+
+最新进展与当前释放边界见
+[`docs/RESEARCH_PROGRESS_20261014.md`](docs/RESEARCH_PROGRESS_20261014.md)。2026-10-14
+新增的跨环境 matched audit、接触分层干预和 polygon-boundary signed-torque 修复均已
+保留独立 artifact；跨环境 `Delta R` 点估计为正但预注册 sign-flip gate 未通过，PushT
+严格姿态闭合仍为负，不能将这些结果升级为 universal alignment、universal world model
+或视觉在线规划结论。
+
 ## 研究定位
 
 本计划的最新演进、阶段门和论文级决策树见
@@ -46,6 +108,15 @@ release 统一为 HTSC 的正式控制对象见
 [HORIZON_CONDITIONED_TRANSFER_SUFFICIENT_CONTROL_20261013.md](HORIZON_CONDITIONED_TRANSFER_SUFFICIENT_CONTROL_20261013.md)；
 其 release gate 实现为
 `le-wm-main/experiments/theory_spectral_transfer/horizon_sufficient_control.py`。
+
+2026-10-14 PointMaze 负结果根因审计与协议修复见
+[`docs/POINTMAZE_NEGATIVE_RESULT_ROOT_CAUSE_20261014.md`](docs/POINTMAZE_NEGATIVE_RESULT_ROOT_CAUSE_20261014.md)。
+修复了 external action fan 的 action-support 与 horizon-clock 错配，并重新完成
+50-checkpoint v2 panel；strict matched benchmark 仍因单环境、CI 跨零而 gated。
+新增 intervention-supervised task-effect adapter
+`le-wm-main/experiments/empirical_spectral_audit/train_pointmaze_intervention_effect_adapter.py`，
+用于区分 action excitation、latent history 和 privileged observability，不能并入原
+geometry selector estimand。
 
 短期历史、Fourier/时频特征、事件记忆与接触模式的文献边界、当前负结果和冻结实验协议见
 [MEMORY_EVENT_CONTACT_LITERATURE_20261013.md](MEMORY_EVENT_CONTACT_LITERATURE_20261013.md)。
@@ -174,3 +245,10 @@ planner-reachable transition 和独立 task/readout calibration；缺任一项�
 - 单个 commutator 不等于 transfer certificate；
 - 当前 90 条 learned panel 记录虽覆盖 3 架构、5 seed、6 snapshot，但只有 PushT，且 ATM/真实预测 transition/外部 action-effect 字段缺失；统一入口输出 `non_identifiable`，不能据此声称 learned-model geometry 选择有效。
 - 测试通过、artifact 完整或 GPU 可用不等于科学假设成立。
+
+## 六目标 Decision-Transfer 证据矩阵（2026-10-14）
+
+当前六个科学目标的统一状态、最新 PushT 修复结果和禁止升级的 claim
+边界见：[SIX_GOALS_DECISION_TRANSFER_EVIDENCE_MATRIX_20261014.md](docs/SIX_GOALS_DECISION_TRANSFER_EVIDENCE_MATRIX_20261014.md)。
+PushT 数据完整性、真实 polygon contact chart、接触分层干预和 RGB-only
+repaired MPC 的根因记录见：[PUSHT_NEGATIVE_RESULT_REPAIR_20261014.md](docs/PUSHT_NEGATIVE_RESULT_REPAIR_20261014.md)。

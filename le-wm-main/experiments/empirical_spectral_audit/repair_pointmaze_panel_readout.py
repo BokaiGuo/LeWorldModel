@@ -23,7 +23,12 @@ from train_pointmaze_learned_adapter_panel import HORIZONS, _task_direction, _ta
 def _repair(record_path: Path) -> dict[str, Any]:
     payload = json.loads(record_path.read_text())
     record = copy.deepcopy(payload["record"])
-    protocol = record["protocol"]
+    # Canonical learned-panel records keep the split protocol inside the
+    # record; external-evidence records produced by build_record keep it on
+    # the outer object.  Accept both layouts while remaining fail-closed about
+    # missing calibration IDs (then the supplied fit export is the only
+    # train-only readout source).
+    protocol = record.get("protocol", payload.get("protocol", {}))
     provenance = record["provenance"]
     fit_path = _resolve(str(provenance["fit_export"]), record_path.parent)
     outcome_path = _resolve(str(provenance["outcome_export"]), record_path.parent)
@@ -38,8 +43,9 @@ def _repair(record_path: Path) -> dict[str, Any]:
     direction = _task_direction(train_states, train_target_states_h1)
     decoders = {}
     centers = {}
+    target_centers = {}
     for horizon in HORIZONS:
-        decoders[horizon], centers[horizon] = _task_readout_with_center(
+        decoders[horizon], centers[horizon], target_centers[horizon] = _task_readout_with_center(
             np.asarray([row["latent_by_horizon"][str(horizon)]["target"] for row in train_rows], dtype=np.float64),
             train_states,
             np.asarray([row["latent_by_horizon"][str(horizon)]["target_state_raw"] for row in train_rows], dtype=np.float64),
@@ -50,7 +56,10 @@ def _repair(record_path: Path) -> dict[str, Any]:
         predicted_latent = np.asarray([
             row["latent_by_horizon"][str(horizon)]["predicted"] for row in outcome_rows
         ], dtype=np.float64)
-        predicted[horizon] = (predicted_latent - centers[horizon]) @ decoders[horizon] @ direction
+        predicted[horizon] = (
+            (predicted_latent - centers[horizon]) @ decoders[horizon]
+            + target_centers[horizon]
+        ) @ direction
         actual[horizon] = np.asarray([
             (np.asarray(row["latent_by_horizon"][str(horizon)]["target_state_raw"], dtype=np.float64)[:2]
              - np.asarray(row["source_state_raw"], dtype=np.float64)[:2]) @ direction
@@ -72,8 +81,10 @@ def _repair(record_path: Path) -> dict[str, Any]:
         "task_readout_source": "train rows only, horizon-specific",
         "task_direction_source": "train-only h=1 source-to-target displacement",
         "prediction_center_source": "train target latent mean only, horizon-specific",
+        "target_displacement_intercept_source": "train target displacement mean only, horizon-specific",
         "evaluation_repair": "replaced outcome-batch centering and shared-horizon readout; no model retraining",
     }
+    record["protocol"] = dict(protocol)
     record["protocol"].update({
         "task_readout_source": "train rows only, horizon-specific",
         "prediction_center_source": "train target latent mean only, horizon-specific",

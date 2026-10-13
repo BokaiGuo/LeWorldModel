@@ -111,6 +111,8 @@ def metric_geometry(
     covariance_vectors = covariance_vectors[:, order[:rank]]
     predictor_vectors = np.linalg.svd(predictor_m, full_matrices=False)[0][:, :rank]
     cosines = np.linalg.svd(covariance_vectors.T @ predictor_vectors, compute_uv=False)
+    cosines = np.clip(np.asarray(cosines, dtype=np.float64), 0.0, 1.0)
+    principal_angles = np.arccos(cosines)
     alignment = float(np.sqrt(max(0.0, 1.0 - float(np.mean(np.square(cosines))))))
     commutator = covariance_m @ predictor_m - predictor_m @ covariance_m
     denominator = max(float(np.linalg.norm(covariance_m, "fro") * np.linalg.norm(predictor_m, "fro")), EPS)
@@ -121,8 +123,15 @@ def metric_geometry(
     ]
     if not gains:
         raise ValueError("at least one horizon is required")
+    identity = np.eye(predictor_m.shape[0], dtype=np.complex128)
+    resolvent = max(
+        float(np.linalg.norm(np.linalg.pinv(np.exp(1j * theta) * identity - predictor_m), 2))
+        for theta in np.linspace(0.0, 2.0 * np.pi, 128, endpoint=False)
+    )
     return {
         "task_metric_alignment": alignment,
+        "principal_angle": float(np.mean(principal_angles)),
+        "projector_overlap": float(np.mean(np.square(cosines))),
         "task_metric_commutator": float(np.linalg.norm(commutator, "fro") / denominator),
         "task_metric_schur_offdiagonal_energy": float(
             np.linalg.norm(np.triu(triangular, k=1), "fro")
@@ -133,6 +142,7 @@ def metric_geometry(
             / normality_denominator
         ),
         "task_metric_transient_amplification": max(gains),
+        "resolvent_norm": resolvent,
         "task_metric_spectral_radius": float(np.max(np.abs(np.linalg.eigvals(predictor_m)))),
     }
 

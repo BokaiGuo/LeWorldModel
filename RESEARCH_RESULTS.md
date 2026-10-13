@@ -54,3 +54,25 @@ The commutator is not presented as a universal transfer certificate. The
 controller is permitted only when independently checked action
 identifiability, transition consistency, and local risk-envelope conditions
 are satisfied.
+
+## 2026-10-14 latest diagnostics
+
+The final quality-matched PointMaze/PushT audit identifies 7 matched strata
+over 2 environments, 4 architectures, and 5 seeds. The full diagnostic has
+mean `Delta R=+0.05336` with paired bootstrap 95% CI `[+0.01150,+0.11661]`,
+but the predeclared stratum sign-flip test gives `p=0.0630`; the positive
+cross-environment gate therefore remains closed.
+
+The new PushT contact-stratified intervention shows that contact geometry is
+useful primarily in free/approach states; normal- and tangential-contact
+within-mode action effects remain difficult to identify. A corrected
+polygon-boundary signed-torque audit reduces privileged classifier angular
+regret relative to the geometric baseline (`0.0151` vs `0.0265`), but reports
+`0/32` strict pose successes and an angle-improvement interval crossing zero.
+This is a mechanism diagnosis, not a pose-closure or visual-planning result.
+
+The RGB PointMaze successor bridge is positive (`0.1631` RMSE versus `0.2011`
+source-latent baseline), while direct history concatenation is not; causal
+history remains useful only as a calibrated task-effect feature in the current
+panel. See [docs/RESEARCH_PROGRESS_20261014.md](docs/RESEARCH_PROGRESS_20261014.md)
+for artifact paths and full claim boundaries.

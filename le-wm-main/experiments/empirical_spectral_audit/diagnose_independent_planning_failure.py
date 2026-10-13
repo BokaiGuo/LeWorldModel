@@ -33,14 +33,23 @@ def _corr(left: np.ndarray, right: np.ndarray) -> float | None:
     return float(np.corrcoef(left, right)[0, 1])
 
 
-def _task_arrays(rows: list[dict[str, Any]], decoder: dict[int, np.ndarray], direction: np.ndarray, latent_center: dict[int, np.ndarray]) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
+def _task_arrays(
+    rows: list[dict[str, Any]],
+    decoder: dict[int, np.ndarray],
+    direction: np.ndarray,
+    latent_center: dict[int, np.ndarray],
+    target_center: dict[int, np.ndarray] | None = None,
+) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
     predicted: dict[int, np.ndarray] = {}
     actual: dict[int, np.ndarray] = {}
     for horizon in HORIZONS:
         predicted_latent = np.asarray([
             row["latent_by_horizon"][str(horizon)]["predicted"] for row in rows
         ], dtype=np.float64)
-        predicted[horizon] = (predicted_latent - latent_center[horizon]) @ decoder[horizon] @ direction
+        decoded = (predicted_latent - latent_center[horizon]) @ decoder[horizon]
+        if target_center is not None:
+            decoded = decoded + target_center[horizon]
+        predicted[horizon] = decoded @ direction
         actual[horizon] = np.asarray([
             (np.asarray(row["latent_by_horizon"][str(horizon)]["target_state_raw"], dtype=np.float64)[:2]
              - np.asarray(row["source_state_raw"], dtype=np.float64)[:2]) @ direction
@@ -67,28 +76,35 @@ def diagnose(record_path: Path) -> dict[str, Any]:
     direction = _task_direction(train_states, train_target_states_h1)
     train_decoder = {}
     train_center = {}
+    train_target_center = {}
     for horizon in HORIZONS:
-        train_decoder[horizon], train_center[horizon] = _task_readout_with_center(
+        train_decoder[horizon], train_center[horizon], train_target_center[horizon] = _task_readout_with_center(
             np.asarray([row["latent_by_horizon"][str(horizon)]["target"] for row in train_rows], dtype=np.float64),
             train_states,
             np.asarray([row["latent_by_horizon"][str(horizon)]["target_state_raw"] for row in train_rows], dtype=np.float64),
         )
     calibration_decoder = None
     calibration_center = None
+    calibration_target_center = None
     if len(calibration_rows) >= 3:
         calibration_decoder = {}
         calibration_center = {}
+        calibration_target_center = {}
         calibration_states = np.asarray([row["source_state_raw"] for row in calibration_rows], dtype=np.float64)
         for horizon in HORIZONS:
-            calibration_decoder[horizon], calibration_center[horizon] = _task_readout_with_center(
+            calibration_decoder[horizon], calibration_center[horizon], calibration_target_center[horizon] = _task_readout_with_center(
                 np.asarray([row["latent_by_horizon"][str(horizon)]["target"] for row in calibration_rows], dtype=np.float64),
                 calibration_states,
                 np.asarray([row["latent_by_horizon"][str(horizon)]["target_state_raw"] for row in calibration_rows], dtype=np.float64),
             )
-    predicted, actual = _task_arrays(outcome_rows, train_decoder, direction, train_center)
+    predicted, actual = _task_arrays(
+        outcome_rows, train_decoder, direction, train_center, train_target_center
+    )
     calibration_predicted = None
     if calibration_decoder is not None:
-        calibration_predicted, _ = _task_arrays(outcome_rows, calibration_decoder, direction, calibration_center)
+        calibration_predicted, _ = _task_arrays(
+            outcome_rows, calibration_decoder, direction, calibration_center, calibration_target_center
+        )
     predicted_matrix = np.stack([predicted[h] for h in HORIZONS], axis=1)
     actual_matrix = np.stack([actual[h] for h in HORIZONS], axis=1)
     selected = np.argmax(predicted_matrix, axis=1)

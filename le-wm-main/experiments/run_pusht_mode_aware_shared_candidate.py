@@ -1124,7 +1124,6 @@ def imagined_score(
         env, imagined, tangent_magnitudes, inward_magnitude,
         goal=goal, goal_translation_magnitudes=goal_translation_magnitudes,
         boundary_action_frame=boundary_action_frame,
-        strict_direction_gate=strict_direction_gate,
     ):
         second_target, second_probabilities, second_direction_probability = predict_transition(
             model, imagined, second, action, mode_conditioned=mode_conditioned,

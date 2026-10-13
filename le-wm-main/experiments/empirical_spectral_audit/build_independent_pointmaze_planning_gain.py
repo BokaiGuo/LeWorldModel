@@ -91,6 +91,7 @@ def build_artifact(record_path: Path, *, baseline_horizon: int = 1) -> dict[str,
     direction = _task_direction(train_states, train_target_states_h1)
     decoders = {}
     latent_centers = {}
+    target_centers = {}
     for horizon in HORIZONS:
         train_targets = np.asarray([
             row["latent_by_horizon"][str(horizon)]["target"] for row in train_rows
@@ -98,7 +99,7 @@ def build_artifact(record_path: Path, *, baseline_horizon: int = 1) -> dict[str,
         train_target_states_h = np.asarray([
             row["latent_by_horizon"][str(horizon)]["target_state_raw"] for row in train_rows
         ], dtype=np.float64)
-        decoders[horizon], latent_centers[horizon] = _task_readout_with_center(
+        decoders[horizon], latent_centers[horizon], target_centers[horizon] = _task_readout_with_center(
             train_targets, train_states, train_target_states_h
         )
     predicted = {}
@@ -107,7 +108,10 @@ def build_artifact(record_path: Path, *, baseline_horizon: int = 1) -> dict[str,
         predicted_latent = np.asarray([
             row["latent_by_horizon"][str(horizon)]["predicted"] for row in outcome_rows
         ], dtype=np.float64)
-        predicted[horizon] = (predicted_latent - latent_centers[horizon]) @ decoders[horizon] @ direction
+        predicted[horizon] = (
+            (predicted_latent - latent_centers[horizon]) @ decoders[horizon]
+            + target_centers[horizon]
+        ) @ direction
         actual[horizon] = np.asarray([
             (np.asarray(row["latent_by_horizon"][str(horizon)]["target_state_raw"], dtype=np.float64)[:2]
              - np.asarray(row["source_state_raw"], dtype=np.float64)[:2]) @ direction
@@ -143,6 +147,7 @@ def build_artifact(record_path: Path, *, baseline_horizon: int = 1) -> dict[str,
                 "task_direction_source": "train-only h=1 source-to-target displacement",
                 "task_readout_source": "train rows only, horizon-specific",
                 "prediction_center_source": "train target latent mean only, horizon-specific",
+                "target_displacement_intercept_source": "train target displacement mean only, horizon-specific",
                 "outcome_split": "episode-disjoint outcome rows",
                 "baseline_rule": f"fixed horizon {baseline_horizon}; frozen before outcome scoring",
                 "diagnostic_rule": "argmax predicted task progress over fixed candidate bank",

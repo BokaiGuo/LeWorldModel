@@ -44,6 +44,54 @@ from experiments.run_pusht_receding_block_pose_planner import make_state_only_en
 from experiments.run_causal_visual_pusht_world_model import terminal_pose_cases
 
 
+def physical_contact_geometry(env: gym.Env, state: np.ndarray) -> dict[str, Any]:
+    """Return the nearest transformed polygon edge to the pusher.
+
+    This local copy keeps the audit dependency-free: importing the broader
+    mode-aware planner would create a cycle through the lifted adapter.
+    """
+    state = np.asarray(state, dtype=np.float64)
+    block = state[2:4]
+    theta = float(state[4])
+    rotation = np.asarray([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+    pusher = state[:2]
+    shapes = list(getattr(env.unwrapped.block, "shapes", ()))
+    candidates: list[tuple[float, np.ndarray, np.ndarray, int, int]] = []
+    for shape_index, shape in enumerate(shapes[:2]):
+        vertices = [np.asarray([float(vertex.x), float(vertex.y)], dtype=np.float64) for vertex in shape.get_vertices()]
+        for edge_index, (local_a, local_b) in enumerate(zip(vertices, vertices[1:] + vertices[:1])):
+            a = block + rotation @ local_a
+            b = block + rotation @ local_b
+            edge = b - a
+            fraction = float(np.clip(np.dot(pusher - a, edge) / max(float(np.dot(edge, edge)), 1e-12), 0.0, 1.0))
+            point = a + fraction * edge
+            distance = float(np.linalg.norm(pusher - point))
+            candidates.append((distance, point, edge / max(float(np.linalg.norm(edge)), 1e-12), shape_index, edge_index))
+    if not candidates:
+        raise ValueError("PushT block exposes no polygon edges")
+    distance, point, tangent, shape_index, edge_index = min(candidates, key=lambda item: item[0])
+    normal = (pusher - point) / max(float(np.linalg.norm(pusher - point)), 1e-8)
+    return {
+        "distance": distance,
+        "contact_point_world": point,
+        "normal_world": normal,
+        "edge_tangent_world": tangent,
+        "shape_index": int(shape_index),
+        "edge_index": int(edge_index),
+    }
+
+
+def boundary_inward_normal(env: gym.Env, state: np.ndarray) -> np.ndarray:
+    geometry = physical_contact_geometry(env, state)
+    direction = np.asarray(geometry["contact_point_world"], dtype=np.float64) - np.asarray(state[:2], dtype=np.float64)
+    if float(np.linalg.norm(direction)) <= 1e-8:
+        direction = -np.asarray(geometry["normal_world"], dtype=np.float64)
+    direction = direction / max(float(np.linalg.norm(direction)), 1e-8)
+    if not np.isfinite(direction).all():
+        raise ValueError("boundary inward normal is not finite")
+    return direction
+
+
 def wrap_angle(value: float | np.ndarray) -> float | np.ndarray:
     return (np.asarray(value) + np.pi) % (2.0 * np.pi) - np.pi
 
@@ -179,15 +227,27 @@ def make_terminal_roots(
         state[:2] = block[2:4] + contact_radius * normal
         state[:2] = np.clip(state[:2], 30.0, 482.0)
         state[5:] = 0.0
-        # Validate the explicit reset and store the simulator's accepted root.
+        # First place a provisional center-radius pusher, then project it to
+        # the actual polygon boundary.  A center-radius point is not a contact
+        # root for the asymmetric T: the same center distance can be deep in
+        # free space for one edge and already overlapping for another.
         observation, reset_info = env.reset(
             seed=int(seed + 50000 + index),
             options={"state": state, "goal_state": goal},
         )
-        accepted = np.asarray(observation["state"], dtype=np.float64).copy()
+        provisional = np.asarray(observation["state"], dtype=np.float64).copy()
         accepted_goal = np.asarray(reset_info["goal_state"], dtype=np.float64).copy()
-        distance = float(np.linalg.norm(accepted[:2] - accepted[2:4]))
-        if 24.0 <= distance <= 52.0 and np.isfinite(accepted).all():
+        geometry = physical_contact_geometry(env, provisional)
+        outward = np.asarray(geometry["normal_world"], dtype=np.float64)
+        projected = provisional.copy()
+        projected[:2] = np.asarray(geometry["contact_point_world"], dtype=np.float64) + 15.0 * outward
+        observation, reset_info = env.reset(
+            seed=int(seed + 60000 + index),
+            options={"state": projected, "goal_state": accepted_goal},
+        )
+        accepted = np.asarray(observation["state"], dtype=np.float64).copy()
+        boundary_distance = float(physical_contact_geometry(env, accepted)["distance"])
+        if 10.0 <= boundary_distance <= 24.0 and np.isfinite(accepted).all():
             roots.append({"state": accepted, "goal": accepted_goal})
         index += 1
     return roots
@@ -232,7 +292,7 @@ def collect_effect_rows(
     rows: list[dict[str, Any]] = []
     for root_id, root in enumerate(roots):
         env.reset(seed=0, options={"state": root["state"].copy(), "goal_state": root["goal"].copy()})
-        support_normal = support_inward_normal(env, root["state"])
+        support_normal = boundary_inward_normal(env, root["state"])
         actions, signs = pulse_actions(root["state"], tangent_magnitudes, inward_magnitude, support_normal)
         for action_id, (action, moment_sign) in enumerate(zip(actions, signs)):
             result = execute_pulse(env, root["state"], root["goal"], action, pulse_steps)
@@ -438,7 +498,7 @@ def closed_loop(
         trace: list[dict[str, Any]] = []
         previous_observed_delta = 0.0
         for step in range(int(steps)):
-            support_normal = support_inward_normal(env, current)
+            support_normal = boundary_inward_normal(env, current)
             actions, signs = pulse_actions(current, tangent_magnitudes, inward_magnitude, support_normal)
             candidate_rows: list[dict[str, Any]] = []
             for action_id, (action, moment_sign) in enumerate(zip(actions, signs)):
@@ -574,7 +634,7 @@ def main() -> None:
             "pulse_steps": int(args.pulse_steps), "closure_steps": int(args.closure_steps),
             "inward_magnitude": float(args.inward_magnitude),
             "tangent_magnitudes": list(tangent_magnitudes),
-            "feature_interface": "translation-invariant contact geometry plus action-conditioned signed moment",
+            "feature_interface": "translation-invariant contact geometry plus action-conditioned signed moment with polygon-boundary contact frame",
             "selection_interface": "direction classifier half-space filter followed by multi-output signed-angle/XY effect regressor",
             "closed_loop_selection_mode": str(args.selection_mode),
             "selected_regret_metric": selected_regret_key,

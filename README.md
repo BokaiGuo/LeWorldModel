@@ -35,6 +35,35 @@ The repository deliberately separates three things:
   they are retained to identify representation-conditioned action-to-task
   insufficiency rather than hidden by selection.
 
+## Proposed workstream: GDD-WM
+
+This repository also contains a proposed, not-yet-validated workstream:
+[Decision Preference → Predictive Geometry (GDD-WM)](docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md).
+The execution-grounded geometry extension is specified in
+[GDD_WM_EXECUTION_GROUNDED_GEOMETRY_PLAN_20261014.md](docs/GDD_WM_EXECUTION_GROUNDED_GEOMETRY_PLAN_20261014.md).
+It asks whether execution-grounded candidate preferences can be distilled into
+candidate-set-independent predictive geometry, without sacrificing
+action-conditioned multi-step prediction or relying on a teacher at runtime.
+
+The machine-readable protocol is
+[docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml](docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml).
+The workstream does not replace the existing spectral-transfer study and has no
+validated D-JEPA teacher package, D0 candidate dataset, D1 stability audit, or
+D2 distillation result yet. Existing JEPA adapter evidence is prerequisite
+infrastructure only; DINO rejection and PushT pose-closure failures remain
+unchanged boundary evidence.
+
+## Latest progress
+
+The current evidence-bounded update is recorded in
+[docs/RESEARCH_PROGRESS_20261014.md](docs/RESEARCH_PROGRESS_20261014.md). It
+includes the corrected PointMaze decision-transfer benchmark, the
+cross-environment matched audit, the contact-stratified PushT intervention,
+and the repaired polygon-boundary signed-torque audit. The strongest current
+result is a positive but pre-gate cross-environment point estimate; universal
+alignment prediction, stable pose closure, pure RGB online planning, and a
+universal commutator certificate remain unestablished.
+
 ## Reproduce the lightweight checks
 
 ```bash
@@ -49,6 +78,11 @@ listed in `REPRODUCIBILITY.md`; they are not committed to this repository.
 
 - `le-wm-main/` — LeWM implementation, experiment runners, tests, and configs.
 - `docs/` — finite-horizon transfer theorem and formal applicability notes.
+- `docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md` — proposed GDD-WM
+  workstream, gates, and failure boundaries.
+- `docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml` — proposed D0–D2 protocol schema.
+- `docs/RESEARCH_PROGRESS_20261014.md` — latest evidence-bounded progress and
+  claim status.
 - `release_results/` — compact JSON/Markdown evidence selected for public
   inspection.
 - `HORIZON_CONDITIONED_TRANSFER_SUFFICIENT_CONTROL_20261013.md` — current

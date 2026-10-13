@@ -29,6 +29,70 @@
 | `SPECTRAL_ANALYSIS_RESEARCH_RECORD_20261012.md` | 相关原始逐字记录，不做内容改写 |
 | 本文档 | 完整上下文、研究边界、文献地图和证据账本 |
 
+新增 Workstream `GDD-WM` 的研究计划与协议分别见
+[`docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md`](docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md)
+和
+[`docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml`](docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml)。
+2026-10-14 提交的执行导向扩展、双路径几何损失、RDMC 条件诊断和 D0--D4 阶段门见
+[`docs/GDD_WM_EXECUTION_GROUNDED_GEOMETRY_PLAN_20261014.md`](docs/GDD_WM_EXECUTION_GROUNDED_GEOMETRY_PLAN_20261014.md)。
+该 Workstream 的状态固定为 `Proposed / Not Yet Validated`，不改变本文档已经记录的
+旧结果和负结果。
+
+## 1.1 新 Workstream：Decision Preference → Predictive Geometry
+
+GDD-WM 是现有 LeWorldModel 研究之上的新增方向，而不是替换原来的谱分析、有限时域
+transfer、horizon-conditioned memory 或 PushT 分支。它引入的科学问题是：
+
+> D-JEPA 风格的 execution-grounded candidate preference，能否在不依赖 candidate
+> set、Set Transformer 或 teacher runtime 的条件下，被蒸馏为 intrinsic predictive
+> geometry，并保持 action-conditioned multi-step prediction？
+
+与现有主线的关系为：
+
+```text
+frozen LeWM / JEPA
+  -> candidate futures + transfer diagnostics
+D-JEPA-style teacher
+  -> execution-grounded preference
+GDD-WM student
+  -> realized/predicted geometry distillation
+  -> candidate-set-independent MPC
+  -> independent held-out planning audit
+```
+
+GDD-WM 的必要证据链是：
+
+```text
+teacher preference stability
+ -> geometrizable preference
+ -> realized geometry improvement
+ -> predicted geometry improvement
+ -> predictive consistency preserved
+ -> decision regret reduced
+ -> independent closed-loop planning gain
+```
+
+这条链上任何一个环节失败，都应保留为方法边界，而不是继续通过调权重、选择
+snapshot、改变 candidate bank 或读取测试结果制造正结果。D0–D2 当前均为 `not-run`：
+
+- D0：建立共享 candidate-set 数据协议，记录 root-disjoint split、候选生成器、CEM
+  stage、action support、teacher provenance 和 realized/predicted 引用；
+- D1：进行 candidate-set bootstrap / leave-one-candidate-out 的 teacher preference
+  stability，并与独立真实执行 consequence 交叉核验；
+- D2：先冻结 dynamics，做低容量 projection-only geometry distillation，检查
+  realized/predicted ranking、multi-step prediction 和 fail-closed permission。
+
+D0 的 schema/provenance validator 已落地于
+`le-wm-main/experiments/gdd_wm/build_shared_candidate_dataset.py`，并有对应单元测试。
+它只审计外部输入，不生成 candidate、teacher score、执行 outcome 或 latent 引用；
+因此其通过状态最多是 `schema_audit_only_not_teacher_validation`，不能被写成 D0–D2
+科学结果。
+
+现有 PointMaze JEPA permission-gate 结果只能作为 D0–D2 的候选基础设施；DINO 已因
+action-effect 不可辨识被 `rejected_fail_closed`，不能拿来生成 teacher preference。
+当前仓库不存在可直接声明为 D-JEPA teacher 的 checkpoint 或 candidate dataset，附件
+中“已生成 ZIP/PATCH、已完成完整仓库验证”的描述不属于本仓库事实。
+
 已有逐字对话导出及其校验信息见
 [CONVERSATION_ARCHIVE_20261012.md](CONVERSATION_ARCHIVE_20261012.md)。本文件本身是结构化研究档案，
 不是 UI 聊天的逐字转录。
@@ -449,3 +513,36 @@ joint endpoint 将接触、物体位姿、agent 回位混成一个目标，导�
 2026-10-13 继续完成了两项代码级修复与验证。第一，将 calibration-only gate 升级为 horizon-conditioned `planning_permission`：每个 horizon 使用自己的 train-only task-effect scale；h=1 需要 normalized task RMSE `<=0.75` 且 calibration action-inverse risk `<=0.05`，其他 candidate horizon 的 normalized task RMSE 上限为 `1.25`。权限失败时不再把保守候选当作 learned success，而是在 `heldout.planning_details_conservative` 明确写入 `rejected_fail_closed`、拒绝原因、允许 horizon 和阈值。新 artifact `le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/` 显示：JEPA 的 25/25 checkpoint 通过，conservative `Delta R=+0.0980`，5 seed sign-flip `p=0.0306`，bootstrap 95% CI `[0.0649,0.1328]`；DINO 的 25/25 checkpoint 全部拒绝，原因均为 `h1_task_effect_not_identifiable` 与 `action_effect_not_identifiable`，其正式结果为固定 h=1 fallback、`Delta R=0`。这解决的是负 transfer 的安全传播问题，不是把 DINO 表示改造成可规划表示。
 
 第二，新增 `audit_dino_vector_artifact_join.py` 检查旧 DINO 200-episode vector-only artifact 是否可以无歧义扩大正式 support。审计显示 episode 前缀与 32-row enriched export 一致，但 vector artifact 缺少 sample/episode IDs、action blocks、source states 和 target states；h=1/2/4 的 predicted vector 可以作相似性诊断，但 target vector 与 enriched target 的 RMSE 约为 `0.593/0.597/0.593`，不能作为同一正式 transition 表。artifact `le-wm-main/results/pointmaze_dino_vector_artifact_join_audit_20261013.json` 因而标记为 `formal_action_conditioned_join=rejected_fail_closed`、`vector_only_joined_diagnostic=available`。因此不能通过拼接旧向量、复制 action 或补造 state 来人为扩大 DINO 样本；若要解决 DINO 的表示条件，仍需要重新导出包含完整 action/state/source/target schema 的 DINO checkpoint 数据。
+
+2026-10-13 GDD-WM 接入后的首次执行审计已完成。D0 validator 将历史
+`horizon_matched_ranking.json` 判为 `rejected_fail_closed`：该 artifact 只有旧的
+ranking rows，没有 GDD-WM 所需的 records/provenance/teacher 字段，不能直接转换为
+D-JEPA teacher 数据。重新运行 Oral unified audit 后，当前 panel 仍为单环境、仅 1 个
+可识别 stratum，claim 继续为 `non-identifiable`；Best-Paper audit 的 synthetic
+counterexample 和工具 schema 通过，但独立真实收益 gate 仍为
+`blocked_missing_independent_gain_schema`。对既有 JEPA PointMaze record 的独立 planning
+gain 重跑得到 baseline loss `0.35498`、diagnostic loss `0.25918`、mean gain
+`0.09581`（10 个 paired outcomes）；这是既有 PointMaze 条件性结果的复核，不是
+GDD-WM 蒸馏结果。
+
+使用项目 `.venv` 的相关回归测试为 `14 passed`。全量 pytest 已进入正确依赖环境，
+在 46 passed、2 skipped 后卡在外部 DINOv2 TorchHub/socket 下载测试，超时停止；这属于
+外部模型下载阻断，不是本轮 GDD-WM 或 D0 代码失败。
+
+2026-10-14 完成 PointMaze learned-transfer 负结果的协议级根因审计。旧 external
+`+a/-a/zero` evaluator 只填充四个 action block 的第一个、只模拟 5 步，和 adapter
+的四-block 输入及 h={1,2,4} 输出不一致；已新增 v2 evaluator，改为四个 block 全部
+填充、对角 action fan、在 5/10/20 步记录标签，并保留 v1 artifact。v2 panel 为
+50/50 reports、0 failures；strict benchmark 有 2/5 可识别 strata，但
+`Delta R=0.0046`、95% CI `[0,0.0092]`、单环境，positive gate 仍为 false。
+
+进一步新增独立 intervention-supervised task-effect adapter
+`le-wm-main/experiments/empirical_spectral_audit/train_pointmaze_intervention_effect_adapter.py`。
+在 root-disjoint fresh windows 上，frozen latent 的 action-inverse risk 均值为
+`1.496`；加入 `z_t-z_(t-5)` 后降至 `1.282`；同样网络使用 privileged simulator
+state upper bound 时为 `0.257`。这将主根因收敛为 partial observability / latent
+history insufficiency，而不是继续调整 selector 或匹配阈值。完整数字、artifact 和
+claim boundary 见
+[`docs/POINTMAZE_NEGATIVE_RESULT_ROOT_CAUSE_20261014.md`](docs/POINTMAZE_NEGATIVE_RESULT_ROOT_CAUSE_20261014.md)。
+当前结论仍不支持 universal world model、通用 commutator certificate 或跨环境
+geometry selector；全量回归为 `617 passed, 3 skipped`。

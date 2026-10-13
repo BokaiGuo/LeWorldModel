@@ -1,0 +1,148 @@
+schema: gdd_wm_protocol.v0.1
+status: proposed_not_yet_validated
+workstream:
+  id: gdd_wm
+  name: Decision Preference to Predictive Geometry
+  parent_program: LeWorldModel
+  objective: execution_grounded_preference_distillation_into_intrinsic_predictive_geometry
+  replaces_existing_work: false
+  claim_boundary: proposed_workstream_only
+  protocol_version: gdd_wm_v0.1
+
+scientific_question: >-
+  Can stable execution-grounded candidate preferences be internalized into a
+  candidate-set-independent latent geometry while preserving action-conditioned
+  multi-step prediction and improving held-out planning consequence?
+
+dependencies:
+  teacher:
+    required: true
+    type: frozen_djepa_style_relation_model
+    checkpoint_manifest: null
+    execution_feedback_validation_required: true
+  student:
+    base_models: [LeWM, DA-LeWM]
+    initial_mode: projection_only
+    runtime_candidate_set_input_forbidden: true
+    teacher_at_runtime_forbidden: true
+  existing_gates:
+    action_effect_permission: required
+    transfer_sufficiency: required
+    privileged_runtime_successor_verification: forbidden
+
+splits:
+  unit: start_goal_instance
+  train: root_disjoint
+  calibration: root_disjoint
+  outcome: root_disjoint
+  environment_test: leave_one_environment_out
+  outcome_used_for_teacher_or_metric_selection: false
+  snapshot_selection_from_outcome: false
+
+candidate_set:
+  shared_across_methods: true
+  candidates_per_instance: 32
+  generators: [random, cem_initial, cem_middle, cem_elite]
+  candidate_set_resampling: bootstrap_and_leave_one_candidate_out
+  action_support_must_be_recorded: true
+  fields:
+    - instance_id
+    - split
+    - environment
+    - start_episode_id
+    - goal_id
+    - candidate_id
+    - action_sequence
+    - candidate_generator
+    - cem_stage
+    - source_observation_ref
+    - goal_observation_ref
+    - teacher_model_id
+    - teacher_score
+    - teacher_rank
+    - teacher_set_id
+    - real_success
+    - real_task_cost
+    - realized_observation_ref
+    - predicted_latent_ref
+    - realized_latent_ref
+    - action_support
+    - privileged_state_role
+
+teacher_preference_stability:
+  pair_probability: P_ij_over_candidate_sets
+  stability_score: 2_abs_P_ij_minus_half
+  stable_pair_threshold: null
+  threshold_status: freeze_before_outcome
+  execution_consistency_required: true
+  unstable_pair_action: diagnostic_only_do_not_distill
+  teacher_execution_conflict_action: execution_label_wins
+
+student:
+  deployed_cost: euclidean_goal_distance_in_student_latent
+  deployed_cost_formula: norm(F_phi(E_theta(history), action_sequence) - E_theta(goal))^2_over_dimension
+  candidate_set_context_forbidden: true
+  teacher_rank_input_forbidden: true
+  losses:
+    realized_geometry_pairwise: planned_for_d2
+    predicted_geometry_pairwise: planned_after_d2
+    success_mass: planned_after_d2
+    predictive_consistency: required_from_d2
+    inverse_dynamics: optional_da_lewm_baseline
+    goal_action: optional_da_lewm_baseline
+  projection_rank: null
+  projection_type: linear_train_only
+
+metrics:
+  decision:
+    - success_failure_pair_inversion_rate
+    - top1_decision_regret
+    - topk_success_recall
+    - teacher_gain_retention
+    - candidate_set_flip_rate
+  geometry:
+    - realized_latent_pairwise_accuracy
+    - predicted_latent_pairwise_accuracy
+    - geometric_distillation_gap
+    - observed_predicted_ranking_gap
+    - latent_effective_rank
+    - covariance_spectrum
+  prediction:
+    - one_step_latent_mse
+    - multi_step_latent_mse
+    - real_predicted_transition_consistency
+    - action_inverse_risk
+  planning:
+    - fixed_candidate_planning_consequence
+    - closed_loop_cem_success
+    - planning_regret
+    - contact_retention
+    - angle_closure
+    - runtime_latency
+
+gates:
+  d0_schema_complete: required
+  d1_teacher_stability_and_execution_check: required
+  d2_prediction_preservation: required
+  independent_heldout_planning_consequence: required
+  minimum_training_seeds: 3
+  minimum_environments: 2
+  paired_uncertainty: bootstrap_and_sign_or_permutation
+  multiplicity_correction: predeclared
+  fail_closed_if_support_missing: true
+  fail_closed_if_permission_gate_fails: true
+
+decision_tree:
+  teacher_unstable: stop_distillation_report_preference_boundary
+  geometry_gap_large: report_euclidean_no_go_try_quasi_metric
+  predicted_geometry_improves_but_prediction_worsens: reject_shortcut
+  fixed_candidate_gain_without_closed_loop_gain: report_candidate_only_boundary
+  all_primary_gates_pass: proceed_to_joint_encoder_predictor_training
+
+artifacts:
+  protocol: docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml
+  research_plan: docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md
+  candidate_dataset_root: le-wm-main/results/gdd_wm_candidate_dataset_v0_1
+  d1_output_root: le-wm-main/results/gdd_wm_teacher_preference_stability_v0_1
+  d2_output_root: le-wm-main/results/gdd_wm_projection_geometry_distillation_v0_1
+  claim_boundary: Proposed / Not Yet Validated

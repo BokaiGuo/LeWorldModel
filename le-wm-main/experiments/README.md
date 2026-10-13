@@ -108,6 +108,68 @@ action-independent physical dynamics.
 
 ## Separated Research Code Paths
 
+### Proposed GDD-WM workstream
+
+The proposed Decision Preference → Predictive Geometry workstream is kept
+separate from the existing theory and empirical packages. Its first executable
+surface is the D0 schema/provenance audit:
+
+```bash
+python experiments/gdd_wm/build_shared_candidate_dataset.py \
+  --input /path/to/candidate_table.json \
+  --output results/gdd_wm_candidate_dataset_v0_1
+```
+
+The input must provide the shared candidate fields and explicit provenance
+flags. The runner can write canonical JSONL only after candidate-set size,
+root-disjoint splits, action support, and leakage checks pass. It never creates
+teacher preferences, simulator outcomes, or latent references. A passing D0
+artifact therefore has the boundary `schema_audit_only_not_teacher_validation`;
+D1 preference stability, D2 projection distillation, and independent planning
+remain unrun until a real frozen teacher/data package is supplied.
+
+The first PointMaze P0/P1 implementation is under
+`experiments/decision_benchmark/`. It repairs the train-only affine task
+readout, audits action identifiability, generates equal-duration candidate
+banks, and evaluates paired decision regret:
+
+```bash
+python experiments/decision_benchmark/generate_candidate_bank.py \
+  --source-export /path/to/frozen_external_export.json \
+  --checkpoint /path/to/adapter.pt \
+  --output results/decision_benchmark_candidate_bank \
+  --candidate-family paired_order_v2
+
+python experiments/decision_benchmark/audit_action_effects.py \
+  --checkpoint /path/to/adapter.pt \
+  --fit-export /path/to/fit.json \
+  --outcome-export /path/to/outcome.json \
+  --external-export /path/to/external_export.json \
+  --output results/decision_benchmark_action_audit
+```
+
+`paired_order_v2` includes same-net-action/different-order pairs.  D0/P1
+remains the offline candidate/effect benchmark.  The D1 RGB successor bridge
+is now executable with:
+
+```bash
+python experiments/decision_benchmark/verify_rgb_successor.py \
+  --candidate-dataset results/decision_benchmark_candidate_bank/.../candidate_dataset.json \
+  --arrays results/decision_benchmark_candidate_bank/.../arrays.npz \
+  --dataset-root data/point_maze_tail1800_1899 \
+  --encoder-checkpoint data/jepa_wm_checkpoints/jepa_wm_pointmaze.pth.tar \
+  --output results/decision_benchmark_candidate_bank/rgb_successor_v2_temporal \
+  --max-roots 40 --max-candidates 16
+```
+
+The verifier executes candidates in the legacy MuJoCo dynamics, reconstructs
+dataset-matched RGB from the realized five-step block states, and encodes the
+full temporal context used by the frozen JEPA checkpoint.  The 2026-10-14
+artifact has 40/40 renderer/source-interface gates passing and a 13.9% held-out
+outcome improvement over the source-latent baseline in PCA successor error.
+This is realized RGB successor evidence, not yet closed-loop online planning
+or a universal-world-model result.
+
 The two proposal tracks are implemented as separate packages:
 
 - `experiments/theory_spectral_transfer/`: theory-only spectral-transfer

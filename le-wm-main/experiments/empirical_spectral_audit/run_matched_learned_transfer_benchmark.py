@@ -80,6 +80,17 @@ def _environment(record: dict[str, Any]) -> str:
     return str(protocol.get("environment", str(record.get("group", "unknown")).split("/")[0]))
 
 
+def _train_task_risk_scale(record: dict[str, Any]) -> float:
+    """Return a train-only task-effect scale for cross-environment aggregation."""
+    protocol = record.get("protocol", {})
+    values = protocol.get("train_task_effect_scale")
+    if isinstance(values, dict):
+        finite = [float(value) for value in values.values() if _finite(value) and abs(float(value)) > 1e-12]
+        if finite:
+            return float(np.mean(finite))
+    return 1.0
+
+
 def _action_distribution(record: dict[str, Any]) -> str:
     factors = record.get("model_factors", {})
     if factors.get("action_distribution") is not None:
@@ -427,7 +438,15 @@ def audit(
 
         if row["identifiable"]:
             outcome_key = "planning_risk" if require_external else "planning_loss"
-            risks = np.asarray([float(item["heldout"][outcome_key]) for item in eligible_records])
+            # Planning-risk magnitudes are not comparable across physical
+            # environments (e.g. pixel-space PushT versus normalized
+            # PointMaze).  Normalize by a scale fitted from train task
+            # effects, which is fixed before the held-out outcome is read.
+            risk_scale = float(np.median([_train_task_risk_scale(item) for item in eligible_records]))
+            risk_scale = max(risk_scale, 1e-12)
+            raw_risks = np.asarray([float(item["heldout"][outcome_key]) for item in eligible_records])
+            risks = raw_risks / risk_scale
+            row["planning_risk_scale_train_only"] = risk_scale
             oracle_index = int(np.argmin(risks))
             oracle_risk = float(risks[oracle_index])
             # All selectors are lower-is-better and are fixed before reading
@@ -444,6 +463,7 @@ def audit(
                 row["selectors"][metric] = {
                     "checkpoint": eligible_records[selected]["checkpoint"],
                     "selected_risk": float(risks[selected]),
+                    "selected_risk_raw": float(raw_risks[selected]),
                     "regret": regret,
                     "is_oracle": bool(selected == oracle_index),
                 }
@@ -469,18 +489,21 @@ def audit(
             row["selectors"]["mse_only"] = {
                 "checkpoint": eligible_records[mse_only]["checkpoint"],
                 "selected_risk": float(risks[mse_only]),
+                "selected_risk_raw": float(raw_risks[mse_only]),
                 "regret": float(risks[mse_only] - oracle_risk),
                 "is_oracle": bool(mse_only == oracle_index),
             }
             row["selectors"]["full_mse_action_risk_geometry"] = {
                 "checkpoint": eligible_records[full_index]["checkpoint"],
                 "selected_risk": float(risks[full_index]),
+                "selected_risk_raw": float(raw_risks[full_index]),
                 "regret": float(risks[full_index] - oracle_risk),
                 "is_oracle": bool(full_index == oracle_index),
             }
             row["selectors"]["geometry_composite"] = {
                 "checkpoint": eligible_records[geometry_index]["checkpoint"],
                 "selected_risk": float(risks[geometry_index]),
+                "selected_risk_raw": float(raw_risks[geometry_index]),
                 "regret": float(risks[geometry_index] - oracle_risk),
                 "is_oracle": bool(geometry_index == oracle_index),
             }
@@ -495,11 +518,13 @@ def audit(
             row["selectors"]["prediction_mse_tie_break"] = {
                 "checkpoint": eligible_records[mse_selected]["checkpoint"],
                 "selected_risk": float(risks[mse_selected]),
+                "selected_risk_raw": float(raw_risks[mse_selected]),
                 "regret": float(risks[mse_selected] - oracle_risk),
                 "is_oracle": bool(mse_selected == oracle_index),
             }
             row["selectors"]["random_expected"] = {
                 "selected_risk": float(risks.mean()),
+                "selected_risk_raw": float(raw_risks.mean()),
                 "regret": random_regret,
                 "is_oracle": None,
             }

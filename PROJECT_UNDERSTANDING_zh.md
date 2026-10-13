@@ -6,6 +6,14 @@
 [MATHEMATICAL_PHYSICS_TOOLKIT_20261012.md](MATHEMATICAL_PHYSICS_TOOLKIT_20261012.md)。
 本轮对话的完整结构化上下文、文献重叠、证据边界和负结果账本见
 [RESEARCH_CONTEXT_20261012.md](RESEARCH_CONTEXT_20261012.md)。
+新增的 GDD-WM（Decision Preference → Predictive Geometry）Workstream 研究计划见
+[docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md](docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md)，
+机器可读协议见
+[docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml](docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml)。
+本次纳入的完整执行扩展见
+[docs/GDD_WM_EXECUTION_GROUNDED_GEOMETRY_PLAN_20261014.md](docs/GDD_WM_EXECUTION_GROUNDED_GEOMETRY_PLAN_20261014.md)，
+其中冻结了 Preference Stability、realized/predicted geometry、RDMC、D0--D4 门禁和
+Euclidean 不可表示时的 fallback。
 短期历史、Fourier/时频、事件记忆和接触模式的文献边界与冻结实验协议见
 [MEMORY_EVENT_CONTACT_LITERATURE_20261013.md](MEMORY_EVENT_CONTACT_LITERATURE_20261013.md)。
 逐篇证据核验和文献边界见
@@ -39,6 +47,39 @@ cross-environment transfer and frozen visual planning
 > 当 prediction quality、action distribution 和 predictor spectrum 已匹配时，covariance–predictor–metric 几何能否识别 planner-relevant transfer risk，以及 action-transition mismatch、non-normal transient 和 partial observability 何时使这种识别失效？
 
 `theory_spectral_transfer/` 和 `empirical_spectral_audit/` 仍保留原目录、CLI 和测试，保证历史 artifact 可复现；它们现在分别承担统一研究的理论层和 learned-model 实例化层，不再各自形成独立结论。
+
+### 新增 GDD-WM Workstream（Proposed / Not Yet Validated）
+
+GDD-WM 将当前研究从“诊断 transfer 风险”扩展到一个可检验的决策偏好蒸馏问题：
+
+```text
+D-JEPA-style execution preference
+  -> teacher preference stability
+  -> realized/predicted geometry distillation
+  -> preserved action-conditioned prediction
+  -> fixed-candidate regret
+  -> independent closed-loop consequence
+```
+
+它与现有主线的关系是：现有 LeWorldModel 提供 frozen representation、
+action-effect permission gate、transfer diagnostics 和 fail-closed planning protocol；
+GDD-WM 检验这些基础设施能否支持把稳定的 execution-grounded preference 内化到
+不依赖 candidate set 或 teacher runtime 的 predictive geometry。该方向不覆盖、也不改写
+JEPA 的条件性正结果、DINO 的 `rejected_fail_closed`、PushT 姿态闭合失败或
+commutator 的非通用性。
+
+当前没有 D-JEPA teacher checkpoint/data package，D0 shared candidate dataset、D1
+teacher preference stability audit 和 D2 projection-only geometry distillation 均为
+`not-run`。因此现有 PointMaze JEPA 结果只能作为候选基础设施，不能写成 GDD-WM 已
+蒸馏或已改善闭环规划的证据。只有在 preference stability、predicted/realized
+ranking、multi-step predictive preservation、fixed-candidate regret 和独立规划收益
+同时通过后，才允许升级 claim。
+
+当前已落地的仅是 D0 的 schema/provenance validator：
+`le-wm-main/experiments/gdd_wm/build_shared_candidate_dataset.py`。它可以拒绝缺失
+字段、候选集合大小不符、root 泄漏、action support 缺失和 outcome 泄漏，并输出
+`schema_audit_only_not_teacher_validation`；没有真实 teacher/data 输入时不会生成
+伪造的 candidate dataset。
 
 ## 二、统一数学对象
 

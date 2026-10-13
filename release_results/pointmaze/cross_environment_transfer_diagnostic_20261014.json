@@ -1,0 +1,22 @@
+{
+  "schema": "cross_environment_transfer_diagnostic.v1",
+  "date": "2026-10-14",
+  "protocol": {
+    "environments": ["PointMaze", "PushT"],
+    "architectures": 4,
+    "seeds": 5,
+    "identifiable_matched_strata": 7,
+    "replication_unit": "environment-level matched stratum",
+    "primary_estimand": "Delta R = R(MSE-only) - R(MSE+action-risk+geometry)",
+    "require_independent_external_evidence": true,
+    "positive_gate": "mean > 0, paired bootstrap lower bound > 0, one-sided stratum sign-flip p < 0.05, and replicated environments"
+  },
+  "summary": {
+    "mean_delta_risk_mse_minus_full": 0.05335727126113464,
+    "paired_bootstrap_ci95": [0.011499005745037085, 0.11661224743602713],
+    "stratum_sign_flip_p_one_sided": 0.06299685015749212,
+    "positive_gate": false,
+    "status": "gated_positive_delta_not_established"
+  },
+  "claim_boundary": "The point estimate is positive, but the preregistered stratum-level replication gate is not passed; this is not evidence for universal alignment prediction or a commutator certificate."
+}

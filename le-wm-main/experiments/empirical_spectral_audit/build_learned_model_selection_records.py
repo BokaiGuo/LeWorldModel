@@ -24,6 +24,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from experiments.empirical_spectral_audit.enriched_record_schema import load_payload  # noqa: E402
 from experiments.task_metric_diagnostics import metric_geometry, task_metric_metadata  # noqa: E402
+
+
+# Full-rank principal-angle diagnostics are mathematically degenerate.  The
+# learned benchmark's declared planning readout is two-dimensional positional
+# progress, so keep the task-relevant geometry rank fixed at two.
+TASK_GEOMETRY_RANK = 2
 from experiments.theory_spectral_transfer.finite_horizon_transfer import finite_horizon_response  # noqa: E402
 
 
@@ -160,7 +166,10 @@ def _assert_pair(fit: dict[str, Any], outcome: dict[str, Any]) -> None:
 def _load_external_evidence(path: Path, checkpoint: str) -> dict[str, Any]:
     """Load independent action/planning evidence without fabricating fields."""
     evidence = json.loads(path.read_text())
-    if evidence.get("schema") != "learned_snapshot_external_evidence.v1":
+    if evidence.get("schema") not in {
+        "learned_snapshot_external_evidence.v1",
+        "learned_snapshot_external_evidence.v2",
+    }:
         raise ValueError(f"{path} has incompatible external evidence schema")
     if str(Path(evidence.get("checkpoint", "")).resolve()) != str(Path(checkpoint).resolve()):
         raise ValueError(
@@ -170,7 +179,14 @@ def _load_external_evidence(path: Path, checkpoint: str) -> dict[str, Any]:
     action = evidence.get("action_risk", {})
     planning = evidence.get("planning_consequence", {})
     required_action = ("action_inverse_risk", "action_identifiability", "paired_roots")
-    required_planning = ("planning_risk", "strict_success_rate", "mean_block_xy_distance", "mean_angle_error")
+    # PushT evidence uses its pose metrics.  PointMaze has no block pose or
+    # angle, so its independent consequence is the predeclared horizon-
+    # progress family.  Requiring PushT fields there previously encouraged
+    # callers to fabricate incompatible zeros just to satisfy the schema.
+    if evidence.get("environment") == "PointMaze" or planning.get("metric_family") == "pointmaze_horizon_progress":
+        required_planning = ("planning_risk", "mean_chosen_progress", "mean_oracle_progress", "paired_roots")
+    else:
+        required_planning = ("planning_risk", "strict_success_rate", "mean_block_xy_distance", "mean_angle_error")
     missing = [f"action_risk.{name}" for name in required_action if name not in action]
     missing.extend(f"planning_consequence.{name}" for name in required_planning if name not in planning)
     if missing:
@@ -221,7 +237,7 @@ def build_record(
         covariance,
         predictor,
         metric,
-        rank=min(16, source.shape[1]),
+        rank=min(TASK_GEOMETRY_RANK, source.shape[1]),
         horizons=range(1, 5),
     )
     action = _action_rows(fit)
@@ -263,6 +279,7 @@ def build_record(
             "task_metric": task_metric_metadata(metric),
             "operator_fit": "ridge(source_latent, predicted_latent) on diagnostic export only",
             "outcome": "mean held-out latent transfer MSE on outcome export only",
+            "task_geometry_subspace_rank": int(min(TASK_GEOMETRY_RANK, source.shape[1])),
         },
     }
     if external is not None:
@@ -271,13 +288,18 @@ def build_record(
         record["model_factors"]["action_inverse_risk"] = float(action["action_inverse_risk"])
         record["diagnostics"]["action_inverse_risk"] = float(action["action_inverse_risk"])
         record["diagnostics"]["action_identifiability"] = float(action["action_identifiability"])
-        record["heldout"].update({
-            "planning_risk": float(planning["planning_risk"]),
-            "planning_consequence": {
+        record["heldout"]["planning_risk"] = float(planning["planning_risk"])
+        if planning.get("metric_family") == "pointmaze_horizon_progress" or external.get("environment") == "PointMaze":
+            record["heldout"]["planning_consequence"] = {
+                key: planning[key]
+                for key in ("metric_family", "mean_chosen_progress", "mean_oracle_progress", "paired_roots")
+                if key in planning
+            }
+        else:
+            record["heldout"]["planning_consequence"] = {
                 key: planning[key]
                 for key in ("strict_success_rate", "mean_block_xy_distance", "mean_angle_error", "mean_pose_cost")
-            },
-        })
+            }
         record["provenance"]["external_evidence"] = str(external_evidence_path)
         record["provenance"]["action_risk"] = "independent validation matched +a/-a/zero intervention fan"
         record["provenance"]["planning_outcome"] = "fresh fixed RGB-only closed-loop episode panel"

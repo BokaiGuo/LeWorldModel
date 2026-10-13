@@ -1,0 +1,21 @@
+{
+  "schema": "pusht_signed_torque_audit.v2",
+  "date": "2026-10-14",
+  "protocol": {
+    "root_protocol": "radial_contact_projected_to_polygon_boundary",
+    "train_roots": 64,
+    "held_out_roots": 32,
+    "pulse_steps": 4,
+    "closure_steps": 24,
+    "feature_interface": "polygon-boundary contact point and boundary inward normal with action-conditioned signed moment",
+    "runtime_privileged_state": true
+  },
+  "metrics": {
+    "direction_accuracy": {"estimate": 0.609375, "ci95": [0.453125, 0.75]},
+    "classifier_regret": {"estimate": 0.015117907672778208, "ci95": [0.004526262675935748, 0.030668048302547]},
+    "geometric_regret": {"estimate": 0.02651868456065444, "ci95": [0.015475667319898708, 0.03981117480395117]},
+    "closed_loop_angle_improvement": {"estimate": 0.1239681978344559, "ci95": [-0.07787246199342401, 0.3237385572610095]},
+    "strict_pose_success": {"successes": 0, "trials": 32}
+  },
+  "claim_boundary": "The corrected privileged contact chart improves local action ranking relative to the geometric baseline, but direction accuracy misses the 0.70 gate and strict pose closure is not established."
+}
