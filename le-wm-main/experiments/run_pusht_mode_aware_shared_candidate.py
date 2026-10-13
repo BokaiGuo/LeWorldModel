@@ -24,6 +24,7 @@ from typing import Any
 
 import gymnasium as gym
 import numpy as np
+import torch
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
 from sklearn.linear_model import Ridge
 from sklearn.pipeline import make_pipeline
@@ -53,6 +54,41 @@ gym.logger.min_level = 40
 
 MODE_NAMES = ("free", "approach", "contact")
 SUCCESSOR_NAMES = ("no_contact", "stalled_contact", "sliding", "separation")
+
+
+def resolve_device(requested: str) -> torch.device:
+    if requested not in {"auto", "cpu", "cuda"}:
+        raise ValueError("device must be auto, cpu, or cuda")
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("--device cuda requested but torch.cuda.is_available() is false")
+    if requested == "auto":
+        requested = "cuda" if torch.cuda.is_available() else "cpu"
+    return torch.device(requested)
+
+
+class TorchRidgeMultiOutput:
+    """GPU-backed standardized multi-output ridge for the contact chart."""
+
+    def __init__(self, features: np.ndarray, targets: np.ndarray, alpha: float, device: torch.device) -> None:
+        x = torch.as_tensor(np.asarray(features, dtype=np.float32), device=device)
+        y = torch.as_tensor(np.asarray(targets, dtype=np.float32), device=device)
+        self.device = device
+        self.x_mean = x.mean(dim=0)
+        self.x_scale = torch.clamp(x.std(dim=0), min=1.0e-3)
+        self.y_mean = y.mean(dim=0)
+        self.y_scale = torch.clamp(y.std(dim=0), min=1.0e-3)
+        x_standard = (x - self.x_mean) / self.x_scale
+        y_standard = (y - self.y_mean) / self.y_scale
+        gram = x_standard.T @ x_standard
+        ridge = float(alpha) * torch.eye(gram.shape[0], device=device, dtype=gram.dtype)
+        self.weight = torch.linalg.solve(gram + ridge, x_standard.T @ y_standard)
+
+    def predict(self, features: np.ndarray) -> np.ndarray:
+        x = torch.as_tensor(np.asarray(features, dtype=np.float32), device=self.device)
+        with torch.inference_mode():
+            prediction = ((x - self.x_mean) / self.x_scale) @ self.weight
+            prediction = prediction * self.y_scale + self.y_mean
+        return prediction.detach().cpu().numpy()
 
 
 def contact_chart_features(
@@ -611,7 +647,7 @@ def fit_goal_ranker(
 
 def fit_contact_chart(
     rows: list[dict[str, Any]], seed: int, alpha: float = 10.0,
-    env: gym.Env | None = None,
+    env: gym.Env | None = None, device: torch.device | None = None,
 ) -> dict[str, Any]:
     """Fit a fixed contact-chart effect model on training rows only.
 
@@ -636,6 +672,8 @@ def fit_contact_chart(
         # Ridge is deterministic for a fixed design; the seed is recorded in
         # the artifact to make the protocol explicit even though it is not
         # consumed by the estimator.
+        if device is not None and device.type == "cuda":
+            return TorchRidgeMultiOutput(features, targets, alpha, device)
         model = make_pipeline(StandardScaler(), Ridge(alpha=float(alpha)))
         model.fit(features, targets)
         return model
@@ -663,6 +701,7 @@ def fit_contact_chart(
 def fit_mode_aware(
     rows: list[dict[str, Any]], seed: int, trees: int, env: gym.Env | None = None,
     boundary_action_frame: bool = False, contact_chart_alpha: float = 10.0,
+    device: torch.device | None = None,
 ) -> dict[str, Any]:
     features = np.asarray([
         lifted_row_features(row, env=env, boundary_action_frame=boundary_action_frame)
@@ -717,7 +756,7 @@ def fit_mode_aware(
             boundary_action_frame=boundary_action_frame,
         ),
         "contact_chart": fit_contact_chart(
-            rows, seed + 140, alpha=contact_chart_alpha, env=env,
+            rows, seed + 140, alpha=contact_chart_alpha, env=env, device=device,
         ),
         "by_mode": by_mode,
         "by_successor": by_successor,
@@ -727,6 +766,185 @@ def fit_mode_aware(
         "boundary_action_frame": bool(boundary_action_frame),
         "counts": {**counts, "successor": successor_counts},
     }
+
+
+def effect_gate_key(env: gym.Env, state: np.ndarray, action: np.ndarray) -> str:
+    """Coarse deployment support bin for local action-effect evidence.
+
+    The gate deliberately does not key on the exact floating-point contact
+    point.  It groups observations by polygon edge, geometric moment sign and
+    action magnitude, while leaving edge-position variation inside the
+    empirical uncertainty estimate.  This is a support/uncertainty diagnostic,
+    not a hidden simulator label.
+    """
+
+    geometry = physical_contact_geometry(env, state)
+    normal = boundary_inward_normal(env, state)
+    tangent = np.asarray([-normal[1], normal[0]], dtype=np.float64)
+    action_value = np.asarray(action, dtype=np.float64)
+    normal_component = float(np.dot(action_value, normal))
+    tangent_component = float(np.dot(action_value, tangent))
+    moment_sign = int(np.sign(action_moment_sign(state, action, env=env)))
+    return "%d:%d:s%d:m%.2f:n%.2f:t%d" % (
+        int(geometry["shape_index"]), int(geometry["edge_index"]),
+        moment_sign, round(float(np.linalg.norm(action_value)), 2),
+        round(normal_component, 2), int(np.sign(tangent_component)),
+    )
+
+
+def normalized_effect_error(predicted: np.ndarray, observed: np.ndarray) -> float:
+    """Task-relevant local successor discrepancy used by the gate report."""
+
+    predicted = np.asarray(predicted, dtype=np.float64)
+    observed = np.asarray(observed, dtype=np.float64)
+    return float(
+        abs(float(wrap_angle(predicted[0] - observed[0]))) / 0.20
+        + np.linalg.norm(predicted[1:3] - observed[1:3]) / 20.0
+    )
+
+
+def fit_effect_gate_statistics(
+    rows: list[dict[str, Any]], model: dict[str, Any], env: gym.Env,
+    boundary_action_frame: bool,
+) -> dict[str, dict[str, Any]]:
+    """Estimate local support, sign consistency and residual uncertainty.
+
+    All quantities are fitted on training roots only.  The successor is used
+    here solely as an offline training label.  Runtime gating sees only the
+    current state, candidate action and the frozen table.
+    """
+
+    grouped: dict[str, list[tuple[float, float, float]]] = {}
+    for row in rows:
+        before = np.asarray(row["before"], dtype=np.float64)
+        action = np.asarray(row["action"], dtype=np.float64)
+        target = transition_target(row)
+        key = effect_gate_key(env, before, action)
+        predicted, _, _ = predict_transition(
+            model, before, action, np.asarray(row.get("previous_action", np.zeros(2))),
+            mode_conditioned=True, predictor="tree", env=env,
+            boundary_action_frame=boundary_action_frame,
+        )
+        angle_effect = float(target[0])
+        moment_sign = float(np.sign(action_moment_sign(before, action, env=env)))
+        sign_sample = float(np.sign(angle_effect) * moment_sign) if abs(angle_effect) > 1.0e-8 else 0.0
+        residual = normalized_effect_error(predicted, target)
+        grouped.setdefault(key, []).append((angle_effect, sign_sample, residual))
+    statistics: dict[str, dict[str, Any]] = {}
+    for key, values in grouped.items():
+        angles = np.asarray([value[0] for value in values], dtype=np.float64)
+        informative = np.asarray([value[1] for value in values if abs(value[1]) > 0.5], dtype=np.float64)
+        positive = int(np.sum(informative > 0.0))
+        negative = int(np.sum(informative < 0.0))
+        sign_consistency = float(max(positive, negative) / max(len(informative), 1))
+        statistics[key] = {
+            "support": int(len(values)),
+            "informative_support": int(len(informative)),
+            "angle_mean": float(np.mean(angles)),
+            "angle_std": float(np.std(angles)),
+            "angle_nonzero_rate": float(np.mean(np.abs(angles) > 1.0e-8)),
+            "sign_consistency": sign_consistency,
+            "sign_majority": int(1 if positive >= negative else -1) if len(informative) else 0,
+            "train_predicted_observed_rmse": float(np.sqrt(np.mean(np.square([value[2] for value in values])))),
+        }
+    return statistics
+
+
+def effect_gate_decision(
+    model: dict[str, Any], env: gym.Env, state: np.ndarray, action: np.ndarray,
+    goal: np.ndarray, args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Return a fail-closed decision for one learned contact action."""
+
+    key = effect_gate_key(env, state, action)
+    stats = model.get("effect_gate", {}).get(key)
+    reason = "ok"
+    valid = True
+    if stats is None:
+        valid = False
+        reason = "no_support_bin"
+    else:
+        desired_sign = float(np.sign(wrap_angle(float(goal[4]) - float(state[4]))))
+        if int(stats["support"]) < int(args.min_effect_support):
+            valid, reason = False, "insufficient_support"
+        elif int(stats["informative_support"]) < int(args.min_informative_support):
+            valid, reason = False, "insufficient_informative_support"
+        elif float(stats["sign_consistency"]) < float(args.min_effect_sign_consistency):
+            valid, reason = False, "inconsistent_effect_sign"
+        elif float(stats["angle_std"]) > float(args.max_effect_angle_std):
+            valid, reason = False, "high_angle_uncertainty"
+        elif float(stats["train_predicted_observed_rmse"]) > float(args.max_train_effect_error):
+            valid, reason = False, "high_train_effect_error"
+        elif desired_sign != 0.0 and float(np.sign(stats["angle_mean"])) != desired_sign:
+            valid, reason = False, "wrong_mean_angle_direction"
+    return {
+        "valid": bool(valid), "reason": reason, "key": key,
+        "stats": None if stats is None else dict(stats),
+    }
+
+
+def choose_online_effect_action(
+    env: gym.Env, state: np.ndarray, goal: np.ndarray, actions: np.ndarray,
+    online_local_effects: dict[str, dict[str, Any]],
+) -> tuple[int | None, dict[str, Any] | None]:
+    """Rank only candidates with an observed local effect estimate.
+
+    This is the exploitation half of a short-pulse system-identification
+    controller.  A candidate is eligible only after the same coarse contact
+    bin has produced an observed transition; otherwise the caller must issue a
+    short probe or fail closed.
+    """
+
+    supported: list[tuple[int, float, dict[str, Any]]] = []
+    desired_sign = float(np.sign(wrap_angle(float(goal[4]) - float(state[4]))))
+    for index, action in enumerate(np.asarray(actions, dtype=np.float64)):
+        key = effect_gate_key(env, state, action)
+        entry = online_local_effects.get(key)
+        if entry is None or int(entry.get("count", 0)) < 1:
+            continue
+        target = np.asarray(entry["mean"], dtype=np.float64)
+        # An observed local effect is useful only if it points toward the
+        # current task direction.  Never let online identification turn a
+        # one-shot probe that rotated the wrong way into a committed policy.
+        if desired_sign != 0.0 and abs(float(target[0])) > 1.0e-4:
+            if float(np.sign(target[0])) != desired_sign:
+                continue
+        imagined = predicted_state(state, target)
+        score = planning_pose_cost(state, imagined, goal, phase_aware=True)
+        # Online identification may be locally valid but still point away
+        # from the task target.  Do not repeatedly commit such an estimate
+        # merely because it is the only observed candidate in the bin.
+        if score > planning_pose_cost(state, state, goal, phase_aware=True) + 0.05:
+            continue
+        score += 0.5 * float(entry.get("last_error", 0.0))
+        supported.append((int(index), float(score), {"key": key, **entry}))
+    if not supported:
+        return None, None
+    selected, _, info = min(supported, key=lambda value: value[1])
+    return selected, info
+
+
+def choose_identification_probe(
+    env: gym.Env, state: np.ndarray, actions: np.ndarray,
+    desired_moment_sign: float | None,
+) -> int | None:
+    """Choose the least invasive tangent pulse for local effect identification."""
+
+    candidate_indices = [
+        index for index, action in enumerate(np.asarray(actions, dtype=np.float64))
+        if float(np.dot(action, action_frame_normal(env, state, True))) >= 0.0
+        and float(np.linalg.norm(action)) > 1.0e-8
+    ]
+    if desired_moment_sign is not None and abs(float(desired_moment_sign)) > 0.5:
+        signed = [
+            index for index in candidate_indices
+            if action_moment_sign(state, actions[index], env=env) == float(np.sign(desired_moment_sign))
+        ]
+        if signed:
+            candidate_indices = signed
+    if not candidate_indices:
+        return None
+    return int(min(candidate_indices, key=lambda index: float(np.linalg.norm(actions[index]))))
 
 
 def predict_transition(
@@ -1261,6 +1479,9 @@ def closed_loop(
     strict_contact_sign_gate: bool = False,
     direct_observed_sign_reversal: bool = False,
     predictor: str = "tree",
+    uncertainty_gate: bool = False,
+    fallback_only: bool = False,
+    adaptive_online_effect: bool = False,
 ) -> dict[str, Any]:
     records = []
     for root_index, root in enumerate(roots):
@@ -1277,6 +1498,7 @@ def closed_loop(
         recent_contact_sign: float | None = None
         last_action_moment_sign: float | None = None
         online_effects: dict[str, dict[str, Any]] = {}
+        online_local_effects: dict[str, dict[str, Any]] = {}
         calibration_attempts = 0
         calibration_successes = 0
         calibration_attempted_modes: set[int] = set()
@@ -1318,6 +1540,10 @@ def closed_loop(
                 and angle_error(current[4], goal[4]) > args.terminal_angle_gate
             )
             calibration_probe = False
+            fallback_used = False
+            identification_probe = False
+            online_identified_used = False
+            gate_decision: dict[str, Any] | None = None
             if recovery:
                 # This is an explicit physical-interface branch.  It is not
                 # learned action-effect evidence: once the observed state is
@@ -1487,14 +1713,92 @@ def closed_loop(
                             previous_observed_angle_delta=last_observed_delta,
                         )
                         selected = int(valid[int(local_selected)])
-            action = np.asarray(actions[selected], dtype=np.float32)
+                if (
+                    adaptive_online_effect
+                    and not calibration_probe
+                    and not fallback_only
+                    and current_mode_id == 2
+                ):
+                    online_selected, online_info = choose_online_effect_action(
+                        env, current, goal, actions, online_local_effects,
+                    )
+                    if online_selected is not None:
+                        selected = int(online_selected)
+                        online_identified_used = True
+                        gate_decision = {
+                            "valid": True,
+                            "reason": "observed_local_effect",
+                            "key": online_info.get("key") if online_info else None,
+                            "stats": online_info,
+                        }
+            if (
+                not recovery_macro
+                and not calibration_probe
+                and current_mode_id == 2
+                and (uncertainty_gate or fallback_only)
+                and not online_identified_used
+            ):
+                if fallback_only:
+                    gate_decision = {
+                        "valid": False, "reason": "fallback_only",
+                        "key": None, "stats": None,
+                    }
+                else:
+                    gate_decision = effect_gate_decision(
+                        model, env, current, np.asarray(actions[selected]), goal, args,
+                    )
+                if fallback_only or not bool(gate_decision["valid"]):
+                    # Pure inward motion preserves the observed contact
+                    # manifold; it is deliberately not credited to the
+                    # learned effect model and is followed by re-observation.
+                    fallback_normal = action_frame_normal(
+                        env, current, bool(getattr(args, "boundary_action_frame", False))
+                    )
+                    if adaptive_online_effect and not fallback_only:
+                        desired_moment_sign = None
+                        desired_sign = float(np.sign(wrap_angle(goal[4] - current[4])))
+                        if moment_to_angle_sign is not None and desired_sign != 0.0:
+                            desired_moment_sign = desired_sign * float(moment_to_angle_sign)
+                        probe = choose_identification_probe(
+                            env, current, actions, desired_moment_sign,
+                        )
+                    else:
+                        probe = None
+                    if probe is not None:
+                        selected = int(probe)
+                        identification_probe = True
+                        action = np.asarray(actions[selected], dtype=np.float32)
+                    else:
+                        action = np.asarray(
+                            float(args.fallback_magnitude) * fallback_normal,
+                            dtype=np.float32,
+                        )
+                        selected = -1
+                        fallback_used = True
+                else:
+                    action = np.asarray(actions[selected], dtype=np.float32)
+            else:
+                action = np.asarray(actions[selected], dtype=np.float32)
             before = recovery_before if recovery_macro else current.copy()
             terminated = truncated = False
             execution_steps = (
                 0 if recovery_macro
                 else args.recovery_pulse_steps if recovery
+                else args.fallback_pulse_steps if (fallback_used or identification_probe)
                 else args.calibration_pulse_steps if calibration_probe else args.pulse_steps
             )
+            predicted_target = None
+            predicted_mode_probabilities = None
+            predicted_direction_probability = None
+            if not recovery_macro and not fallback_used:
+                predicted_target, predicted_mode_probabilities, predicted_direction_probability = predict_transition(
+                    model, before, action, previous,
+                    mode_conditioned=bool(mode_conditioned and current_mode_id == 2),
+                    predictor=predictor, env=env,
+                    online_effects=online_effects if args.online_effect_correction else None,
+                    boundary_action_frame=bool(getattr(args, "boundary_action_frame", False)),
+                    previous_observed_angle_delta=last_observed_delta,
+                )
             for _ in range(execution_steps):
                 observation, _, terminated, truncated, _ = env.step(action)
                 current = np.asarray(observation["state"], dtype=np.float64).copy()
@@ -1533,24 +1837,17 @@ def closed_loop(
                 "strict_contact_sign_gate": bool(strict_contact_sign_gate),
                 "direct_observed_sign_reversal": bool(direct_observed_sign_reversal),
                 "calibration_probe": bool(calibration_probe),
+                "uncertainty_gate": bool(uncertainty_gate),
+                "fallback_only": bool(fallback_only),
+                "fallback_used": bool(fallback_used),
+                "adaptive_online_effect": bool(adaptive_online_effect),
+                "identification_probe": bool(identification_probe),
+                "online_identified_used": bool(online_identified_used),
+                "effect_gate": gate_decision,
                 "moment_to_angle_sign": moment_to_angle_sign,
                 "execution_steps": int(execution_steps),
-                "predicted_mode_probabilities": predict_transition(
-                    model, before, action, previous,
-                    mode_conditioned=bool(mode_conditioned and current_mode_id == 2 and not recovery),
-                    predictor=predictor, env=env,
-                    online_effects=online_effects if args.online_effect_correction else None,
-                    boundary_action_frame=bool(getattr(args, "boundary_action_frame", False)),
-                    previous_observed_angle_delta=last_observed_delta,
-                )[1].tolist(),
-                "predicted_direction_probability": float(predict_transition(
-                    model, before, action, previous,
-                    mode_conditioned=bool(mode_conditioned and current_mode_id == 2 and not recovery),
-                    predictor=predictor, env=env,
-                    online_effects=online_effects if args.online_effect_correction else None,
-                    boundary_action_frame=bool(getattr(args, "boundary_action_frame", False)),
-                    previous_observed_angle_delta=last_observed_delta,
-                )[2]),
+                "predicted_mode_probabilities": None if predicted_mode_probabilities is None else predicted_mode_probabilities.tolist(),
+                "predicted_direction_probability": None if predicted_direction_probability is None else float(predicted_direction_probability),
                 "pose_cost_after": pose_cost(current, goal),
                 "angle_after": angle_error(current[4], goal[4]),
                 "observed_angle_delta": float(wrap_angle(current[4] - before[4])),
@@ -1559,11 +1856,42 @@ def closed_loop(
                 "boundary_distance_after": float(physical_contact_geometry(env, current)["distance"]),
                 "boundary_mode_after": MODE_NAMES[current_mode_for_env(env, current)],
             })
+            observed_target = transition_target_from_states(before, current)
+            if predicted_target is not None:
+                trace[-1]["predicted_observed_effect_error"] = normalized_effect_error(
+                    predicted_target, observed_target,
+                )
+                trace[-1]["predicted_observed_effect_error_raw"] = float(
+                    np.linalg.norm(np.asarray(predicted_target) - np.asarray(observed_target))
+                )
+            else:
+                trace[-1]["predicted_observed_effect_error"] = None
+                trace[-1]["predicted_observed_effect_error_raw"] = None
             previous = action.astype(np.float64)
             last_observed_delta = float(wrap_angle(current[4] - before[4]))
-            if args.online_effect_correction and not recovery_macro and current_mode_id == 2:
+            if adaptive_online_effect and not recovery_macro and current_mode_id == 2:
+                local_key = effect_gate_key(env, before, action)
+                local_entry = online_local_effects.get(local_key)
+                if local_entry is None:
+                    online_local_effects[local_key] = {
+                        "mean": observed_target.tolist(), "count": 1,
+                        "sign_sum": float(np.sign(observed_target[0]) * action_moment_sign(before, action, env=env)),
+                        "last_error": 0.0 if predicted_target is None else normalized_effect_error(predicted_target, observed_target),
+                    }
+                else:
+                    count = int(local_entry["count"])
+                    mean = np.asarray(local_entry["mean"], dtype=np.float64)
+                    local_entry["mean"] = (mean + (observed_target - mean) / float(count + 1)).tolist()
+                    local_entry["count"] = count + 1
+                    local_entry["sign_sum"] = float(
+                        local_entry.get("sign_sum", 0.0)
+                        + np.sign(observed_target[0]) * action_moment_sign(before, action, env=env)
+                    )
+                    local_entry["last_error"] = float(
+                        0.0 if predicted_target is None else normalized_effect_error(predicted_target, observed_target)
+                    )
+            if args.online_effect_correction and not recovery_macro and not fallback_used and current_mode_id == 2:
                 key = online_effect_key(env, before, action)
-                observed_target = transition_target_from_states(before, current)
                 cache = online_effects.get(key)
                 if cache is None:
                     online_effects[key] = {"mean": observed_target.tolist(), "count": 1}
@@ -1687,11 +2015,57 @@ def closed_loop(
             "wrong_sign_events": bootstrap_mean([
                 float(row["wrong_sign_events"]) for row in records
             ], 94207),
+            "fallback_rate": bootstrap_mean([
+                float(np.mean([bool(item.get("fallback_used", False)) for item in row["trace"]]))
+                if row["trace"] else 0.0
+                for row in records
+            ], 94210),
+            "root_fallback_rate": bootstrap_mean([
+                float(any(bool(item.get("fallback_used", False)) for item in row["trace"]))
+                for row in records
+            ], 94211),
+            "identification_probe_rate": bootstrap_mean([
+                float(np.mean([bool(item.get("identification_probe", False)) for item in row["trace"]]))
+                if row["trace"] else 0.0
+                for row in records
+            ], 94215),
+            "online_identified_rate": bootstrap_mean([
+                float(np.mean([bool(item.get("online_identified_used", False)) for item in row["trace"]]))
+                if row["trace"] else 0.0
+                for row in records
+            ], 94216),
+            "gate_accept_rate": bootstrap_mean([
+                float(np.mean([
+                    bool(item.get("effect_gate", {}).get("valid", False))
+                    for item in row["trace"]
+                    if item.get("effect_gate") is not None
+                ])) if any(item.get("effect_gate") is not None for item in row["trace"]) else 0.0
+                for row in records
+            ], 94212),
+            "gate_no_support_rate": bootstrap_mean([
+                float(np.mean([
+                    item.get("effect_gate", {}).get("reason") == "no_support_bin"
+                    for item in row["trace"]
+                    if item.get("effect_gate") is not None
+                ])) if any(item.get("effect_gate") is not None for item in row["trace"]) else 0.0
+                for row in records
+            ], 94213),
+            "predicted_observed_effect_error": bootstrap_mean([
+                float(np.mean([
+                    item["predicted_observed_effect_error"]
+                    for item in row["trace"]
+                    if item.get("predicted_observed_effect_error") is not None
+                ])) if any(item.get("predicted_observed_effect_error") is not None for item in row["trace"]) else 0.0
+                for row in records
+            ], 94214),
         },
         "predictor": predictor,
         "contact_geometry_sign_feedback": bool(contact_geometry_sign_feedback),
         "recent_contact_sign_fallback": bool(recent_contact_sign_fallback),
         "online_effect_correction": bool(args.online_effect_correction),
+        "uncertainty_gate": bool(uncertainty_gate),
+        "fallback_only": bool(fallback_only),
+        "adaptive_online_effect": bool(adaptive_online_effect),
         "online_effect_entries": [
             {"key": key, "count": int(value["count"])}
             for key, value in sorted(online_effects.items())
@@ -1703,6 +2077,8 @@ def closed_loop(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
+                        help="auto selects CUDA when available; cuda never falls back to CPU")
     parser.add_argument("--root-protocol", choices=("terminal_pose", "boundary_contact"), default="terminal_pose",
                         help="terminal_pose preserves the legacy center-radius roots; boundary_contact samples the actual T polygon boundary")
     parser.add_argument("--boundary-action-frame", action="store_true",
@@ -1751,6 +2127,17 @@ def parse_args() -> argparse.Namespace:
                         help="ablation: hard-gate contact candidates whose learned angle-direction probability disagrees with the goal")
     parser.add_argument("--online-effect-correction", action="store_true",
                         help="use observed same-region/action-bin transitions for subsequent runtime ranking")
+    parser.add_argument("--uncertainty-gate", action="store_true",
+                        help="execute learned contact actions only inside the training support/uncertainty gate")
+    parser.add_argument("--fallback-only", action="store_true",
+                        help="contact-only safe baseline: use short inward pulses instead of learned tangent actions")
+    parser.add_argument("--min-effect-support", type=int, default=3)
+    parser.add_argument("--min-informative-support", type=int, default=2)
+    parser.add_argument("--min-effect-sign-consistency", type=float, default=0.75)
+    parser.add_argument("--max-effect-angle-std", type=float, default=0.05)
+    parser.add_argument("--max-train-effect-error", type=float, default=1.5)
+    parser.add_argument("--fallback-magnitude", type=float, default=0.04)
+    parser.add_argument("--fallback-pulse-steps", type=int, default=1)
     parser.add_argument("--calibration-pulse-steps", type=int, default=1)
     parser.add_argument("--calibration-angle-threshold", type=float, default=1.0e-4)
     parser.add_argument("--feedback-contact-threshold", type=float, default=24.0,
@@ -1770,6 +2157,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    device = resolve_device(args.device)
+    if args.device == "auto" and device.type != "cuda":
+        print("CUDA unavailable; running CPU is permitted only after this explicit device check.")
     # The corrected protocol couples real-boundary roots to the real-boundary
     # action frame.  The legacy terminal protocol remains center/vertex based
     # unless the ablation is explicitly requested.
@@ -1801,6 +2191,10 @@ def main() -> None:
             train_rows, args.seed, args.trees, env=env,
             boundary_action_frame=args.boundary_action_frame,
             contact_chart_alpha=args.contact_chart_alpha,
+            device=device,
+        )
+        model["effect_gate"] = fit_effect_gate_statistics(
+            train_rows, model, env, args.boundary_action_frame,
         )
         held_features = np.asarray([
             lifted_row_features(row, env=env, boundary_action_frame=args.boundary_action_frame)
@@ -1852,11 +2246,48 @@ def main() -> None:
             direct_observed_sign_reversal=args.direct_observed_sign_reversal,
             predictor="goal_ranker",
         )
+        uncertainty_loop = closed_loop(
+            env, held_roots, model, args, mode_conditioned=True,
+            contact_recovery=args.contact_recovery,
+            observed_sign_feedback=args.observed_sign_feedback,
+            observed_sign_calibration=args.observed_sign_calibration,
+            contact_geometry_sign_feedback=args.contact_geometry_sign_feedback,
+            recent_contact_sign_fallback=args.recent_contact_sign_fallback,
+            strict_contact_sign_gate=args.strict_contact_sign_gate,
+            direct_observed_sign_reversal=args.direct_observed_sign_reversal,
+            uncertainty_gate=True,
+        )
+        fallback_loop = closed_loop(
+            env, held_roots, model, args, mode_conditioned=False,
+            contact_recovery=args.contact_recovery,
+            observed_sign_feedback=False,
+            observed_sign_calibration=False,
+            contact_geometry_sign_feedback=False,
+            recent_contact_sign_fallback=False,
+            strict_contact_sign_gate=False,
+            direct_observed_sign_reversal=False,
+            fallback_only=True,
+        )
+        adaptive_loop = closed_loop(
+            env, held_roots, model, args, mode_conditioned=True,
+            contact_recovery=args.contact_recovery,
+            observed_sign_feedback=args.observed_sign_feedback,
+            observed_sign_calibration=args.observed_sign_calibration,
+            contact_geometry_sign_feedback=args.contact_geometry_sign_feedback,
+            recent_contact_sign_fallback=args.recent_contact_sign_fallback,
+            strict_contact_sign_gate=args.strict_contact_sign_gate,
+            direct_observed_sign_reversal=args.direct_observed_sign_reversal,
+            uncertainty_gate=True,
+            adaptive_online_effect=True,
+        )
     finally:
         env.close()
     report = {
         "protocol": {
             "environment": "swm/PushT-v1",
+            "requested_device": args.device,
+            "resolved_device": str(device),
+            "cuda_device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
             "root_protocol": args.root_protocol,
             "boundary_action_frame": bool(args.boundary_action_frame),
             "legacy_center_action_frame": bool(args.legacy_center_action_frame),
@@ -1882,6 +2313,17 @@ def main() -> None:
             "direct_observed_sign_reversal": bool(args.direct_observed_sign_reversal),
             "strict_direction_gate": bool(args.strict_direction_gate),
             "online_effect_correction": bool(args.online_effect_correction),
+            "uncertainty_gate": True,
+            "fallback_only_control": True,
+            "effect_gate_thresholds": {
+                "min_support": args.min_effect_support,
+                "min_informative_support": args.min_informative_support,
+                "min_sign_consistency": args.min_effect_sign_consistency,
+                "max_angle_std": args.max_effect_angle_std,
+                "max_train_effect_error": args.max_train_effect_error,
+                "fallback_magnitude": args.fallback_magnitude,
+                "fallback_pulse_steps": args.fallback_pulse_steps,
+            },
             "temporal_event_features": True,
             "previous_observed_angle_delta": True,
             "goal_conditioned_ranker": "training-only direct one-step pose-cost ablation",
@@ -1908,6 +2350,14 @@ def main() -> None:
             "training_only": True,
             "geometry_source": model["contact_chart"]["geometry_source"],
         },
+        "effect_gate": {
+            "bins": len(model["effect_gate"]),
+            "support_total": int(sum(item["support"] for item in model["effect_gate"].values())),
+            "support_bins": {
+                key: value for key, value in sorted(model["effect_gate"].items())
+            },
+            "training_only": True,
+        },
         "held_out": {
             "rows": len(held_rows), "mode_accuracy": mode_accuracy,
             "mode_label_counts": {name: int(np.sum(held_labels == index)) for index, name in enumerate(SUCCESSOR_NAMES)},
@@ -1918,6 +2368,9 @@ def main() -> None:
             "mode_aware_lookahead": mode_loop,
             "contact_chart_lookahead": chart_loop,
             "goal_conditioned_ranker": goal_ranker_loop,
+            "uncertainty_gated": uncertainty_loop,
+            "safe_fallback": fallback_loop,
+            "adaptive_online": adaptive_loop,
         },
         "sanity_checks": {
             "finite": bool(np.isfinite(held_features).all()),
@@ -1944,10 +2397,16 @@ def main() -> None:
         ("global_one_step", global_loop),
         ("mode_aware_lookahead", mode_loop),
         ("contact_chart_lookahead", chart_loop),
+        ("uncertainty_gated", uncertainty_loop),
+        ("safe_fallback", fallback_loop),
+        ("adaptive_online", adaptive_loop),
     ):
+        ranking_value = ranking["metrics"].get(name)
         lines.append(
-            "| %s | %.4f | %.3f | %.3f | %.3f | %.3f |" % (
-                name, ranking["metrics"][name]["estimate"], loop["metrics"]["pose_success"]["estimate"],
+            "| %s | %s | %.3f | %.3f | %.3f | %.3f |" % (
+                name,
+                "n/a" if ranking_value is None else "%.4f" % ranking_value["estimate"],
+                loop["metrics"]["pose_success"]["estimate"],
                 loop["metrics"]["final_xy"]["estimate"], loop["metrics"]["final_angle"]["estimate"],
                 loop["metrics"]["contact_loss_rate"]["estimate"],
             )
@@ -1962,7 +2421,7 @@ def main() -> None:
     )
     lines += ["", "Mode accuracy: %.4f" % mode_accuracy, "", report["claim_boundary"], ""]
     (output / "mode_aware_shared_candidate.md").write_text("\n".join(lines))
-    print(json.dumps({"output": str(output), "mode_accuracy": mode_accuracy, "ranking": ranking["metrics"], "closed_loop": {"global": global_loop["metrics"], "mode_aware": mode_loop["metrics"], "goal_ranker": goal_ranker_loop["metrics"]}}, indent=2))
+    print(json.dumps({"output": str(output), "mode_accuracy": mode_accuracy, "ranking": ranking["metrics"], "closed_loop": {"global": global_loop["metrics"], "mode_aware": mode_loop["metrics"], "goal_ranker": goal_ranker_loop["metrics"], "uncertainty_gated": uncertainty_loop["metrics"], "safe_fallback": fallback_loop["metrics"], "adaptive_online": adaptive_loop["metrics"]}}, indent=2))
 
 
 if __name__ == "__main__":

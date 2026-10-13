@@ -86,29 +86,50 @@ def _features(
     return np.asarray(x_values, dtype=np.float32), np.asarray(y_values, dtype=np.float32), roots, np.asarray(goals, dtype=np.float64)
 
 
-def _fit_predict(train_x: np.ndarray, train_y: np.ndarray, eval_x: np.ndarray, seed: int, epochs: int) -> tuple[np.ndarray, dict[str, Any]]:
+def _resolve_device(requested: str) -> torch.device:
+    if requested not in {"auto", "cpu", "cuda"}:
+        raise ValueError(f"unsupported device: {requested}")
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("--device cuda requested but torch.cuda.is_available() is false")
+    if requested == "auto":
+        requested = "cuda" if torch.cuda.is_available() else "cpu"
+    return torch.device(requested)
+
+
+def _fit_predict(
+    train_x: np.ndarray,
+    train_y: np.ndarray,
+    eval_x: np.ndarray,
+    seed: int,
+    epochs: int,
+    device_name: str = "auto",
+) -> tuple[np.ndarray, dict[str, Any]]:
     _seed(seed)
+    device = _resolve_device(device_name)
     x_mean = train_x.mean(axis=0)
     x_scale = np.maximum(train_x.std(axis=0), 1e-3)
     y_mean = train_y.mean(axis=0)
     y_scale = np.maximum(train_y.std(axis=0), 1e-3)
-    model = EffectMLP(train_x.shape[1])
+    model = EffectMLP(train_x.shape[1]).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=1e-4)
-    x = torch.as_tensor((train_x - x_mean) / x_scale, dtype=torch.float32)
-    y = torch.as_tensor((train_y - y_mean) / y_scale, dtype=torch.float32)
+    x = torch.as_tensor((train_x - x_mean) / x_scale, dtype=torch.float32, device=device)
+    y = torch.as_tensor((train_y - y_mean) / y_scale, dtype=torch.float32, device=device)
     for _ in range(int(epochs)):
         optimizer.zero_grad(set_to_none=True)
         loss = torch.mean((model(x) - y) ** 2)
         loss.backward()
         optimizer.step()
     with torch.inference_mode():
-        pred = model(torch.as_tensor((eval_x - x_mean) / x_scale, dtype=torch.float32)).numpy()
+        pred = model(torch.as_tensor(
+            (eval_x - x_mean) / x_scale, dtype=torch.float32, device=device,
+        )).cpu().numpy()
     pred = pred * y_scale + y_mean
     return pred, {
         "x_mean": x_mean.tolist(), "x_scale": x_scale.tolist(),
         "y_mean": y_mean.tolist(), "y_scale": y_scale.tolist(),
         "epochs": int(epochs),
         "parameter_count": int(sum(p.numel() for p in model.parameters())),
+        "device": str(device),
     }
 
 
@@ -135,6 +156,7 @@ def run(
     epochs: int = 300,
     bootstrap_samples: int = 1000,
     feature_mode: str = "frozen_latent_action",
+    device: str = "auto",
 ) -> dict[str, Any]:
     payload = json.loads(dataset.read_text(encoding="utf-8"))
     all_records = payload["records"]
@@ -151,8 +173,8 @@ def run(
         grouped_outcome.setdefault(root, []).append(index)
     reports = []
     for seed in SEEDS:
-        prediction, training = _fit_predict(train_x, train_y, outcome_x, seed, epochs)
-        train_prediction, _ = _fit_predict(train_x, train_y, train_x, seed, epochs)
+        prediction, training = _fit_predict(train_x, train_y, outcome_x, seed, epochs, device)
+        train_prediction, _ = _fit_predict(train_x, train_y, train_x, seed, epochs, device)
         predicted_terminal = outcome_sources + prediction
         predicted_cost = np.linalg.norm(predicted_terminal - outcome_goals, axis=1)
         actual_cost = np.linalg.norm(outcome_sources + outcome_y - outcome_goals, axis=1)
@@ -209,6 +231,7 @@ def run(
             "outcome_used_for_training_or_selection": False,
             "adapter_role": "intervention_supervised",
             "feature_mode": feature_mode,
+            "device": str(device),
             "feature_mode_boundary": "privileged_state modes are diagnostic upper bounds and not RGB-runtime evidence",
         },
         "claim_boundary": "Intervention-supervised candidate-effect adapter; not frozen geometry evidence, not online RGB planning, and not universal transfer.",
@@ -225,6 +248,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--bootstrap-samples", type=int, default=1000)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument(
         "--feature-mode",
         choices=("frozen_latent_action", "history_latent_action", "privileged_state_action", "latent_plus_state_action"),

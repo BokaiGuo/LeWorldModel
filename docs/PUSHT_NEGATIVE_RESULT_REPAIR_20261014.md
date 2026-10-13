@@ -65,3 +65,43 @@ RGB/latent observation
 
 若 contact/mode gate 或 action-effect uncertainty 不通过，系统只能拒绝 learned
 pose action，不能以 mode accuracy 或 latent MSE 代替 torque sign 证据。
+
+## 2026-10-14 matched boundary controller follow-up
+
+The 64-train/32-held-out boundary protocol was rerun with the complete
+observed-sign, recovery, strict-direction and online-effect gates. The repair
+arm reached successor-mode accuracy `0.957` and boundary-contact loss `0/32`,
+but pose success was only `3/32`; the mode-aware selector did not exceed the
+global selector.
+
+A separate support intervention added four smaller tangent magnitudes and
+goal-directed translation candidates. It reached mode accuracy `0.972` and
+again boundary-contact loss `0/32`, but pose success remained `3/32`; the
+mode-aware final-XY estimate worsened from `47.43` to `52.60`, and strict
+direction gating yielded `1/32` pose successes. This rules out the simple
+hypothesis that the negative result is caused only by an undersized candidate
+bank. Enlarging support changes the mode/effect distribution without restoring
+within-mode action-to-angle identifiability.
+
+The next repair must learn or verify local action effects under the same
+contact chart, with uncertainty and support gates, rather than adding more
+uncalibrated actions. The support-expanded artifact is
+`le-wm-main/results/negative_cause_diagnosis_20261014/boundary_support_augmented_64x32_seed20261014/`.
+
+### Matched support-control follow-up
+
+For the support-expanded candidate bank, the fast baseline used the same
+64/32 roots, action magnitudes and one-step lookahead as the repaired arm, but
+disabled recovery, sign calibration and online effect correction:
+
+| arm (global selector) | pose success | final XY | contact loss | boundary loss |
+|---|---:|---:|---:|---:|
+| support baseline | 0/32 | 114.49 | 30/32 | 0/32 |
+| support + full repair | 3/32 | 52.60 | 25/32 | 0/32 |
+
+The repair therefore has a real local effect on XY and pose outcomes, but the
+confidence interval and absolute success remain insufficient for stable pose
+closure. `boundary_contact_loss` is not interchangeable with actual contact
+retention: it is zero in all three arms because the polygon-gap gate remains
+within its declared threshold even when the older center-distance contact
+metric reports loss. Future release gates must report both quantities.

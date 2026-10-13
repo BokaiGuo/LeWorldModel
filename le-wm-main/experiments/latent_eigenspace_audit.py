@@ -124,7 +124,10 @@ def build_dataset(args: argparse.Namespace):
     requested_steps = int(args.num_steps)
     keys_to_load = list(preset["keys"])
     if getattr(args, "rich_fields", False):
-        dataset_path = Path(swm.data.utils.get_cache_dir(sub_folder="datasets"), f"{dataset_name}.h5")
+        dataset_filename = str(dataset_name)
+        if not dataset_filename.endswith((".h5", ".hdf5")):
+            dataset_filename = f"{dataset_filename}.h5"
+        dataset_path = Path(swm.data.utils.get_cache_dir(sub_folder="datasets"), dataset_filename)
         with h5py.File(dataset_path, "r", swmr=True) as f:
             available = set(f.keys())
         optional_keys = [
@@ -384,9 +387,14 @@ def collect_latents(
             if state_key and state_key in batch:
                 state_seq = torch.nan_to_num(batch[state_key], 0.0)
                 goal_state = state_seq[:, -1:].expand_as(state_seq[:, :step_count])
-                goal_flat = to_numpy(goal_state.reshape(rows, -1))
+                # Keep the distance computation on the active device.  The
+                # exported rich field is NumPy, but ``state_seq`` may be a
+                # CUDA tensor; mixing the two here makes CUDA runs fail at
+                # the torch/NumPy boundary.
+                goal_tensor = goal_state.reshape(rows, -1)
+                goal_flat = to_numpy(goal_tensor)
                 _append_if_present(rich, "goals", goal_flat)
-                dist = (state_seq[:, :step_count].reshape(rows, -1) - goal_flat)
+                dist = state_seq[:, :step_count].reshape(rows, -1) - goal_tensor
                 success = (dist.square().sum(dim=1).sqrt() <= args.goal_threshold).float()
                 _append_if_present(rich, "success", to_numpy(success[:, None]))
             for key in preset.get("physical_keys", []):

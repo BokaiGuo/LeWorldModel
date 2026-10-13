@@ -9,6 +9,7 @@ DEVICE=""
 NUM_WORKERS=0
 PROGRESS_EVERY=10
 STAGE1_CHUNK_BATCHES=20
+STAGE1_BATCH_SIZE=64
 STAGE2_CHUNK_BATCHES=50
 STAGE1_MAX_BATCHES=0
 STAGE2_MAX_BATCHES=0
@@ -91,6 +92,7 @@ Options:
   --num-workers N                DataLoader workers. Default: 0
   --progress-every N             Progress log interval. Default: 10
   --stage1-chunk-batches N       Phase 1 chunk size in batches. Default: 20
+  --stage1-batch-size N          Phase 1 CUDA/DataLoader batch size. Default: 64
   --stage2-chunk-batches N       Phase 2 chunk size in batches. Default: 50
   --stage1-max-batches N         Phase 1 cap; 0 means full dataset. Default: 0
   --stage2-max-batches N         Phase 2 cap; 0 means full dataset. Default: 0
@@ -159,6 +161,7 @@ while [[ $# -gt 0 ]]; do
     --num-workers) NUM_WORKERS="$2"; shift 2 ;;
     --progress-every) PROGRESS_EVERY="$2"; shift 2 ;;
     --stage1-chunk-batches) STAGE1_CHUNK_BATCHES="$2"; shift 2 ;;
+    --stage1-batch-size) STAGE1_BATCH_SIZE="$2"; shift 2 ;;
     --stage2-chunk-batches) STAGE2_CHUNK_BATCHES="$2"; shift 2 ;;
     --stage1-max-batches) STAGE1_MAX_BATCHES="$2"; shift 2 ;;
     --stage2-max-batches) STAGE2_MAX_BATCHES="$2"; shift 2 ;;
@@ -276,6 +279,10 @@ run_logged() {
   print_command "$@"
   printf '[log] %s\n' "$log_path"
   if [[ "$DRY_RUN" -eq 0 ]]; then
+    # Some stages write their artifact into a new nested directory while the
+    # log is kept beside that directory.  Create the log parent explicitly so
+    # a fresh full run cannot fail before the child command starts.
+    mkdir -p "$(dirname "$log_path")"
     if [[ "$RESUME" -eq 1 ]]; then
       "$@" 2>&1 | tee -a "$log_path"
     else
@@ -370,6 +377,7 @@ run_logged_if_needed "$OUTPUT/latents.npz" "$OUTPUT/stage1.log" \
   "${RESUME_ARGS[@]}" \
   "${STAGE1_MAX_ARGS[@]}" \
   --chunk-batches "$STAGE1_CHUNK_BATCHES" \
+  --batch-size "$STAGE1_BATCH_SIZE" \
   --save-max-samples "$SAVE_MAX_SAMPLES" \
   "${RICH_ARGS[@]}"
 
