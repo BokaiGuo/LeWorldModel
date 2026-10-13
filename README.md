@@ -12,6 +12,11 @@ The repository deliberately separates three things:
 2. theory and diagnostic tooling under `le-wm-main/experiments/` and `docs/`;
 3. small, curated result artifacts under `release_results/`.
 
+The project-level research interpretation and its current evidence boundary are
+recorded in [PROJECT_UNDERSTANDING_FROM_USER_20261014.md](docs/PROJECT_UNDERSTANDING_FROM_USER_20261014.md).
+This is a positioning and reasoning record, not a replacement for the
+reproducible experiment artifacts.
+
 ## What is established
 
 - The finite-horizon transfer object is the task-space operator
@@ -83,6 +88,9 @@ listed in `REPRODUCIBILITY.md`; they are not committed to this repository.
 - `docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml` — proposed D0–D2 protocol schema.
 - `docs/RESEARCH_PROGRESS_20261014.md` — latest evidence-bounded progress and
   claim status.
+- `docs/PROJECT_UNDERSTANDING_FROM_USER_20261014.md` — project owner’s unified
+  interpretation of the research question, architecture, negative results, and
+  remaining evidence gap.
 - `release_results/` — compact JSON/Markdown evidence selected for public
   inspection.
 - `HORIZON_CONDITIONED_TRANSFER_SUFFICIENT_CONTROL_20261013.md` — current

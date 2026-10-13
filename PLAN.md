@@ -2,6 +2,9 @@
 
 本轮对话整理出的完整研究上下文、文献边界、负结果和证据门槛见
 [RESEARCH_CONTEXT_20261012.md](RESEARCH_CONTEXT_20261012.md)。该档案是研究决策的上下文入口；
+项目负责人对整个研究的理解与统一问题定义见
+[docs/PROJECT_UNDERSTANDING_FROM_USER_20261014.md](docs/PROJECT_UNDERSTANDING_FROM_USER_20261014.md)。
+该记录用于保持研究定位、负结果解释和证据边界的一致性；实验事实仍以对应 artifact 为准。
 执行优先级仍以本文件和 `RESEARCH_PLAN_EVOLUTION_20261012.md` 为准。
 谱分析主线的具体解释、完整公式推导和统一证据边界见
 [SPECTRAL_ANALYSIS_RESEARCH_GUIDE_20261012.md](SPECTRAL_ANALYSIS_RESEARCH_GUIDE_20261012.md)；
@@ -74,6 +77,23 @@ realized latent，D1 仍 fail-closed；该结果不构成 GDD-WM 或 frozen visu
 严格姿态闭合仍为负，不能将这些结果升级为 universal alignment、universal world model
 或视觉在线规划结论。
 
+### 文献更新后的双主线边界
+
+value equivalence、state abstraction、bisimulation 和 DeepMDP 已经说明：决策表示不必
+恢复全部环境动力学，只需在声明的任务/价值函数类上保持决策相关更新。因此本项目不把
+“只保留决策相关信息”本身作为新颖性，而将新增问题收紧为：
+
+> 在 frozen RGB latent、有限动作激励、部分可观测和固定有限 horizon 下，能否利用独立真实 successor 数据，对候选动作的 transfer uncertainty 进行校准，并决定何时允许规划？
+
+HTSC 作为第一条科学主线，回答 **Can we trust the world model?**；它的输出应是候选
+动作级风险上界和 `permit/abstain`，而非无条件的 commutator/alignment certificate。
+GDD-WM 作为第二条科学主线，回答 **Can reliable decisions improve the world model?**；
+它利用已执行验证的动作偏好学习预测几何，并必须在新候选分布和独立规划结果上证明收益。
+
+两条线共享 candidate data、\(G_h^\Phi\)、action support、real/predicted successor
+和闭环评估，但不共享成功判据。GDD-WM 的重训练收益不能反向证明 frozen latent 原本
+充分；HTSC 的安全拒绝也不能被写成 GDD-WM 蒸馏成功。
+
 ## 研究定位
 
 本计划的最新演进、阶段门和论文级决策树见
@@ -141,6 +161,33 @@ geometry selector estimand。
 ```
 
 两个目录仍然保留，原因是兼容既有 CLI、测试和结果路径；它们是统一研究中的模块，不再分别追踪科学问题或分别形成结论。
+
+## 文献约束下的决定性实验
+
+下一阶段不以增加更多孤立指标为目标，而是建立同一测试起点、同一候选动作集和真实后果
+记录上的统一 benchmark。每个候选动作应同时记录：
+
+1. 真实 successor 与任务后果；
+2. RGB successor 与 learned prediction；
+3. action-identifiability / inverse risk；
+4. geometry diagnostics 与 \(G_h^\Phi\)；
+5. action ranking、regret 和证书输出；
+6. 选择性规划的独立闭环结果。
+
+主要估计顺序固定为：
+
+```text
+action identifiability
+  -> real/predicted consistency
+  -> incremental geometry
+  -> decision certificate
+  -> closed-loop consequence
+```
+
+控制 action risk 后的 geometry 增量是重要检验，但不能自动解释为 geometry 的独立因果
+贡献；如果 action risk 是 geometry 影响 planning 的中介变量，还必须使用 matched intervention
+和针对性的 Schur/transient 干预。若证书误差界过宽或候选动作超出支持集，协议必须
+`abstain`，而不是为了得到正结果放宽门槛。
 
 ## 统一对象与证据门槛
 

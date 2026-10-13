@@ -1,11 +1,11 @@
 # Learned latent 短期记忆、接触动力学与视觉规划：证据地图
 
-更新时间：2026-10-13  
+更新时间：2026-10-14
 检索方式：逐条核对 arXiv 元数据与摘要；经典论文优先，2025--2026 预印本不作为已解决问题的证据。链接对应原始论文页面。
 
 ## 综述问题与边界
 
-本综述回答：在部分可观测视觉 world model 中，已有工作如何处理短期历史、非平稳动力学、接触模式和规划闭环；这些机制为什么不能直接解决当前 LeWM 的 frozen-latent、RGB-only、PushT 接触问题；哪些设计应进入下一轮协议。
+本综述回答：在部分可观测视觉 world model 中，已有工作如何处理短期历史、非平稳动力学、接触模式、价值保持和规划闭环；这些机制为什么不能直接解决当前 LeWM 的 frozen-latent、RGB-only、PushT 接触问题；哪些设计应进入下一轮协议。
 
 不把“latent prediction RMSE 下降”视为规划成功；不把有 privileged contact state、结构化几何或额外 action training 的结果直接外推到 frozen RGB latent。
 
@@ -23,6 +23,8 @@
 | [S4](https://arxiv.org/abs/2111.00396) | 用结构化 state-space kernel 建模长程依赖，提供稳定的线性记忆参数化。 | 长序列建模能力不等于决策充分性；平滑 SSM 仍可能把稀疏冲击和 mode switch 平均掉。 | Fourier/SSM 作为低方差 carrier；事件/phase 作为条件 residual，而不是强行统一所有 horizon。 |
 | [Mamba](https://arxiv.org/abs/2312.00752) | 让 SSM 参数依赖输入，以选择性保留/忘记内容，解决固定记忆对离散事件不敏感的问题。 | 选择性状态更新本身不提供 contact label、action identifiability 或 planning-risk calibration。 | 可作为后续候选 memory backbone，但必须用 action-ranking 和 successor consistency 验收，而非 sequence loss。 |
 | [V-JEPA 2](https://arxiv.org/abs/2506.09985) | 在大规模视频预训练后，用少量 robot video 后训练 action-conditioned latent world model，并展示 image-goal planning。 | 关键贡献包含 action-conditioned post-training、robot data 和完整 planner；不能等价于 frozen generic latent + local adapter。 | LeWM 若要声称规划，必须把 action conditioning、candidate support、receding-horizon verification 写入协议。 |
+| [DeepMDP](https://proceedings.mlr.press/v97/gelada19a.html) | 研究 latent transition、reward approximation 与 representation quality 之间的 value-preserving 条件。 | 其抽象通常围绕给定任务/价值函数的 Bellman 保持，不直接处理 frozen RGB、有限动作激励、接触切换或真实 successor 校准。 | LeWM 不能把“只保留决策相关信息”作为新意；增量应是可操作的、候选动作级的 transfer 认证。 |
+| *The Value Equivalence Principle for Model-Based Reinforcement Learning* | 说明模型不必恢复全部环境动力学，只要在声明的策略/价值函数集合上保持决策相关更新即可。 | value equivalence 是任务/函数类条件性的，不自动给出有限数据下的 permit/abstain 规则，也不等于视觉动作后果可辨识。 | 将 HTSC 明确定义为对有限候选动作和有限 horizon 的可校准决策证书，而非普适动力学恢复定理。 |
 
 ## 文献共识与当前负结果的统一解释
 
@@ -56,6 +58,39 @@ PlaNet、Dreamer 和 Visual Foresight 的共同点不是某个特定 memory basi
 ### 4. 选择性 memory 也必须有支持集和不确定性门
 
 Mamba 式 selective update、HiP-RSSM 式 hidden parameter inference 都要求输入带有足够信息。若 action distribution 没覆盖关键 torque、接触转移样本稀疏，任何 memory selector 都可能在 fit split 看似稳定、在新 episode 发生 inversion。
+
+### 5. Value equivalence 不是本项目的空白
+
+Value equivalence、state abstraction、bisimulation 和 DeepMDP 已经说明：world model
+不需要恢复所有状态细节，只需要保留给定任务、策略或价值函数集合所需的决策信息。因此，
+“决策充分性”不能单独作为创新声明。
+
+LeWorldModel 的可争取增量必须更具体：在 frozen RGB latent、有限动作激励、部分可观测和
+固定有限 horizon 下，利用独立真实 successor 数据估计候选动作级的 transfer uncertainty，
+并输出是否允许规划的可执行判断。这里的关键不是抽象模型是否 value-equivalent，而是：
+
+```text
+有限视觉历史 + 动作支持 + 校准数据
+  -> 候选动作的 transfer-risk bound
+  -> action-ranking confidence
+  -> permit / abstain
+```
+
+这也是 HTSC 与传统 value-equivalent abstraction 的区别：前者应当是部署时、候选动作级、
+支持集条件化的判断协议；后者主要刻画抽象模型在给定价值/策略类上的保持性质。
+
+### 6. 两条科学主线不能混为一谈
+
+HTSC 与 GDD-WM 共享 candidate data、\(G_h^\Phi\)、action support、real/predicted
+successor 和独立规划评估，但成功标准不同：
+
+- **HTSC — Can we trust the world model?** 给定冻结模型，判断任务相关信息是否存在、动作
+  后果是否可辨识、预测是否可靠到足以选动作；结果可以是 `permit` 或 `abstain`。
+- **GDD-WM — Can reliable decisions improve the world model?** 利用执行验证过的动作偏好
+  学习预测几何，同时保持真实动力学一致性，并在新候选分布上取得独立收益。
+
+GDD-WM 的训练收益不能反向证明原 frozen latent 已经具备充分性；反之，HTSC 的拒绝或放行
+也不能被写成 GDD-WM 的蒸馏结果。
 
 ## 对 LeWM 方法论的调整
 
@@ -104,9 +139,9 @@ memory lift
 
 ## Gap verdict
 
-**Partly holds.** 文献已经覆盖了 latent overshooting、recurrent hidden state、SSM memory、视觉 MPC、显式 contact mode 和结构化接触动力学；因此“提出一种 memory/adapter 就解决接触规划”不是空白。
+**Partly holds.** 文献已经覆盖了 latent overshooting、recurrent hidden state、SSM memory、视觉 MPC、显式 contact mode、结构化接触动力学以及 value-preserving abstraction；因此“提出一种 memory/adapter”或“只保留决策相关信息”都不是空白。
 
-仍成立的窄 gap 是：在 frozen RGB latent、无 privileged contact state、有限 action support 的条件下，能否以 horizon-conditioned、support-aware 的 transfer sufficiency protocol 预测何时历史信息真正转化为 action/planning gain。这个 gap 需要跨 architecture、environment 和独立 planning consequence 才能成立。
+仍成立的窄 gap 是：在 frozen RGB latent、无 privileged contact state、有限 action support 的条件下，能否以 horizon-conditioned、support-aware 的 transfer sufficiency protocol，校准候选动作级风险并预测何时历史信息真正转化为 action/planning gain。这个 gap 需要跨 architecture、environment、真实 successor 和独立 planning consequence 才能成立。
 
 ## 目前可以写进论文的句子
 
@@ -115,6 +150,10 @@ memory lift
 中文：
 
 > 现有工作分别通过随机/递归隐状态、action-conditioned 训练、闭环 MPC 或显式接触结构处理部分可观测性、长时预测和接触不连续性；这些机制不能互相替代。因此本研究将 memory 定义为有限时域 transfer sufficiency，以固定 Fourier 作为低方差载体，以 phase/event 作为条件 residual，并把 selector instability 作为风险诊断，而不是部署一个根据结果调出来的 memory selector。
+
+进一步需要补充：
+
+> Value-equivalent abstraction 已经说明决策不需要保留全部动力学；本研究的窄问题是，有限 RGB 动作干预能否把 frozen latent 的候选动作 transfer uncertainty 校准为可执行的 `permit/abstain` 证书，并在独立闭环结果上得到验证。
 
 ## 证据等级与未完成项
 

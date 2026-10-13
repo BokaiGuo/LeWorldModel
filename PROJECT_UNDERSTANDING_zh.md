@@ -2,6 +2,9 @@
 
 最后检查：2026-10-12。当前执行方案见
 [RESEARCH_PLAN_EVOLUTION_20261012.md](RESEARCH_PLAN_EVOLUTION_20261012.md)。
+项目负责人对整体研究的综合理解记录见
+[docs/PROJECT_UNDERSTANDING_FROM_USER_20261014.md](docs/PROJECT_UNDERSTANDING_FROM_USER_20261014.md)。
+该文件记录研究定位、统一架构、负结果的共同解释和当前证据缺口，不替代实验结果。
 数学物理工具包见
 [MATHEMATICAL_PHYSICS_TOOLKIT_20261012.md](MATHEMATICAL_PHYSICS_TOOLKIT_20261012.md)。
 本轮对话的完整结构化上下文、文献重叠、证据边界和负结果账本见
@@ -109,7 +112,68 @@ identifiability 和 external task transfer 三道 gate，不能用 latent separa
 
 因此，alignment、principal angle、projector overlap、commutator、Schur off-diagonal energy 和 transient amplification 不是一组孤立指标，而是同一 covariance–predictor pair 在不同几何和时间尺度下的诊断组件。
 
-## 三、四个研究层级
+## 三、研究定位的进一步收紧：可辨识、可认证、可改造
+
+结合新增的 value equivalence、state abstraction、bisimulation 与 action-identifiability
+文献，项目的核心创新不应表述为“提出一种更好的 world model”，而应表述为：
+
+> **Decision Transfer Identifiability and Trustworthy Planning in Visual World Models**：给定有限视觉历史、受限动作支持和具体控制目标，能否事先判断 learned world model 对候选动作的预测是否可靠到足以进行规划？
+
+需要严格区分三个层次：
+
+| 层次 | 问题 |
+| --- | --- |
+| Identifiability | 真实动作后果能否从当前视觉历史和动作数据中辨识？ |
+| Transfer sufficiency | latent 是否保留足以比较候选动作的任务相关动力学信息？ |
+| Decision reliability | 这些信息是否足以预测 action ranking、regret 和闭环结果？ |
+
+这也收紧了 novelty 边界：value-equivalent abstraction 已经说明不必恢复全部动力学，
+因此“只保留决策相关信息”本身不是新贡献。LeWorldModel 需要证明的是，在 frozen RGB、
+有限动作激励、部分可观测、固定 horizon 和真实 successor 校准条件下，是否能够形成候选
+动作级、可执行的 transfer-sufficiency 判断。
+
+### HTSC：条件性决策证书
+
+HTSC 的目标不是宣称 commutator 或 alignment 是通用证书，而是定义一个依赖校准数据的
+条件性输出：
+
+\[
+\mathsf{Cert}_H\bigl(\Phi(\mathcal H_t),\mathcal U_H,g,\mathcal D_{\mathrm{cal}}\bigr)
+\to
+\left(\text{permit/abstain},\{\epsilon_H(U)\}_{U\in\mathcal U_H}\right).
+\]
+
+如果对两个候选动作有
+
+\[
+\widehat J(U_i)+\epsilon_H(U_i)
+<
+\widehat J(U_j)-\epsilon_H(U_j),
+\]
+
+则在误差上界确实由支持集内独立校准数据覆盖时，才可把该排序作为可靠的规划依据。
+因此统一桥梁是：
+
+```text
+transfer uncertainty -> action-ranking confidence -> planning permission
+```
+
+当前研究必须继续验证 \(\epsilon_H\) 是否在有限 RGB 干预数据下足够窄、是否覆盖 planner
+自适应选择造成的分布偏移；界过宽时应 `abstain`，不能把工具输出写成成功规划。
+
+### HTSC 与 GDD-WM 的关系
+
+两条主线共享数据、\(G_h^\Phi\)、action support、real/predicted successor 和独立规划
+评估，但科学目标不同：
+
+- **HTSC：Can we trust the world model?** 对冻结模型进行判断，允许或拒绝候选规划；
+- **GDD-WM：Can reliable decisions improve the world model?** 利用执行验证过的动作偏好
+  改造预测几何，并在新候选分布上获得独立收益。
+
+GDD-WM 经过重新训练得到的收益不能证明原 frozen latent 已经充分；HTSC 的 `abstain` 也
+不能被重新包装成 GDD-WM 的蒸馏成功。两者的协议和结果必须分开报告。
+
+## 四、四个研究层级
 
 ### 1. 理论可识别性
 
@@ -161,7 +225,7 @@ adapter 的每一项必须通过独立训练/验证/测试 split、fresh seeds�
 
 privileged simulator-state planning 只作为 interface/control，不能替代视觉在线规划。action-correlated latent signal 也不能直接称为物理因果动力学。
 
-## 四、统一实验流水线
+## 五、统一实验流水线
 
 ```text
 理论 synthetic identification
@@ -188,7 +252,7 @@ visual planning validation
 
 所有新 artifact 应声明 `study_scope: covariance_predictor_unified`、`protocol_version`、architecture、seed、environment、horizon、split 和 `claim_boundary`。旧 artifact 不覆盖、不改名，统一汇总时作为历史证据或 negative audit record 读取。
 
-## 五、当前证据边界
+## 六、当前证据边界
 
 已经成立的是：
 
@@ -208,7 +272,7 @@ visual planning validation
 
 其中最后一项已明确降级为 metric- and horizon-specific diagnostic。没有至少两个 architecture、两个 seed、两个 environment 的 identifiable matched strata 时，任何“普适 model selection”结论都必须标记为 `non-identifiable`。
 
-## 六、统一研究的最终判定
+## 七、统一研究的最终判定
 
 研究不是“理论论文加一个附属 PushT 实验”，也不是“失败的 PushT planner”。它研究的是：
 
@@ -216,7 +280,7 @@ visual planning validation
 
 只有当 matched learned-model transfer、action-effect ranking、姿态闭合和 frozen visual planning 的 gates 同时通过，才可将结论升级为 conditional transfer-risk diagnostic 或更强的方法性主张；否则负结果本身就是统一框架的边界证据。
 
-## 七、2026-10-12 演进后的执行判定
+## 八、2026-10-12 演进后的执行判定
 
 近期文献已经覆盖“prediction error 不等于 planning success”“action-effect ranking
 需要显式对齐”“contact mode 需要显式建模”等一般性发现。因此本项目不再把这些
