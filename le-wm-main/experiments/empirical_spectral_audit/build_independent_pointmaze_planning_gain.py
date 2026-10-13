@@ -47,6 +47,25 @@ def _payload_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _select_candidate_indices(
+    predicted_matrix: np.ndarray,
+    permission_details: dict[str, Any],
+    baseline_horizon: int,
+) -> np.ndarray:
+    """Apply the frozen permission decision without consulting outcomes."""
+    permission = permission_details.get("planning_permission")
+    baseline_index = HORIZONS.index(baseline_horizon)
+    if permission == "rejected_fail_closed":
+        return np.full(predicted_matrix.shape[0], baseline_index, dtype=np.int64)
+    allowed_horizons = permission_details.get("candidate_horizons_allowed", list(HORIZONS))
+    allowed_indices = [HORIZONS.index(int(horizon)) for horizon in allowed_horizons if int(horizon) in HORIZONS]
+    if not allowed_indices:
+        return np.full(predicted_matrix.shape[0], baseline_index, dtype=np.int64)
+    masked = np.full_like(predicted_matrix, -np.inf)
+    masked[:, allowed_indices] = predicted_matrix[:, allowed_indices]
+    return np.argmax(masked, axis=1)
+
+
 def build_artifact(record_path: Path, *, baseline_horizon: int = 1) -> dict[str, Any]:
     outer = json.loads(record_path.read_text())
     record = outer.get("record", outer)
@@ -96,7 +115,9 @@ def build_artifact(record_path: Path, *, baseline_horizon: int = 1) -> dict[str,
         ], dtype=np.float64)
     predicted_matrix = np.stack([predicted[horizon] for horizon in HORIZONS], axis=1)
     actual_matrix = np.stack([actual[horizon] for horizon in HORIZONS], axis=1)
-    selected = np.argmax(predicted_matrix, axis=1)
+    permission_details = record.get("heldout", {}).get("planning_details_conservative", {})
+    permission = permission_details.get("planning_permission")
+    selected = _select_candidate_indices(predicted_matrix, permission_details, baseline_horizon)
     oracle = np.max(actual_matrix, axis=1)
     baseline_index = HORIZONS.index(baseline_horizon)
     rows = []
@@ -125,6 +146,8 @@ def build_artifact(record_path: Path, *, baseline_horizon: int = 1) -> dict[str,
                 "outcome_split": "episode-disjoint outcome rows",
                 "baseline_rule": f"fixed horizon {baseline_horizon}; frozen before outcome scoring",
                 "diagnostic_rule": "argmax predicted task progress over fixed candidate bank",
+                "planning_permission": permission or "legacy_record_without_permission_gate",
+                "permission_allowed_horizons": permission_details.get("candidate_horizons_allowed", list(HORIZONS)),
                 "candidate_bank": list(HORIZONS),
                 "physical_state_role": "offline evaluator only",
             },
