@@ -1,0 +1,1280 @@
+{
+  "claim_boundary": "This is a PointMaze architecture-conditioned panel summary. It can diagnose a reproducible representation condition, but it does not establish cross-environment or universal transfer.",
+  "family_summary": [
+    {
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "cluster_bootstrap_gain": {
+        "ci95_high": 0.002827982215792102,
+        "ci95_low": -0.0824401740438169,
+        "mean": -0.041703217206243204,
+        "n": 5
+      },
+      "cluster_sign_flip": {
+        "mean": -0.041703217206243204,
+        "n": 5,
+        "p_one_sided": 0.9369031548422578,
+        "positive_gate": false
+      },
+      "conservative_cluster_bootstrap_gain": {
+        "ci95_high": 0.0,
+        "ci95_low": 0.0,
+        "mean": 0.0,
+        "n": 5
+      },
+      "conservative_cluster_sign_flip": {
+        "mean": 0.0,
+        "n": 5,
+        "p_one_sided": 1.0,
+        "positive_gate": false
+      },
+      "planning_permission_counts": {
+        "rejected_fail_closed": 25
+      },
+      "seed_count": 5
+    },
+    {
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "cluster_bootstrap_gain": {
+        "ci95_high": 0.1861072724589084,
+        "ci95_low": 0.16200428387148738,
+        "mean": 0.1740557781651979,
+        "n": 5
+      },
+      "cluster_sign_flip": {
+        "mean": 0.1740557781651979,
+        "n": 5,
+        "p_one_sided": 0.029898505074746264,
+        "positive_gate": true
+      },
+      "conservative_cluster_bootstrap_gain": {
+        "ci95_high": 0.13276918260232978,
+        "ci95_low": 0.06492383722540654,
+        "mean": 0.09803042106796193,
+        "n": 5
+      },
+      "conservative_cluster_sign_flip": {
+        "mean": 0.09803042106796193,
+        "n": 5,
+        "p_one_sided": 0.030598470076496177,
+        "positive_gate": true
+      },
+      "planning_permission_counts": {
+        "accepted": 25
+      },
+      "seed_count": 5
+    }
+  ],
+  "protocol": {
+    "gain_definition": "fixed h=1 outcome loss minus prediction-only diagnostic outcome loss",
+    "heldout_outcome_used_for_selection": false,
+    "outcome_role": "independent consequence scoring only",
+    "record_root": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records",
+    "stage_as_replication": false,
+    "uncertainty_unit": "adapter seed after averaging optimization stages"
+  },
+  "record_count": 50,
+  "rows": [
+    {
+      "action_inverse_risk": 0.37638798356056213,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.08734466800863232,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8411_stage005/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.0308705443698392,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.6328411218453023,
+      "seed": "8411",
+      "stage": 5,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.34773528575897217,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.2453905415757185,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8411_stage010/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.12717532919724697,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.639076985129618,
+      "seed": "8411",
+      "stage": 10,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.36232465505599976,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.1512240605009178,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8411_stage025/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.03300884812244628,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7907965267664854,
+      "seed": "8411",
+      "stage": 25,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.33820512890815735,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.11625968293449865,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8411_stage050/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.00195552944397287,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7504060182940233,
+      "seed": "8411",
+      "stage": 50,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.33891594409942627,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.11625968293449865,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8411_stage075/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.00195552944397287,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7452098791468064,
+      "seed": "8411",
+      "stage": 75,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.39218100905418396,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.10965858823387291,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8412_stage005/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.00855662414459861,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.6437183499618029,
+      "seed": "8412",
+      "stage": 5,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.347484827041626,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.12606889040663583,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8412_stage010/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.007853678028164307,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.6351957987389206,
+      "seed": "8412",
+      "stage": 10,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.3598647117614746,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.09463364236447265,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8412_stage025/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.023581570013998868,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7979875443104688,
+      "seed": "8412",
+      "stage": 25,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.3500491976737976,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.043640951689592915,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8412_stage050/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.0745742606888786,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7524511093011544,
+      "seed": "8412",
+      "stage": 50,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.35124316811561584,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.043640951689592915,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8412_stage075/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.0745742606888786,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7500467800182142,
+      "seed": "8412",
+      "stage": 75,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.36836594343185425,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.3305880258222271,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8413_stage005/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.2123728134437556,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.6383912128404267,
+      "seed": "8413",
+      "stage": 5,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.3265393376350403,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.3305880258222271,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8413_stage010/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.2123728134437556,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.6331583485277696,
+      "seed": "8413",
+      "stage": 10,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.394026517868042,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.16672244769025996,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8413_stage025/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.04850723531178844,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.8070476931618732,
+      "seed": "8413",
+      "stage": 25,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.3603367209434509,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.16672244769025996,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8413_stage050/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.04850723531178844,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7577077180752945,
+      "seed": "8413",
+      "stage": 50,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.3544697165489197,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.16672244769025996,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8413_stage075/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.04850723531178844,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.749640880181395,
+      "seed": "8413",
+      "stage": 75,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.36409324407577515,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.27639384774959563,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8414_stage005/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.15817863537112412,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.6354535525337477,
+      "seed": "8414",
+      "stage": 5,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.32829922437667847,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.2653092793000319,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8414_stage010/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.14709406692156038,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.6496305120423537,
+      "seed": "8414",
+      "stage": 10,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.36643075942993164,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.15804587356708621,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8414_stage025/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.0398306611886147,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7635644336219204,
+      "seed": "8414",
+      "stage": 25,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.3395002484321594,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.09343542174512257,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8414_stage050/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.024779790633348953,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7486115538428408,
+      "seed": "8414",
+      "stage": 50,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.34038326144218445,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.09343542174512257,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8414_stage075/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.024779790633348953,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7470837905405591,
+      "seed": "8414",
+      "stage": 75,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.3695928156375885,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.1869194973970151,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8415_stage005/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.06870428501854359,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.6389723568926541,
+      "seed": "8415",
+      "stage": 5,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.3340676724910736,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.1512240605009178,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8415_stage010/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.03300884812244628,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.6432635160818353,
+      "seed": "8415",
+      "stage": 10,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.345375657081604,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.1592440941864363,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8415_stage025/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.041028881807964795,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7870855546730158,
+      "seed": "8415",
+      "stage": 25,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.3206385374069214,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.1592440941864363,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8415_stage050/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.041028881807964795,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7525026751365665,
+      "seed": "8415",
+      "stage": 50,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.32054978609085083,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.1592440941864363,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/dino_task_effect_mlp_seed8415_stage075/checkpoint_record.json",
+      "permission_reasons": [
+        "h1_task_effect_not_identifiable",
+        "action_effect_not_identifiable"
+      ],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": -0.041028881807964795,
+      "planning_permission": "rejected_fail_closed",
+      "prediction_mse": 0.7446429728701848,
+      "seed": "8415",
+      "stage": 75,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008513919077813625,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.13959910480762852,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8411_stage005/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.06964551055629398,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.2249228176455522,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.01916858286238865,
+      "seed": "8411",
+      "stage": 5,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008407529443502426,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.20811489779414866,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8411_stage010/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.16560935367649962,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.15640702465903206,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.0188538314322303,
+      "seed": "8411",
+      "stage": 10,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008953334763646126,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.24013196200249962,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8411_stage025/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.17786752335656741,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.1243899604506811,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019220345602838463,
+      "seed": "8411",
+      "stage": 25,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008969055488705635,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.15127057460647206,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8411_stage050/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.17786752335656741,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.21325134784670866,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.01914149053231752,
+      "seed": "8411",
+      "stage": 50,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008963827975094318,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.15127057460647206,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8411_stage075/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.17786752335656741,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.21325134784670866,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.01910260939409704,
+      "seed": "8411",
+      "stage": 75,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008516937494277954,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.1086647166751726,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8412_stage005/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.0,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.2558572057780081,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.0192671771543324,
+      "seed": "8412",
+      "stage": 5,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.00846080482006073,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.17718050966169274,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8412_stage010/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.029031553230260743,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.18734141279148797,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.01880096496592655,
+      "seed": "8412",
+      "stage": 10,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.00898765493184328,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.19381387786743437,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8412_stage025/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.057420804079948595,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.17070804458574634,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.01926344037318888,
+      "seed": "8412",
+      "stage": 25,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.009080776944756508,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.19381387786743437,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8412_stage050/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.07913772964204863,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.17070804458574634,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019146009189432826,
+      "seed": "8412",
+      "stage": 50,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.009056663140654564,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.19381387786743437,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8412_stage075/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.07913772964204863,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.17070804458574634,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.0191162033077836,
+      "seed": "8412",
+      "stage": 75,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008551930077373981,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.19973647208505774,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8413_stage005/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.09867706378655472,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.16478545036812298,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019330934247670285,
+      "seed": "8413",
+      "stage": 5,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008538991212844849,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.16902614401968924,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8413_stage010/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.09136243611839401,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.19549577843349147,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019042841540372654,
+      "seed": "8413",
+      "stage": 10,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.009195249527692795,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.20578035399201688,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8413_stage025/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.07913772964204863,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.15874156846116383,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.01920298594774095,
+      "seed": "8413",
+      "stage": 25,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.009053602814674377,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.22474826599989023,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8413_stage050/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.08852885483329598,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.13977365645329048,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019087200040808997,
+      "seed": "8413",
+      "stage": 50,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.00908743031322956,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.20578035399201688,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8413_stage075/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.06681192927119595,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.15874156846116383,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.01914569816294981,
+      "seed": "8413",
+      "stage": 75,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008476007729768753,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.13959910480762852,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8414_stage005/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.06964551055629398,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.2249228176455522,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019192052459527688,
+      "seed": "8414",
+      "stage": 5,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008350621908903122,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.13838016115573337,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8414_stage010/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.07192134936435635,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.22614176129744734,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.0188582843924221,
+      "seed": "8414",
+      "stage": 10,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008720370940864086,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.18677511237566746,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8414_stage025/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.13743352989500973,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.17774681007751325,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019211074983976006,
+      "seed": "8414",
+      "stage": 25,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008763854391872883,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.24013196200249962,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8414_stage050/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.037780376040935204,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.1243899604506811,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019034489210177065,
+      "seed": "8414",
+      "stage": 50,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.0088095273822546,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.24013196200249962,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8414_stage075/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.037780376040935204,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.1243899604506811,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019075778740152684,
+      "seed": "8414",
+      "stage": 75,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008396080695092678,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.1879940560275626,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8415_stage005/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.10078702451336374,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.1765278664256181,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019247917598335027,
+      "seed": "8415",
+      "stage": 5,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008243342861533165,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.1879940560275626,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8415_stage010/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.17786752335656741,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.1765278664256181,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.018899773560297154,
+      "seed": "8415",
+      "stage": 10,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008379473350942135,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.22596720965178543,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8415_stage025/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.10822201280027344,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.13855471280139528,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019069342117345792,
+      "seed": "8415",
+      "stage": 25,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008547800593078136,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.22596720965178543,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8415_stage050/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.17043253506965775,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.13855471280139528,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019066229040945258,
+      "seed": "8415",
+      "stage": 50,
+      "train_count": 18
+    },
+    {
+      "action_inverse_risk": 0.008567245677113533,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "calibration_count": 4,
+      "diagnostic_risk": 0.22596720965178543,
+      "outcome_count": 10,
+      "path": "./le-wm-main/results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/records/jepa_task_effect_mlp_seed8415_stage075/checkpoint_record.json",
+      "permission_reasons": [],
+      "planning_gain_fixed_h1_minus_conservative": 0.10078702451336374,
+      "planning_gain_fixed_h1_minus_diagnostic": 0.13855471280139528,
+      "planning_permission": "accepted",
+      "prediction_mse": 0.019053344381197098,
+      "seed": "8415",
+      "stage": 75,
+      "train_count": 18
+    }
+  ],
+  "schema": "pointmaze_learned_panel_summary.v2",
+  "seed_clusters": [
+    {
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "mean_gain_over_stages": -0.02508051481238166,
+      "seed": "8411",
+      "stage_count": 5
+    },
+    {
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "mean_gain_over_stages": 0.03468660750163807,
+      "seed": "8412",
+      "stage_count": 5
+    },
+    {
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "mean_gain_over_stages": -0.11405346656457531,
+      "seed": "8413",
+      "stage_count": 5
+    },
+    {
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "mean_gain_over_stages": -0.05910875644292026,
+      "seed": "8414",
+      "stage_count": 5
+    },
+    {
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "mean_gain_over_stages": -0.044959955712976854,
+      "seed": "8415",
+      "stage_count": 5
+    },
+    {
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "mean_gain_over_stages": 0.1864444996897365,
+      "seed": "8411",
+      "stage_count": 5
+    },
+    {
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "mean_gain_over_stages": 0.19106455046534698,
+      "seed": "8412",
+      "stage_count": 5
+    },
+    {
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "mean_gain_over_stages": 0.16350760443544654,
+      "seed": "8413",
+      "stage_count": 5
+    },
+    {
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "mean_gain_over_stages": 0.17551826198437498,
+      "seed": "8414",
+      "stage_count": 5
+    },
+    {
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "mean_gain_over_stages": 0.1537439742510844,
+      "seed": "8415",
+      "stage_count": 5
+    }
+  ],
+  "stage_summary": [
+    {
+      "action_inverse_risk_mean": 0.3741241991519928,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "gain": {
+        "ci95_high": 0.0020300104020664067,
+        "ci95_low": -0.1619614365296606,
+        "mean": -0.0799657130637971,
+        "n": 5
+      },
+      "prediction_mse_mean": 0.6378753188147867,
+      "seed_count": 5,
+      "sign_flip": {
+        "mean": -0.0799657130637971,
+        "n": 5,
+        "p_one_sided": 0.9030048497575122,
+        "positive_gate": false
+      },
+      "stage": 5
+    },
+    {
+      "action_inverse_risk_mean": 0.3368252694606781,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "gain": {
+        "ci95_high": -0.04073278982569992,
+        "ci95_low": -0.16922181798557578,
+        "mean": -0.10550094714263472,
+        "n": 5
+      },
+      "prediction_mse_mean": 0.6400650321040995,
+      "seed_count": 5,
+      "sign_flip": {
+        "mean": -0.10550094714263472,
+        "n": 5,
+        "p_one_sided": 1.0,
+        "positive_gate": false
+      },
+      "stage": 10
+    },
+    {
+      "action_inverse_risk_mean": 0.3656044602394104,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "gain": {
+        "ci95_high": -0.001783322467046558,
+        "ci95_low": -0.04378057908562423,
+        "mean": -0.02775881128336307,
+        "n": 5
+      },
+      "prediction_mse_mean": 0.7892963505067526,
+      "seed_count": 5,
+      "sign_flip": {
+        "mean": -0.02775881128336307,
+        "n": 5,
+        "p_one_sided": 0.968451577421129,
+        "positive_gate": false
+      },
+      "stage": 25
+    },
+    {
+      "action_inverse_risk_mean": 0.34174596667289736,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "gain": {
+        "ci95_high": 0.04149473817840399,
+        "ci95_low": -0.03542334095910672,
+        "mean": 0.0023546927292894372,
+        "n": 5
+      },
+      "prediction_mse_mean": 0.7523358149299758,
+      "seed_count": 5,
+      "sign_flip": {
+        "mean": 0.0023546927292894372,
+        "n": 5,
+        "p_one_sided": 0.47617619119044047,
+        "positive_gate": false
+      },
+      "stage": 50
+    },
+    {
+      "action_inverse_risk_mean": 0.3411123752593994,
+      "architecture": "task_effect_mlp",
+      "base": "dino",
+      "gain": {
+        "ci95_high": 0.04149473817840399,
+        "ci95_low": -0.03542334095910672,
+        "mean": 0.0023546927292894372,
+        "n": 5
+      },
+      "prediction_mse_mean": 0.7473248605514319,
+      "seed_count": 5,
+      "sign_flip": {
+        "mean": 0.0023546927292894372,
+        "n": 5,
+        "p_one_sided": 0.46627668616569173,
+        "positive_gate": false
+      },
+      "stage": 75
+    },
+    {
+      "action_inverse_risk_mean": 0.008490975014865398,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "gain": {
+        "ci95_high": 0.23729657289853456,
+        "ci95_low": 0.17916140703510786,
+        "mean": 0.20940323157257074,
+        "n": 5
+      },
+      "prediction_mse_mean": 0.01924133286445081,
+      "seed_count": 5,
+      "sign_flip": {
+        "mean": 0.20940323157257074,
+        "n": 5,
+        "p_one_sided": 0.032098395080245985,
+        "positive_gate": true
+      },
+      "stage": 5
+    },
+    {
+      "action_inverse_risk_mean": 0.008400258049368859,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "gain": {
+        "ci95_high": 0.2100897857502903,
+        "ci95_low": 0.1687807799120144,
+        "mean": 0.1883827687214154,
+        "n": 5
+      },
+      "prediction_mse_mean": 0.018891139178249753,
+      "seed_count": 5,
+      "sign_flip": {
+        "mean": 0.1883827687214154,
+        "n": 5,
+        "p_one_sided": 0.032448377581120944,
+        "positive_gate": true
+      },
+      "stage": 10
+    },
+    {
+      "action_inverse_risk_mean": 0.008847216702997684,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "gain": {
+        "ci95_high": 0.1711302555575366,
+        "ci95_low": 0.13648652774783696,
+        "mean": 0.15402821927529997,
+        "n": 5
+      },
+      "prediction_mse_mean": 0.019193437805018018,
+      "seed_count": 5,
+      "sign_flip": {
+        "mean": 0.15402821927529997,
+        "n": 5,
+        "p_one_sided": 0.030748462576871156,
+        "positive_gate": true
+      },
+      "stage": 25
+    },
+    {
+      "action_inverse_risk_mean": 0.008883018046617508,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "gain": {
+        "ci95_high": 0.18772536589013128,
+        "ci95_low": 0.13313260059148865,
+        "mean": 0.15733554442756437,
+        "n": 5
+      },
+      "prediction_mse_mean": 0.019095083602736335,
+      "seed_count": 5,
+      "sign_flip": {
+        "mean": 0.15733554442756437,
+        "n": 5,
+        "p_one_sided": 0.030348482575871208,
+        "positive_gate": true
+      },
+      "stage": 50
+    },
+    {
+      "action_inverse_risk_mean": 0.008896938897669316,
+      "architecture": "task_effect_mlp",
+      "base": "jepa",
+      "gain": {
+        "ci95_high": 0.1898033601854535,
+        "ci95_low": 0.1369261829930633,
+        "mean": 0.16112912682913905,
+        "n": 5
+      },
+      "prediction_mse_mean": 0.019098726797236048,
+      "seed_count": 5,
+      "sign_flip": {
+        "mean": 0.16112912682913905,
+        "n": 5,
+        "p_one_sided": 0.03144842757862107,
+        "positive_gate": true
+      },
+      "stage": 75
+    }
+  ]
+}

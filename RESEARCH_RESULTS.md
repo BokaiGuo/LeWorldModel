@@ -17,6 +17,22 @@ only for final scoring.
 
 This is a positive local result, not cross-environment evidence.
 
+## Permission-gated architecture result
+
+The follow-up panel applies a frozen calibration-only permission gate using
+horizon-normalized task RMSE and action-inverse risk. A rejected representation
+is not counted as learned planning; it is forced to the fixed h=1 fallback.
+
+| Frozen base | Seeds | Conservative gain | 95% interval | Sign-flip p | Permission |
+|---|---:|---:|---:|---:|---|
+| JEPA | 5 | 0.09803 | [0.06492, 0.13277] | 0.0306 | 25/25 accepted |
+| DINO | 5 | 0.00000 | [0, 0] | 1.0000 | 25/25 rejected |
+
+This is the current strongest interpretation: the module has a reproducible
+local benefit on the JEPA representation and a safe, explicit rejection rule
+for the DINO representation. It is not a universal architecture-independent
+planning result.
+
 ## Architecture boundary
 
 The matched panel keeps the protocol fixed across JEPA/DINO frozen exports,

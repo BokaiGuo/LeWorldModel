@@ -23,6 +23,11 @@ The repository deliberately separates three things:
   readouts, one pre-specified PointMaze adapter audit reports a positive paired
   held-out consequence: mean gain `0.17135`, 95% CI `[0.02309, 0.33601]`,
   `n=32`, one-sided `p=0.0202`.
+- The subsequent calibration-only permission gate gives the more conservative
+  architecture-conditioned result: JEPA task-effect adapters retain gain
+  `0.09803` (five seed clusters, 95% CI `[0.06492, 0.13277]`, sign-flip
+  `p=0.0306`), while all 25 DINO checkpoints are rejected and safely fall
+  back to fixed horizon 1.
 - The result is conditional: it is one PointMaze environment and does not
   establish a universal world model, causal latent dynamics, or cross-
   environment transfer.

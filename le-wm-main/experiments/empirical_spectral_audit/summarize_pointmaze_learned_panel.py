@@ -90,6 +90,7 @@ def summarize(record_root: Path) -> dict[str, Any]:
         conservative_gain = None
         if conservative is not None and conservative_risk is not None:
             conservative_gain = float(conservative["fixed_h1_loss"] - conservative_risk)
+        permission = conservative.get("planning_permission") if conservative is not None else None
         rows.append({
             "path": str(path.resolve()),
             "base": base,
@@ -104,6 +105,8 @@ def summarize(record_root: Path) -> dict[str, Any]:
             "train_count": int(report["split_sizes"]["train"]),
             "calibration_count": int(report["split_sizes"]["calibration"]),
             "outcome_count": int(report["split_sizes"]["outcome"]),
+            "planning_permission": permission,
+            "permission_reasons": list(conservative.get("permission_reasons", [])) if conservative is not None else [],
         })
 
     by_stage: dict[tuple[str, str, int], list[dict[str, Any]]] = defaultdict(list)
@@ -157,6 +160,10 @@ def summarize(record_root: Path) -> dict[str, Any]:
     family_summary = []
     for (base, architecture), values in sorted(by_family.items()):
         values_array = np.asarray(values)
+        family_rows = [row for row in rows if row["base"] == base and row["architecture"] == architecture]
+        permission_counts: dict[str, int] = defaultdict(int)
+        for row in family_rows:
+            permission_counts[str(row["planning_permission"])] += 1
         family_summary.append({
             "base": base,
             "architecture": architecture,
@@ -171,10 +178,11 @@ def summarize(record_root: Path) -> dict[str, Any]:
                 np.asarray(conservative_family_values.get((base, architecture), [])),
                 20266013 + len(family_summary),
             ),
+            "planning_permission_counts": dict(sorted(permission_counts.items())),
         })
 
     return {
-        "schema": "pointmaze_learned_panel_summary.v1",
+        "schema": "pointmaze_learned_panel_summary.v2",
         "protocol": {
             "record_root": str(record_root.resolve()),
             "heldout_outcome_used_for_selection": False,
@@ -202,8 +210,8 @@ def markdown(report: dict[str, Any]) -> str:
         "",
         "Positive gain means the prediction-only diagnostic has lower held-out consequence loss than fixed h=1.",
         "",
-        "| Base | Adapter | Seeds | Raw gain mean [95% CI] | Conservative gain mean [95% CI] | Raw gate | Conservative gate |",
-        "|---|---|---:|---:|---:|---|---|",
+        "| Base | Adapter | Seeds | Raw gain mean [95% CI] | Conservative gain mean [95% CI] | Raw gate | Conservative gate | Permission |",
+        "|---|---|---:|---:|---:|---|---|---|",
     ]
     for item in report["family_summary"]:
         gain = item["cluster_bootstrap_gain"]
@@ -211,13 +219,15 @@ def markdown(report: dict[str, Any]) -> str:
         text = "NA" if gain["mean"] is None else f"{gain['mean']:.6g} [{gain['ci95_low']:.6g}, {gain['ci95_high']:.6g}]"
         conservative = item["conservative_cluster_bootstrap_gain"]
         conservative_text = "NA" if conservative["mean"] is None else f"{conservative['mean']:.6g} [{conservative['ci95_low']:.6g}, {conservative['ci95_high']:.6g}]"
-        lines.append(f"| {item['base']} | {item['architecture']} | {item['seed_count']} | {text} | {conservative_text} | {test['positive_gate']} | {item['conservative_cluster_sign_flip']['positive_gate']} |")
+        permission = ", ".join(f"{key}:{value}" for key, value in item.get("planning_permission_counts", {}).items())
+        lines.append(f"| {item['base']} | {item['architecture']} | {item['seed_count']} | {text} | {conservative_text} | {test['positive_gate']} | {item['conservative_cluster_sign_flip']['positive_gate']} | {permission} |")
     lines.extend([
         "",
         "## Interpretation",
         "",
         "The uncertainty unit is adapter seed; optimization stages are snapshots, not independent replications.",
         "The conservative column is a calibration-only fail-closed gate; it may fall back to h=1 and is not pooled with the raw diagnostic result.",
+        "Planning permission is decided from calibration-only normalized task RMSE and action-inverse risk. A rejected candidate is not evidence of learned planning; it is an explicit safe fallback.",
         "A negative DINO family result remains a representation-conditioned failure and is not pooled away by the positive JEPA family.",
         "",
         "## Claim boundary",

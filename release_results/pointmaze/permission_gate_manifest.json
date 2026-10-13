@@ -1,0 +1,72 @@
+{
+  "claim_boundary": "Real learned adapter panel with independent calibration action-risk and held-out PointMaze planning consequence; not a multi-seed claim about the frozen encoder.",
+  "inventories": [
+    {
+      "base": "jepa",
+      "calibration": 4,
+      "fit": 22,
+      "outcome": 10,
+      "rank": 8,
+      "rows": 32,
+      "source": "results/cross_arch_enriched_20261011/exports/jepa_pointmaze.json"
+    },
+    {
+      "base": "dino",
+      "calibration": 4,
+      "fit": 22,
+      "outcome": 10,
+      "rank": 8,
+      "rows": 32,
+      "source": "results/cross_arch_enriched_20261011/exports/dino_pointmaze.json"
+    }
+  ],
+  "protocol": {
+    "action_distribution": "pointmaze_observed_shared_v1",
+    "action_feature_chart": "raw",
+    "adapter_modes": {
+      "linear": "absolute_target",
+      "mlp": "absolute_target",
+      "residual_mlp": "standardized_residual",
+      "standardized_mlp": "standardized_absolute",
+      "task_aligned_mlp": "standardized_absolute_plus_train_task_loss",
+      "task_effect_linear": "train_task_effect_only_linear",
+      "task_effect_lowrank_mlp": "train_task_effect_only_with_train_action_pca4",
+      "task_effect_mlp": "train_task_effect_only"
+    },
+    "allow_unmatched_support": false,
+    "architectures": [
+      "task_effect_mlp"
+    ],
+    "calibration_used_for_training": false,
+    "epochs": 75,
+    "max_rows": 32,
+    "outcome_count": null,
+    "outcome_used_for_selection": false,
+    "pca_fit_only_on_train": true,
+    "planning_candidate_bank": [
+      1,
+      2,
+      4
+    ],
+    "rank": 8,
+    "seeds": [
+      8411,
+      8412,
+      8413,
+      8414,
+      8415
+    ],
+    "support_match_rule": "same deterministic prefix of every export",
+    "support_matching": true,
+    "task_loss_weight": 1.0,
+    "training_stages": [
+      5,
+      10,
+      25,
+      50,
+      75
+    ]
+  },
+  "record_count": 50,
+  "schema": "pointmaze_learned_adapter_panel.v1"
+}

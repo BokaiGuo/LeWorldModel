@@ -44,6 +44,18 @@ ARCHITECTURES = ("linear", "mlp")
 SEEDS = (8411, 8412, 8413, 8414, 8415)
 ACTION_DISTRIBUTION = "pointmaze_observed_shared_v1"
 
+# These are calibration-only safety thresholds, frozen before the outcome
+# split is read.  The task RMSE threshold is normalized by the train-only
+# h=1 task-effect scale, so it is comparable across latent charts.  The
+# action-risk threshold is in the train-fitted PCA latent chart.  A failed
+# permission gate does not manufacture a positive result: it rejects the
+# learned candidate and returns the fixed h=1 baseline.
+PLANNING_PERMISSION_VERSION = "calibration_transfer_permission_v1"
+MIN_CALIBRATION_ROWS_FOR_PERMISSION = 4
+MAX_H1_NORMALIZED_TASK_RMSE = 0.75
+MAX_CANDIDATE_NORMALIZED_TASK_RMSE = 1.25
+MAX_CALIBRATION_ACTION_INVERSE_RISK = 0.05
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -470,6 +482,8 @@ def _planning_risk_with_calibration_gate(
     direction: np.ndarray,
     latent_center: dict[int, np.ndarray],
     beta: float = 1.0,
+    calibration_action_risk: float | None = None,
+    train_task_scale: float | dict[int, float] | None = None,
 ) -> tuple[float, dict[str, Any]]:
     """Use calibration-only error to fail closed on unreliable horizons.
 
@@ -502,9 +516,39 @@ def _planning_risk_with_calibration_gate(
     calibration_predicted = progress(calibration_predictions, calibration_rows)
     calibration_actual = actual(calibration_rows)
     calibration_rmse = np.sqrt(np.mean((calibration_actual - calibration_predicted) ** 2, axis=0))
+    if isinstance(train_task_scale, dict):
+        task_scales = np.asarray([train_task_scale[h] for h in HORIZONS], dtype=np.float64)
+    else:
+        task_scales = np.full(len(HORIZONS), float(train_task_scale or 0.0), dtype=np.float64)
+    task_scales = np.maximum(task_scales, 1e-6)
+    normalized_rmse = calibration_rmse / task_scales
+    permission_reasons: list[str] = []
+    if len(calibration_rows) < MIN_CALIBRATION_ROWS_FOR_PERMISSION:
+        permission_reasons.append("insufficient_calibration_rows")
+    if not np.all(np.isfinite(normalized_rmse)):
+        permission_reasons.append("nonfinite_calibration_task_rmse")
+    if normalized_rmse[0] > MAX_H1_NORMALIZED_TASK_RMSE:
+        permission_reasons.append("h1_task_effect_not_identifiable")
+    if calibration_action_risk is None or not np.isfinite(calibration_action_risk):
+        permission_reasons.append("missing_calibration_action_risk")
+    elif float(calibration_action_risk) > MAX_CALIBRATION_ACTION_INVERSE_RISK:
+        permission_reasons.append("action_effect_not_identifiable")
+    permission = not permission_reasons
+    allowed = [0]
+    if permission:
+        allowed.extend(
+            index for index in range(1, len(HORIZONS))
+            if normalized_rmse[index] <= MAX_CANDIDATE_NORMALIZED_TASK_RMSE
+        )
     predicted = progress(model_predictions, outcome_rows)
     observed = actual(outcome_rows)
     score = predicted - float(beta) * calibration_rmse.reshape(1, -1)
+    if not permission:
+        score[:, 1:] = -np.inf
+    else:
+        disallowed = [index for index in range(len(HORIZONS)) if index not in allowed]
+        if disallowed:
+            score[:, disallowed] = -np.inf
     selected = np.argmax(score, axis=1)
     oracle = np.max(observed, axis=1)
     chosen = observed[np.arange(len(observed)), selected]
@@ -512,8 +556,21 @@ def _planning_risk_with_calibration_gate(
     risk = float(np.mean(oracle - chosen))
     return risk, {
         "gate": "calibration_task_rmse_penalty",
+        "permission_version": PLANNING_PERMISSION_VERSION,
+        "planning_permission": "accepted" if permission else "rejected_fail_closed",
+        "permission_reasons": permission_reasons,
+        "candidate_horizons_allowed": [HORIZONS[index] for index in allowed] if permission else [HORIZONS[0]],
         "beta": float(beta),
         "calibration_task_rmse": {str(h): float(calibration_rmse[i]) for i, h in enumerate(HORIZONS)},
+        "normalized_calibration_task_rmse": {str(h): float(normalized_rmse[i]) for i, h in enumerate(HORIZONS)},
+        "train_task_effect_scale": {str(h): float(task_scales[i]) for i, h in enumerate(HORIZONS)},
+        "calibration_action_inverse_risk": None if calibration_action_risk is None else float(calibration_action_risk),
+        "permission_thresholds": {
+            "min_calibration_rows": MIN_CALIBRATION_ROWS_FOR_PERMISSION,
+            "max_h1_normalized_task_rmse": MAX_H1_NORMALIZED_TASK_RMSE,
+            "max_candidate_normalized_task_rmse": MAX_CANDIDATE_NORMALIZED_TASK_RMSE,
+            "max_calibration_action_inverse_risk": MAX_CALIBRATION_ACTION_INVERSE_RISK,
+        },
         "selected_horizon_counts": {str(h): int(np.sum(selected == i)) for i, h in enumerate(HORIZONS)},
         "fixed_h1_loss": fixed_h1_loss,
         "mean_chosen_progress": float(np.mean(chosen)),
@@ -649,6 +706,8 @@ def main() -> None:
                         decoder,
                         direction,
                         latent_center,
+                        calibration_action_risk=calibration_action_risk,
+                        train_task_scale={h: float(np.std(task_targets[h])) for h in HORIZONS},
                     )
                     checkpoint = args.output / "checkpoints" / f"{base_name}_{architecture}" / f"seed_{seed}" / f"stage_{stage:03d}.pt"
                     checkpoint.parent.mkdir(parents=True, exist_ok=True)
@@ -679,7 +738,7 @@ def main() -> None:
                     geometry = metric_geometry(covariance, predictor, metric, rank=min(16, fit_source.shape[1]), horizons=range(1, 5))
                     spectrum = [{"real": float(v.real), "imag": float(v.imag)} for v in np.linalg.eigvals(predictor)]
                     planning_loss = float(np.mean([np.mean((pred_outcome[h][i] - y_outcome[h][i]) ** 2) for h in HORIZONS for i in range(len(outcome_rows))]))
-                    record = {"group": f"PointMaze/learned/{base_name}_{architecture}/seed_{seed}", "architecture": f"pointmaze_{base_name}_{architecture}", "checkpoint": str(checkpoint.resolve()), "model_factors": {"latent_dimension": int(pca_basis.shape[0]), "training_stage": stage, "action_distribution": ACTION_DISTRIBUTION, "action_inverse_risk": calibration_action_risk, "adapter_mode": training.get("mode", "absolute_target")}, "diagnostics": {"prediction_mse": float(np.mean((fit_predicted - fit_target) ** 2)), "predictor_spectrum": spectrum, **{k: float(v) for k, v in geometry.items()}, "action_inverse_risk": calibration_action_risk}, "heldout": {"planning_loss": planning_loss, "planning_risk": planning_risk, "planning_details": planning_details, "planning_risk_conservative": planning_risk_conservative, "planning_details_conservative": planning_details_conservative}, "protocol": {"environment": "PointMaze", "independent_external_evidence": True, "fit_episode_ids": [int(r["episode_id"]) for r in fit_rows], "calibration_episode_ids": [int(r["episode_id"]) for r in calibration_rows], "outcome_episode_ids": [int(r["episode_id"]) for r in outcome_rows], "action_feature_source": f"{args.action_feature_chart} action chart", "action_chart_role": "formal shared physical chart" if args.action_feature_chart == "raw" else "exploratory export-native chart", "action_risk_split": "calibration rows never used to fit adapter", "planning_split": "outcome rows never used for fitting, calibration, metric, or selector", "task_direction_source": "train-only h=1 source-to-target displacement", "task_readout_source": "train rows only, horizon-specific", "prediction_center_source": "train target latent mean only, horizon-specific", "candidate_action_bank": list(HORIZONS), "runtime_state_access": False, "physical_state_role": "offline consequence scoring only", "adapter_mode": training.get("mode", "absolute_target"), "conservative_gate": "calibration_task_rmse_penalty_beta1; fallback candidate h=1 retained", "claim_boundary": "independent held-out PointMaze planning consequence from fixed horizon candidate bank"}, "provenance": {"fit_export": str(fit_path), "outcome_export": str(out_path), "base_frozen_export": str(source_path.resolve()), "training": training}}
+                    record = {"group": f"PointMaze/learned/{base_name}_{architecture}/seed_{seed}", "architecture": f"pointmaze_{base_name}_{architecture}", "checkpoint": str(checkpoint.resolve()), "model_factors": {"latent_dimension": int(pca_basis.shape[0]), "training_stage": stage, "action_distribution": ACTION_DISTRIBUTION, "action_inverse_risk": calibration_action_risk, "adapter_mode": training.get("mode", "absolute_target")}, "diagnostics": {"prediction_mse": float(np.mean((fit_predicted - fit_target) ** 2)), "predictor_spectrum": spectrum, **{k: float(v) for k, v in geometry.items()}, "action_inverse_risk": calibration_action_risk}, "heldout": {"planning_loss": planning_loss, "planning_risk": planning_risk, "planning_details": planning_details, "planning_risk_conservative": planning_risk_conservative, "planning_details_conservative": planning_details_conservative}, "protocol": {"environment": "PointMaze", "independent_external_evidence": True, "fit_episode_ids": [int(r["episode_id"]) for r in fit_rows], "calibration_episode_ids": [int(r["episode_id"]) for r in calibration_rows], "outcome_episode_ids": [int(r["episode_id"]) for r in outcome_rows], "action_feature_source": f"{args.action_feature_chart} action chart", "action_chart_role": "formal shared physical chart" if args.action_feature_chart == "raw" else "exploratory export-native chart", "action_risk_split": "calibration rows never used to fit adapter", "planning_split": "outcome rows never used for fitting, calibration, metric, or selector", "task_direction_source": "train-only h=1 source-to-target displacement", "task_readout_source": "train rows only, horizon-specific", "prediction_center_source": "train target latent mean only, horizon-specific", "candidate_action_bank": list(HORIZONS), "runtime_state_access": False, "physical_state_role": "offline consequence scoring only", "adapter_mode": training.get("mode", "absolute_target"), "conservative_gate": "calibration_task_rmse_penalty_beta1 + transfer_permission_v1; fallback candidate h=1 retained", "claim_boundary": "independent held-out PointMaze planning consequence from fixed horizon candidate bank"}, "provenance": {"fit_export": str(fit_path), "outcome_export": str(out_path), "base_frozen_export": str(source_path.resolve()), "training": training}}
                     record_dir = args.output / "records" / f"{base_name}_{architecture}_seed{seed}_stage{stage:03d}"
                     _write_record(record_dir, record)
                     all_records.append(record)

@@ -195,4 +195,31 @@ episodes. The corrected JEPA-MLP checkpoint artifact has `Delta=0.1065` on
 10 held-out outcome rows; this is an independent PointMaze consequence, not a
 cross-environment planning claim. The DINO diagnostic remains negative under
 the same support-matched protocol, which is retained as the explicit
-representation failure boundary.
+ representation failure boundary.
+
+### Horizon-conditioned permission gate and vector-artifact audit
+
+The follow-up permission panel is under
+`results/pointmaze_task_effect_mlp_permission_horizonscaled_rawaction_fixed_20261013/`.
+It uses a frozen calibration-only gate with horizon-specific task-effect
+scales: h=1 must have normalized task RMSE at most `0.75` and calibration
+action-inverse risk at most `0.05`; additional horizons must have normalized
+task RMSE at most `1.25`. A rejected representation is forced to h=1 and is
+labelled `rejected_fail_closed` rather than counted as learned planning.
+
+On the same 32-row support-matched panel, all 25 DINO adapter checkpoints are
+rejected for both `h1_task_effect_not_identifiable` and
+`action_effect_not_identifiable`. All 25 JEPA checkpoints are accepted. JEPA
+retains conservative `Delta R=0.0980` (five seed clusters, sign-flip
+`p=0.0306`, bootstrap 95% CI `[0.0649,0.1328]`); DINO is exactly the fixed
+h=1 fallback (`Delta R=0`). This is a successful safety/transfer-permission
+repair, not evidence that DINO learned action transfer was recovered.
+
+The old 200-episode DINO vector-only artifact is audited by
+`audit_dino_vector_artifact_join.py`, with output in
+`results/pointmaze_dino_vector_artifact_join_audit_20261013.json`. Its episode
+prefix matches the 32-row enriched export and predicted vectors are comparable,
+but it has no sample IDs, actions, source states, or target states. The formal
+action-conditioned join is therefore `rejected_fail_closed`; it remains useful
+only as a vector-only temporal diagnostic and cannot be used to enlarge the
+adapter support or produce planning claims.

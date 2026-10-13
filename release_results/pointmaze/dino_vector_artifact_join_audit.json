@@ -1,0 +1,90 @@
+{
+  "comparisons": {
+    "1": {
+      "prefix_rows": 32,
+      "vector_only_prediction_mse": 0.0019948103148633837,
+      "vector_vs_enriched_predicted": {
+        "dimensions": 384,
+        "max_abs": 0.403531014919281,
+        "mean_abs": 0.03660615794152496,
+        "rmse": 0.05237277049981837,
+        "rows": 32
+      },
+      "vector_vs_enriched_target": {
+        "dimensions": 384,
+        "max_abs": 2.553344428539276,
+        "mean_abs": 0.47212687570413436,
+        "rmse": 0.5931757775521073,
+        "rows": 32
+      }
+    },
+    "2": {
+      "prefix_rows": 32,
+      "vector_only_prediction_mse": 0.00544515261106418,
+      "vector_vs_enriched_predicted": {
+        "dimensions": 384,
+        "max_abs": 0.8266180455684662,
+        "mean_abs": 0.11400959695643594,
+        "rmse": 0.15234932204651616,
+        "rows": 32
+      },
+      "vector_vs_enriched_target": {
+        "dimensions": 384,
+        "max_abs": 2.625574767589569,
+        "mean_abs": 0.47360399697547856,
+        "rmse": 0.5966985670133086,
+        "rows": 32
+      }
+    },
+    "4": {
+      "prefix_rows": 32,
+      "vector_only_prediction_mse": 0.010215910203844436,
+      "vector_vs_enriched_predicted": {
+        "dimensions": 384,
+        "max_abs": 0.8229037523269653,
+        "mean_abs": 0.13875584063265833,
+        "rmse": 0.17897070977046076,
+        "rows": 32
+      },
+      "vector_vs_enriched_target": {
+        "dimensions": 384,
+        "max_abs": 2.6196282505989075,
+        "mean_abs": 0.4706941660877886,
+        "rmse": 0.5926710548526766,
+        "rows": 32
+      }
+    }
+  },
+  "decision": {
+    "claim_boundary": "No action-conditioned adapter, task readout, or planning claim may consume this vector-only artifact.",
+    "formal_action_conditioned_join": "rejected_fail_closed",
+    "reason": "The vector artifact has no episode/sample IDs and no action/state fields; it can support only a vector-only temporal diagnostic.",
+    "vector_only_joined_diagnostic": "available"
+  },
+  "inputs": {
+    "enriched_export": "./le-wm-main/results/cross_arch_enriched_20261011/exports/dino_pointmaze.json",
+    "vector_artifact": "./le-wm-main/results/theory_operator_alignment_iclr_oral_20260829/jepa_wm_temporal_gate/dino_wm_pointmaze_tail200_metrics.json"
+  },
+  "metadata": {
+    "common_prefix_count": 32,
+    "enriched_episode_count": 32,
+    "missing_enriched_fields": [],
+    "prefix_episode_match": true,
+    "vector_action_mode": "observed",
+    "vector_context_length": 3,
+    "vector_episode_count": 200,
+    "vector_frame_stride": 5,
+    "vector_has_sample_ids": false,
+    "vector_horizons": [
+      1,
+      2,
+      4
+    ],
+    "vector_operator_fields": [
+      "description",
+      "predicted",
+      "target"
+    ]
+  },
+  "schema": "dino_vector_artifact_join_audit.v1"
+}
