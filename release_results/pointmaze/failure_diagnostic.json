@@ -1,0 +1,88 @@
+{
+  "actual_best_horizon_counts": {
+    "1": 7,
+    "2": 11,
+    "4": 14
+  },
+  "claim_boundary": "Mechanism decomposition only; no checkpoint, metric, or planner is selected from outcome rows.",
+  "diagnostic_loss_mean": 0.36604321621622327,
+  "fixed_horizon": {
+    "1": {
+      "actual_best_count": 7,
+      "mean_gain_vs_diagnostic": 0.17135013553953504,
+      "mean_loss": 0.5373933517557583,
+      "selection_count": 7
+    },
+    "2": {
+      "actual_best_count": 11,
+      "mean_gain_vs_diagnostic": -0.0349505830255461,
+      "mean_loss": 0.33109263319067717,
+      "selection_count": 8
+    },
+    "4": {
+      "actual_best_count": 14,
+      "mean_gain_vs_diagnostic": -0.13695977876318616,
+      "mean_loss": 0.2290834374530371,
+      "selection_count": 17
+    }
+  },
+  "horizon_metrics": {
+    "1": {
+      "actual_progress_mean": 0.10281031222645154,
+      "calibration_decoder_task_pearson": -0.0032898789287536313,
+      "calibration_decoder_task_spearman": 0.028225806451612902,
+      "heldout_latent_mse": 0.10629526260647709,
+      "predicted_progress_mean": -0.047558680680841486,
+      "prediction_task_pearson": 0.082586017299847,
+      "prediction_task_spearman": 0.11217008797653959
+    },
+    "2": {
+      "actual_progress_mean": 0.3091110307915327,
+      "calibration_decoder_task_pearson": -0.01078057152437353,
+      "calibration_decoder_task_spearman": 0.001099706744868035,
+      "heldout_latent_mse": 0.09264732944597998,
+      "predicted_progress_mean": -0.20047181996795094,
+      "prediction_task_pearson": 0.1663721087405454,
+      "prediction_task_spearman": 0.16055718475073313
+    },
+    "4": {
+      "actual_progress_mean": 0.41112022652917274,
+      "calibration_decoder_task_pearson": 0.006336022187102405,
+      "calibration_decoder_task_spearman": 0.06268328445747799,
+      "heldout_latent_mse": 0.10860524161797526,
+      "predicted_progress_mean": 0.3889147201050519,
+      "prediction_task_pearson": -0.03225207409853469,
+      "prediction_task_spearman": 0.042155425219941346
+    }
+  },
+  "hypothesis_readout": {
+    "calibration_decoder_available": true,
+    "interpretation": "A calibration-only decoder comparison is diagnostic; it cannot replace the frozen formal protocol post hoc.",
+    "train_decoder_available": true
+  },
+  "oracle_progress_mean": 0.64020366398221,
+  "outcome_gain_distribution": {
+    "baseline_horizon_1_minus_diagnostic_mean": 0.17135013553953504,
+    "per_episode_gain_max": 1.5750444167119495,
+    "per_episode_gain_min": -0.602936366984165,
+    "per_episode_gain_positive_fraction": 0.53125
+  },
+  "protocol": {
+    "checkpoint_selection": "explicit input path",
+    "diagnostic_only": true,
+    "formal_metric_unchanged": true,
+    "outcome_used_for_selection": false
+  },
+  "record": "./le-wm-main/results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8411_stage005/checkpoint_record.json",
+  "schema": "independent_planning_failure_diagnostic.v1",
+  "selected_horizon_counts": {
+    "1": 7,
+    "2": 8,
+    "4": 17
+  },
+  "split_sizes": {
+    "calibration": 14,
+    "outcome": 32,
+    "train": 54
+  }
+}

@@ -1,0 +1,194 @@
+{
+  "claim_boundary": "This validates the control contract and its conditional local tube theorem. It does not establish learned-model transfer-risk prediction, stable pose closure, or cross-environment planning benefit.",
+  "fail_closed_case": {
+    "candidate_reports": [
+      {
+        "index": 0,
+        "objective": 0.8188236000449016,
+        "risk_bound": 0.07529440017960608,
+        "risk_status": "conditional_bound",
+        "task_cost": 0.8000000000000002,
+        "terminal_task": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "index": 1,
+        "objective": 0.42058729129490163,
+        "risk_bound": 0.07529440017960608,
+        "risk_status": "conditional_bound",
+        "task_cost": 0.4017636912500001,
+        "terminal_task": [
+          0.23852499999999996,
+          0.052937500000000005
+        ]
+      },
+      {
+        "index": 2,
+        "objective": 0.07612096629490155,
+        "risk_bound": 0.07529440017960608,
+        "risk_status": "conditional_bound",
+        "task_cost": 0.05729736625000003,
+        "terminal_task": [
+          0.583275,
+          0.1491875
+        ]
+      }
+    ],
+    "claim_boundary": "The controller is certified only for the declared metric, local model, finite horizon, and independently estimated residual envelopes. A commutator alone is not a certificate.",
+    "gates": {
+      "action_identifiability": false,
+      "local_metric_tube": true,
+      "transition_consistency": true
+    },
+    "markov_parameters": [
+      [
+        [
+          0.7
+        ],
+        [
+          0.25
+        ]
+      ],
+      [
+        [
+          0.4925
+        ],
+        [
+          0.1375
+        ]
+      ],
+      [
+        [
+          0.34075
+        ],
+        [
+          0.07562500000000001
+        ]
+      ]
+    ],
+    "reason": "independent action/transition evidence or finite risk envelope is missing",
+    "risk_threshold": 1.0,
+    "risk_weight": 0.25,
+    "schema": "covariant_transfer_risk_mpc.v1",
+    "selected": {
+      "index": 0,
+      "objective": 0.8188236000449016,
+      "risk_bound": 0.07529440017960608,
+      "risk_status": "conditional_bound",
+      "task_cost": 0.8000000000000002,
+      "terminal_task": [
+        0.0,
+        0.0
+      ]
+    },
+    "selected_index": 0,
+    "status": "fallback_fail_closed"
+  },
+  "metric_tube": {
+    "action_bound": 0.7,
+    "assumptions": [
+      "positive-definite declared task metric",
+      "local Jacobian/operator remains in the declared tube",
+      "per-step disturbance is bounded by disturbance_bound",
+      "action norm is bounded by action_bound"
+    ],
+    "claim_boundary": "local robust-tube certificate; not a global nonlinear or universal-world-model theorem",
+    "declared_local_tube_radius": 2.0,
+    "disturbance_bound": 0.02,
+    "invariant_radius": 1.8498621125381598,
+    "metric_alpha": 0.6636707328205526,
+    "metric_beta": 0.8602325267042626,
+    "schema": "covariant_metric_tube.v1",
+    "status": "certified"
+  },
+  "permitted_case": {
+    "candidate_reports": [
+      {
+        "index": 0,
+        "objective": 0.8188236000449016,
+        "risk_bound": 0.07529440017960608,
+        "risk_status": "conditional_bound",
+        "task_cost": 0.8000000000000002,
+        "terminal_task": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "index": 1,
+        "objective": 0.42058729129490163,
+        "risk_bound": 0.07529440017960608,
+        "risk_status": "conditional_bound",
+        "task_cost": 0.4017636912500001,
+        "terminal_task": [
+          0.23852499999999996,
+          0.052937500000000005
+        ]
+      },
+      {
+        "index": 2,
+        "objective": 0.07612096629490155,
+        "risk_bound": 0.07529440017960608,
+        "risk_status": "conditional_bound",
+        "task_cost": 0.05729736625000003,
+        "terminal_task": [
+          0.583275,
+          0.1491875
+        ]
+      }
+    ],
+    "claim_boundary": "The controller is certified only for the declared metric, local model, finite horizon, and independently estimated residual envelopes. A commutator alone is not a certificate.",
+    "gates": {
+      "action_identifiability": true,
+      "local_metric_tube": true,
+      "transition_consistency": true
+    },
+    "markov_parameters": [
+      [
+        [
+          0.7
+        ],
+        [
+          0.25
+        ]
+      ],
+      [
+        [
+          0.4925
+        ],
+        [
+          0.1375
+        ]
+      ],
+      [
+        [
+          0.34075
+        ],
+        [
+          0.07562500000000001
+        ]
+      ]
+    ],
+    "reason": "all independent gates passed and candidate risk is below threshold",
+    "risk_threshold": 1.0,
+    "risk_weight": 0.25,
+    "schema": "covariant_transfer_risk_mpc.v1",
+    "selected": {
+      "index": 2,
+      "objective": 0.07612096629490155,
+      "risk_bound": 0.07529440017960608,
+      "risk_status": "conditional_bound",
+      "task_cost": 0.05729736625000003,
+      "terminal_task": [
+        0.583275,
+        0.1491875
+      ]
+    },
+    "selected_index": 2,
+    "status": "permitted"
+  },
+  "schema": "covariant_transfer_risk_control_audit.v1",
+  "status": "synthetic_control_theory_audit_only"
+}

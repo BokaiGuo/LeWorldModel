@@ -1,0 +1,54 @@
+{
+  "created_at": "2026-08-31T10:43:25+08:00",
+  "purpose": "Latent State Spectral Transfer JEPA acquisition",
+  "records": [
+    {
+      "source": "git",
+      "url": "https://github.com/facebookresearch/jepa-wms.git",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/external/jepa-wms",
+      "commit": "13cf1d9c7e476f53c17714d2e0f1dc239a883ce0",
+      "status": "",
+      "action": "reused"
+    },
+    {
+      "source": "huggingface",
+      "repo_id": "facebook/jepa-wms",
+      "filename": "README.md",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/external/jepa_wms_hf/README.md",
+      "bytes": 5292,
+      "sha256": "af6ced654e1123ac9a3bc17c9397003236e7acbeea5033c958afa94408e4f3bf"
+    },
+    {
+      "source": "huggingface",
+      "repo_id": "facebook/jepa-wms",
+      "filename": "jepa_wm_pusht.pth.tar",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/external/jepa_wms_hf/jepa_wm_pusht.pth.tar",
+      "bytes": 211639615,
+      "sha256": "9beca3eafe0739c3b3adb5d734fa435ccbda0fea8a65d53d4cccec176aaaa0eb"
+    },
+    {
+      "source": "huggingface",
+      "repo_id": "facebook/ijepa_vith16_1k",
+      "filename": "config.json",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/external/ijepa_vith16_1k_hf/config.json",
+      "bytes": 497,
+      "sha256": "d81a0b3cc9afeb38166236fd1f2a8d110272a8b457e299d89f41db3fc023ac8f"
+    },
+    {
+      "source": "huggingface",
+      "repo_id": "facebook/ijepa_vith16_1k",
+      "filename": "preprocessor_config.json",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/external/ijepa_vith16_1k_hf/preprocessor_config.json",
+      "bytes": 325,
+      "sha256": "df75a6e3b7a47f4c1f31cce29c253c1000d84f7d171c8394b772fce25b2caf10"
+    },
+    {
+      "source": "huggingface",
+      "repo_id": "facebook/ijepa_vith16_1k",
+      "filename": "model.safetensors",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/external/ijepa_vith16_1k_hf/model.safetensors",
+      "bytes": 2526733944,
+      "sha256": "66512006bee119d7705941a51ab9afb28f993b12bb8d7fcc47f24a34c632cbd9"
+    }
+  ]
+}

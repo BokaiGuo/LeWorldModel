@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+title: "LeWorldModel: Transfer-Sufficient Diagnostics for Frozen Visual World Models"
+message: "If you use the research extensions or curated evidence, please cite this repository and the upstream LeWorldModel paper."
+type: software
+authors:
+  - given-names: Bokai
+    family-names: Guo
+    affiliation: Independent research
+url: https://github.com/BokaiGuo/LeWorldModel
+license: MIT
+version: 0.1.0
+date-released: 2026-10-13

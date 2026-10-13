@@ -1,0 +1,102 @@
+{
+  "claim_boundary": "Diagnostic mechanism evidence only; no cross-environment or universal-world-model claim.",
+  "interpretation": "A representation is action-transfer sufficient only if the shared raw action chart, held-out action-to-latent effect, and task readout remain stable. High calibration error after raw-action correction is evidence of representation-conditioned transfer failure, not permission to tune on outcome rows.",
+  "protocol": {
+    "action_input": "raw shared physical action blocks",
+    "calibration_split": "calibration rows only",
+    "fit_split": "train rows only",
+    "max_rows": 32,
+    "outcome_used_for_selection": false,
+    "support_matching": true,
+    "task_direction": "train-only h=1 source-to-target displacement"
+  },
+  "representations": {
+    "dino": {
+      "action_interface": {
+        "action_feature_used_by_panel": "raw action_blocks_raw",
+        "effective_rank": 17,
+        "export_field_max": 1.7248787879943848,
+        "export_field_mean": 0.05501286108143783,
+        "export_field_min": -1.7316869497299194,
+        "export_field_std": 0.982289335499197,
+        "raw_calibration_std": 0.5496436459822026,
+        "raw_max": 0.9954900145530701,
+        "raw_mean": 0.03207832715803913,
+        "raw_min": -0.9996010661125183,
+        "raw_std": 0.5670103386060779
+      },
+      "calibration_rows": 4,
+      "horizons": {
+        "1": {
+          "action_only_calibration_r2": -1.1977128976321674,
+          "latent_delta_norm_mean": 2.91963647484007,
+          "latent_target_variance": 5.024269547826864,
+          "state_action_calibration_r2": -0.40907987214393815,
+          "task_displacement_train_std": 0.38610473299993
+        },
+        "2": {
+          "action_only_calibration_r2": -0.473833933794789,
+          "latent_delta_norm_mean": 2.963191804094444,
+          "latent_target_variance": 6.682672765330611,
+          "state_action_calibration_r2": 0.010217336537496124,
+          "task_displacement_train_std": 0.5668890397332957
+        },
+        "4": {
+          "action_only_calibration_r2": -0.8979855221273925,
+          "latent_delta_norm_mean": 3.5620712640049583,
+          "latent_target_variance": 5.475623877937276,
+          "state_action_calibration_r2": 0.022450371570346683,
+          "task_displacement_train_std": 1.0894214149888184
+        }
+      },
+      "outcome_rows": 10,
+      "rows": 32,
+      "source": "./le-wm-main/results/cross_arch_enriched_20261011/exports/dino_pointmaze.json",
+      "train_rows": 18
+    },
+    "jepa": {
+      "action_interface": {
+        "action_feature_used_by_panel": "raw action_blocks_raw",
+        "effective_rank": 17,
+        "export_field_max": 0.9967601895332336,
+        "export_field_mean": 0.026497823527703683,
+        "export_field_min": -0.9996010661125183,
+        "export_field_std": 0.5866277391034276,
+        "raw_calibration_std": 0.5976698493660773,
+        "raw_max": 0.9967601895332336,
+        "raw_mean": 0.026497823527703683,
+        "raw_min": -0.9996010661125183,
+        "raw_std": 0.5866277391034276
+      },
+      "calibration_rows": 4,
+      "horizons": {
+        "1": {
+          "action_only_calibration_r2": -1.4162737045536749,
+          "latent_delta_norm_mean": 0.5571489163166032,
+          "latent_target_variance": 0.16463192319424452,
+          "state_action_calibration_r2": -1.1659613983098973,
+          "task_displacement_train_std": 0.38277222668681316
+        },
+        "2": {
+          "action_only_calibration_r2": -1.2423676248834399,
+          "latent_delta_norm_mean": 0.557021985274575,
+          "latent_target_variance": 0.18241167911282,
+          "state_action_calibration_r2": -1.1708749039582074,
+          "task_displacement_train_std": 0.5520342538698719
+        },
+        "4": {
+          "action_only_calibration_r2": -3.8682427244297592,
+          "latent_delta_norm_mean": 0.6609474125743333,
+          "latent_target_variance": 0.24326943729655387,
+          "state_action_calibration_r2": -3.7571696568701,
+          "task_displacement_train_std": 0.8868555729553083
+        }
+      },
+      "outcome_rows": 10,
+      "rows": 32,
+      "source": "./le-wm-main/results/cross_arch_enriched_20261011/exports/jepa_pointmaze.json",
+      "train_rows": 18
+    }
+  },
+  "schema": "pointmaze_representation_condition_diagnostic.v1"
+}

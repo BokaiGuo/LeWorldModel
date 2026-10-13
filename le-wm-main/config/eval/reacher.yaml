@@ -1,0 +1,58 @@
+defaults:
+  - launcher: local
+  - solver: cem
+  - _self_
+
+world:
+  env_name: swm/ReacherDMControl-v0
+  num_envs: ${eval.num_eval}
+  max_episode_steps: ??? # make sure it's >= eval_budget
+  task: qpos_match
+
+dataset:
+  stats: ${eval.dataset_name}
+  keys_to_cache:
+    - action
+
+seed: 42
+policy: random # ckpt name or random
+
+plan_config:
+  horizon: 5
+  receding_horizon: 5
+  action_block: 5 # frameskip
+
+# evaluation from dataset (replay expert trajectories)
+eval:
+  num_eval: 50
+  goal_offset_steps: 25
+  eval_budget: 50
+  img_size: 224
+  dataset_name: dmc/reacher_random
+  spectral_planner:
+    enabled: false
+    latents: ???
+    max_samples: 200000
+    seed: ${seed}
+    top_k: 0
+    weight_mode: reachability_controllability_nuisance
+    normalize_weights: true
+    vanilla_blend: 0.0
+  callables:
+    # -- set state
+    - method: set_state
+      args:
+        qpos:
+          value: qpos
+        qvel:
+          value: qvel
+
+    - method: set_target_qpos
+      args:
+        target_qpos:
+          value: goal_qpos
+
+output:
+  dir: null
+  filename: dmc_results.txt
+  json_filename: eval_metrics.json

@@ -1,0 +1,443 @@
+{
+  "claim_boundary": "The tool can report a cross-environment positive transfer-risk result only when all declared gates pass. Missing or negative environments remain visible and fail closed.",
+  "global_audit": {
+    "claim_boundary": "A conditional transfer-risk claim is eligible only after the primary four-metric benchmark has identifiable matched strata replicated across at least two architectures, two seeds, and two environments. This audit cannot establish a universal model-selection criterion or a commutator certificate from unmatched learned checkpoints.",
+    "inventory": {
+      "architectures": [
+        "dino_linear",
+        "dino_mlp",
+        "jepa_linear",
+        "jepa_mlp"
+      ],
+      "environments": [
+        "PointMaze"
+      ],
+      "seeds": [
+        "8411",
+        "8412",
+        "8413",
+        "8414",
+        "8415"
+      ]
+    },
+    "protocol": {
+      "estimand": "conditional independent planning-risk difference after matching MSE, latent dimension, predictor spectrum, training stage, action distribution, and (strict mode) action inverse risk",
+      "matching": {
+        "action_distribution": "exact declaration",
+        "action_inverse_risk": "symmetric relative pairwise distance <= 0.05",
+        "latent_dimension": "exact",
+        "prediction_mse": "symmetric relative pairwise distance <= 0.05",
+        "predictor_spectrum": "normalized max eigenvalue distance <= 0.05",
+        "training_stage": "exact"
+      },
+      "metric_fit_split": "diagnostic/train split only as recorded by source protocol",
+      "negative_result_policy": "unmatched, missing-Schur, and negative strata remain visible and cannot be overwritten",
+      "outcome": "independent held-out planning risk",
+      "predeclared_metrics": [
+        "task_metric_alignment",
+        "task_metric_commutator",
+        "task_metric_schur_offdiagonal_energy",
+        "task_metric_transient_amplification"
+      ],
+      "primary_estimand": "Delta R = R(MSE-only) - R(MSE+action-risk+geometry)",
+      "replication_unit": "environment stratum; not episode-level pseudoreplication",
+      "require_independent_external_evidence": true,
+      "selector_direction": "lower is better for all four diagnostics"
+    },
+    "strata": [
+      {
+        "action_distribution": "pointmaze_observed_shared_v1",
+        "action_risk_matched": true,
+        "candidate_count": 20,
+        "compatible_edge_count": 0,
+        "eligible_architectures": [
+          "jepa_mlp"
+        ],
+        "eligible_checkpoints": [
+          "./le-wm-main/results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/checkpoints/jepa_mlp/seed_8411/stage_005.pt"
+        ],
+        "eligible_count": 1,
+        "eligible_seeds": [
+          "8411"
+        ],
+        "environment": "PointMaze",
+        "identifiable": false,
+        "latent_dimension": 8,
+        "matching_rule": "diversity_prioritized_maximum_pairwise_symmetric_relative_mse_and_spectrum_clique",
+        "max_pairwise_action_risk_distance": NaN,
+        "max_pairwise_mse_distance": 0.0,
+        "max_pairwise_spectrum_distance": 0.0,
+        "missing_task_metric_schur": false,
+        "rank_correlations": {},
+        "reason_if_gated": "fewer_than_two_quality_and_spectrum_matched_candidates",
+        "selectors": {},
+        "training_stage": 5
+      },
+      {
+        "action_distribution": "pointmaze_observed_shared_v1",
+        "action_risk_matched": true,
+        "candidate_count": 20,
+        "compatible_edge_count": 0,
+        "eligible_architectures": [
+          "jepa_mlp"
+        ],
+        "eligible_checkpoints": [
+          "./le-wm-main/results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/checkpoints/jepa_mlp/seed_8411/stage_010.pt"
+        ],
+        "eligible_count": 1,
+        "eligible_seeds": [
+          "8411"
+        ],
+        "environment": "PointMaze",
+        "identifiable": false,
+        "latent_dimension": 8,
+        "matching_rule": "diversity_prioritized_maximum_pairwise_symmetric_relative_mse_and_spectrum_clique",
+        "max_pairwise_action_risk_distance": NaN,
+        "max_pairwise_mse_distance": 0.0,
+        "max_pairwise_spectrum_distance": 0.0,
+        "missing_task_metric_schur": false,
+        "rank_correlations": {},
+        "reason_if_gated": "fewer_than_two_quality_and_spectrum_matched_candidates",
+        "selectors": {},
+        "training_stage": 10
+      },
+      {
+        "action_distribution": "pointmaze_observed_shared_v1",
+        "action_risk_matched": true,
+        "candidate_count": 20,
+        "compatible_edge_count": 0,
+        "eligible_architectures": [
+          "jepa_mlp"
+        ],
+        "eligible_checkpoints": [
+          "./le-wm-main/results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/checkpoints/jepa_mlp/seed_8413/stage_025.pt"
+        ],
+        "eligible_count": 1,
+        "eligible_seeds": [
+          "8413"
+        ],
+        "environment": "PointMaze",
+        "identifiable": false,
+        "latent_dimension": 8,
+        "matching_rule": "diversity_prioritized_maximum_pairwise_symmetric_relative_mse_and_spectrum_clique",
+        "max_pairwise_action_risk_distance": NaN,
+        "max_pairwise_mse_distance": 0.0,
+        "max_pairwise_spectrum_distance": 0.0,
+        "missing_task_metric_schur": false,
+        "rank_correlations": {},
+        "reason_if_gated": "fewer_than_two_quality_and_spectrum_matched_candidates",
+        "selectors": {},
+        "training_stage": 25
+      },
+      {
+        "action_distribution": "pointmaze_observed_shared_v1",
+        "action_risk_matched": true,
+        "candidate_count": 20,
+        "compatible_edge_count": 0,
+        "eligible_architectures": [
+          "jepa_mlp"
+        ],
+        "eligible_checkpoints": [
+          "./le-wm-main/results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/checkpoints/jepa_mlp/seed_8412/stage_050.pt"
+        ],
+        "eligible_count": 1,
+        "eligible_seeds": [
+          "8412"
+        ],
+        "environment": "PointMaze",
+        "identifiable": false,
+        "latent_dimension": 8,
+        "matching_rule": "diversity_prioritized_maximum_pairwise_symmetric_relative_mse_and_spectrum_clique",
+        "max_pairwise_action_risk_distance": NaN,
+        "max_pairwise_mse_distance": 0.0,
+        "max_pairwise_spectrum_distance": 0.0,
+        "missing_task_metric_schur": false,
+        "rank_correlations": {},
+        "reason_if_gated": "fewer_than_two_quality_and_spectrum_matched_candidates",
+        "selectors": {},
+        "training_stage": 50
+      },
+      {
+        "action_distribution": "pointmaze_observed_shared_v1",
+        "action_risk_matched": true,
+        "candidate_count": 20,
+        "compatible_edge_count": 0,
+        "eligible_architectures": [
+          "jepa_mlp"
+        ],
+        "eligible_checkpoints": [
+          "./le-wm-main/results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/checkpoints/jepa_mlp/seed_8412/stage_075.pt"
+        ],
+        "eligible_count": 1,
+        "eligible_seeds": [
+          "8412"
+        ],
+        "environment": "PointMaze",
+        "identifiable": false,
+        "latent_dimension": 8,
+        "matching_rule": "diversity_prioritized_maximum_pairwise_symmetric_relative_mse_and_spectrum_clique",
+        "max_pairwise_action_risk_distance": NaN,
+        "max_pairwise_mse_distance": 0.0,
+        "max_pairwise_spectrum_distance": 0.0,
+        "missing_task_metric_schur": false,
+        "rank_correlations": {},
+        "reason_if_gated": "fewer_than_two_quality_and_spectrum_matched_candidates",
+        "selectors": {},
+        "training_stage": 75
+      }
+    ],
+    "summary": {
+      "architecture_count": 4,
+      "claim_ready_for_positive_delta": false,
+      "environment_count": 1,
+      "identifiable_environment_count": 0,
+      "identifiable_environments": [],
+      "identifiable_strata": 0,
+      "leave_one_environment_out_rank_correlation": {
+        "task_metric_alignment": {
+          "ci95_high": null,
+          "ci95_low": null,
+          "mean": null,
+          "n_strata": 0
+        },
+        "task_metric_commutator": {
+          "ci95_high": null,
+          "ci95_low": null,
+          "mean": null,
+          "n_strata": 0
+        },
+        "task_metric_schur_offdiagonal_energy": {
+          "ci95_high": null,
+          "ci95_low": null,
+          "mean": null,
+          "n_strata": 0
+        },
+        "task_metric_transient_amplification": {
+          "ci95_high": null,
+          "ci95_low": null,
+          "mean": null,
+          "n_strata": 0
+        }
+      },
+      "primary_delta_risk_mse_minus_full": {
+        "ci95_high": null,
+        "ci95_low": null,
+        "mean": null,
+        "n_strata": 0,
+        "p_one_sided": null,
+        "positive_gate": false
+      },
+      "rank_correlation": {},
+      "seed_count": 5,
+      "selection_regret": {},
+      "status": "gated_no_identifiable_matched_stratum",
+      "total_strata": 5,
+      "unavailable_strata": {
+        "full_mse_action_risk_geometry": 5,
+        "geometry_composite": 5,
+        "mse_only": 5,
+        "prediction_mse_tie_break": 5,
+        "random_expected": 5,
+        "task_metric_alignment": 5,
+        "task_metric_commutator": 5,
+        "task_metric_schur_offdiagonal_energy": 5,
+        "task_metric_transient_amplification": 5
+      }
+    }
+  },
+  "input": {
+    "load_failures": [],
+    "paths": [
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8411_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8411_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8411_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8411_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8411_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8412_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8412_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8412_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8412_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8412_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8413_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8413_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8413_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8413_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8413_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8414_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8414_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8414_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8414_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8414_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8415_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8415_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8415_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8415_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_linear_seed8415_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8411_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8411_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8411_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8411_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8411_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8412_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8412_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8412_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8412_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8412_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8413_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8413_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8413_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8413_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8413_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8414_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8414_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8414_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8414_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8414_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8415_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8415_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8415_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8415_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/dino_mlp_seed8415_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8411_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8411_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8411_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8411_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8411_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8412_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8412_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8412_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8412_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8412_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8413_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8413_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8413_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8413_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8413_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8414_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8414_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8414_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8414_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8414_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8415_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8415_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8415_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8415_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_linear_seed8415_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8411_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8411_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8411_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8411_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8411_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8412_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8412_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8412_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8412_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8412_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8413_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8413_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8413_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8413_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8413_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8414_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8414_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8414_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8414_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8414_stage075/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8415_stage005/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8415_stage010/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8415_stage025/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8415_stage050/checkpoint_record.json",
+      "results/pointmaze_learned_adapter_panel_stages_rank8_clean_20261013/records/jepa_mlp_seed8415_stage075/checkpoint_record.json"
+    ]
+  },
+  "leave_one_environment_out": {
+    "PointMaze": {
+      "reason": "fewer_than_two_records",
+      "status": "not_estimable_after_exclusion"
+    }
+  },
+  "per_environment": {
+    "PointMaze": {
+      "architecture_count": 4,
+      "claim_ready_for_positive_delta": false,
+      "environment_count": 1,
+      "gating_reasons": [
+        {
+          "reason": "fewer_than_two_quality_and_spectrum_matched_candidates",
+          "training_stage": 5
+        },
+        {
+          "reason": "fewer_than_two_quality_and_spectrum_matched_candidates",
+          "training_stage": 10
+        },
+        {
+          "reason": "fewer_than_two_quality_and_spectrum_matched_candidates",
+          "training_stage": 25
+        },
+        {
+          "reason": "fewer_than_two_quality_and_spectrum_matched_candidates",
+          "training_stage": 50
+        },
+        {
+          "reason": "fewer_than_two_quality_and_spectrum_matched_candidates",
+          "training_stage": 75
+        }
+      ],
+      "identifiable": false,
+      "identifiable_environments": [],
+      "identifiable_strata": 0,
+      "matched_strata": [],
+      "primary_delta": {
+        "ci95_high": null,
+        "ci95_low": null,
+        "mean": null,
+        "n_strata": 0,
+        "p_one_sided": null,
+        "positive_gate": false
+      },
+      "record_count": 100,
+      "seed_count": 5,
+      "status": "gated_no_identifiable_matched_stratum"
+    }
+  },
+  "protocol": {
+    "leave_one_environment_out": true,
+    "matching": "delegated to strict real learned matched benchmark",
+    "positive_claim_requires": [
+      "global paired positive Delta R gate",
+      "at least two identifiable environments",
+      "each included environment has at least two architectures and seeds",
+      "independent held-out action/planning consequence"
+    ],
+    "replication_unit": "environment-level matched stratum",
+    "require_independent_external_evidence": true,
+    "worst_environment_reported": true
+  },
+  "schema": "cross_environment_transfer_diagnostic.v1",
+  "summary": {
+    "cross_environment_positive_gate": false,
+    "global": {
+      "architecture_count": 4,
+      "claim_ready_for_positive_delta": false,
+      "environment_count": 1,
+      "identifiable_environments": [],
+      "identifiable_strata": 0,
+      "primary_delta": {
+        "ci95_high": null,
+        "ci95_low": null,
+        "mean": null,
+        "n_strata": 0,
+        "p_one_sided": null,
+        "positive_gate": false
+      },
+      "seed_count": 5,
+      "status": "gated_no_identifiable_matched_stratum"
+    },
+    "identifiable_environments": [],
+    "missing_identifiable_environments": [
+      "PointMaze"
+    ],
+    "status": "gated_cross_environment_claim",
+    "worst_environment": null
+  }
+}

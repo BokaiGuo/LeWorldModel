@@ -1,0 +1,52 @@
+# Python and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Local editor and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Local data, checkpoints, and generated training outputs
+le-wm-main/data/
+le-wm-main/external/
+le-wm-main/outputs/
+le-wm-main/.cache/
+le-wm-main/*.pth
+le-wm-main/*.pt
+le-wm-main/*.ckpt
+le-wm-main/**/*.pth
+le-wm-main/**/*.pt
+le-wm-main/**/*.ckpt
+le-wm-main/**/*.safetensors
+le-wm-main/**/*.h5
+le-wm-main/**/*.npz
+le-wm-main/**/*.tar
+le-wm-main/**/*.tar.gz
+le-wm-main/**/*.tar.zst
+le-wm-main/**/*.zip
+
+# Raw and intermediate experiment artifacts. Curated release artifacts live
+# under release_results/ and are intentionally small and auditable.
+results/
+le-wm-main/results/
+LeWorldModel_Overleaf_Package_20260831/reproducibility/results/
+le-wm-main/**/*.log
+*.log
+
+# Local conversation exports and packaging archives
+chatgpt-raw-export_*.json
+chatgpt-export_*.md
+CONVERSATION_ARCHIVE_*.md
+*.zip
+
+# Keep the curated public result bundle.
+!release_results/
+!release_results/**

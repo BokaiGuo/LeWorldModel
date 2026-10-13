@@ -1,0 +1,56 @@
+defaults:
+  - launcher: local
+  - solver: cem
+  - _self_
+
+world:
+  env_name: swm/TwoRoom-v1
+  num_envs: ${eval.num_eval}
+  max_episode_steps: ??? # make sure it's >= eval_budget
+
+seed: 42
+policy: random # ckpt name or random
+
+dataset:
+  stats: ${eval.dataset_name}
+  keys_to_cache:
+    - action
+    - proprio
+
+plan_config:
+  horizon: 5
+  receding_horizon: 5
+  action_block: 5 # frameskip
+
+# evaluation from dataset (replay expert trajectories)
+eval:
+  num_eval: 50
+  goal_offset_steps: 25
+  eval_budget: 50
+  img_size: 224
+  dataset_name: tworoom
+  spectral_planner:
+    enabled: false
+    latents: ???
+    max_samples: 200000
+    seed: ${seed}
+    top_k: 0
+    weight_mode: reachability_controllability_nuisance
+    normalize_weights: true
+    vanilla_blend: 0.0
+  callables:
+    # -- set state
+    - method: _set_state
+      args:
+        state:
+          value: proprio
+    # -- set goal state
+    - method: _set_goal_state
+      args:
+        goal_state:
+          value: goal_proprio
+
+output:
+  dir: null
+  filename: tworoom_results.txt
+  json_filename: eval_metrics.json

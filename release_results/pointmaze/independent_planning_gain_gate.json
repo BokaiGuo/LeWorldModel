@@ -1,0 +1,37 @@
+{
+  "claim_boundary": "This gate accepts only a pre-frozen, paired, independent planning consequence. It does not prove universal visual planning or causal latent dynamics.",
+  "environment_count": 1,
+  "environments": [
+    "PointMaze"
+  ],
+  "estimand": "baseline held-out loss minus diagnostic held-out loss",
+  "invalid_records": [],
+  "paired_inference": {
+    "ci95_high": 0.33600981511078104,
+    "ci95_low": 0.023089351119754437,
+    "mean": 0.17135013553953507,
+    "n_pairs": 32,
+    "p_one_sided": 0.020198990050497474
+  },
+  "per_environment": {
+    "PointMaze": {
+      "ci95_high": 0.33561481672927307,
+      "ci95_low": 0.02129773600270569,
+      "mean": 0.17135013553953507,
+      "n_pairs": 32,
+      "p_one_sided": 0.02069896505174741
+    }
+  },
+  "positive_gain": true,
+  "protocol_gate": true,
+  "schema": "independent_planning_gain.v1",
+  "statistical_gate": true,
+  "status": "independent_planning_gain_passed",
+  "thresholds": {
+    "alpha": 0.05,
+    "min_environments": 1,
+    "min_gain": 0.0,
+    "min_pairs": 10
+  },
+  "valid_pair_count": 32
+}

@@ -1,0 +1,134 @@
+{
+  "protocol": {
+    "primary_endpoint": "h4_k65",
+    "primary_estimand": "equal-weight mean across source checkpoint/environment artifacts of alignment regret minus validation-error regret",
+    "secondary_endpoints": [
+      "h2_k65",
+      "h4_k17"
+    ],
+    "primary_test": "one-sided exact sign permutation over source clusters",
+    "interval": "95% source-cluster bootstrap; split seeds nested within source are averaged before resampling",
+    "multiple_comparison_family": "the declared primary plus the two declared sensitivity endpoints",
+    "independent_unit": "source checkpoint/environment artifact, not split seed, episode, horizon, or candidate",
+    "confirmatory_status": {
+      "h4_k65": true,
+      "h2_k65": false,
+      "h4_k17": false
+    }
+  },
+  "endpoints": {
+    "h4_k65": {
+      "label": "h4_k65",
+      "path": "results/covariance_predictor_learned_checkpoint_benchmark_crossseed_final_20261008/learned_checkpoint_diagnostic.json",
+      "protocol": {
+        "downstream_horizon": 4,
+        "candidate_count": 65,
+        "prediction_error_tolerance": 0.05,
+        "uncertainty_unit_original": "bootstrap over split seeds; not independent episode-level replication"
+      },
+      "estimand": "equal-weight mean across source checkpoint/environment artifacts of alignment regret minus validation-error regret",
+      "source_effects": {
+        "DINO-WM-PointMaze-base": -0.0546480707535112,
+        "DINO-WM-PointMaze-s0": -0.0609706205304171,
+        "DINO-WM-PointMaze-s1": -0.07773014156260724,
+        "DINO-WM-PushT": -0.016704575467494296,
+        "JEPA-WM-PointMaze-s0": -3.9915356659156997,
+        "JEPA-WM-PointMaze-s1": -1.6251564511544563,
+        "JEPA-WM-PointMaze-s42": -3.883638659572069,
+        "JEPA-WM-PushT": 0.04304757577421329
+      },
+      "source_cluster_bootstrap": {
+        "mean": -1.2084170761477553,
+        "ci_low": -2.466205062108302,
+        "ci_high": -0.19893173760519037,
+        "n_source_clusters": 8
+      },
+      "exact_one_sided_sign_pvalue": 0.01556420233463035,
+      "split_seed_count_total": 800,
+      "split_seeds_are_not_independent_units": true
+    },
+    "h2_k65": {
+      "label": "h2_k65",
+      "path": "results/covariance_predictor_learned_checkpoint_benchmark_crossseed_h2_20261008/learned_checkpoint_diagnostic.json",
+      "protocol": {
+        "downstream_horizon": 2,
+        "candidate_count": 65,
+        "prediction_error_tolerance": 0.05,
+        "uncertainty_unit_original": "bootstrap over split seeds; not independent episode-level replication"
+      },
+      "estimand": "equal-weight mean across source checkpoint/environment artifacts of alignment regret minus validation-error regret",
+      "source_effects": {
+        "DINO-WM-PointMaze-base": 0.007185921856807126,
+        "DINO-WM-PointMaze-s0": -0.0038169872144384748,
+        "DINO-WM-PointMaze-s1": -0.006080840199745875,
+        "DINO-WM-PushT": 0.08094200833939501,
+        "JEPA-WM-PointMaze-s0": -0.08359661797191356,
+        "JEPA-WM-PointMaze-s1": -0.09736929178840144,
+        "JEPA-WM-PointMaze-s42": -0.1193307127926741,
+        "JEPA-WM-PushT": -0.010463076028319413
+      },
+      "source_cluster_bootstrap": {
+        "mean": -0.029066199474911344,
+        "ci_low": -0.0705324975485114,
+        "ci_high": 0.015782275921149967,
+        "n_source_clusters": 8
+      },
+      "exact_one_sided_sign_pvalue": 0.08949416342412451,
+      "split_seed_count_total": 800,
+      "split_seeds_are_not_independent_units": true
+    },
+    "h4_k17": {
+      "label": "h4_k17",
+      "path": "results/covariance_predictor_learned_checkpoint_benchmark_crossseed_h4_k17_20261008/learned_checkpoint_diagnostic.json",
+      "protocol": {
+        "downstream_horizon": 4,
+        "candidate_count": 17,
+        "prediction_error_tolerance": 0.05,
+        "uncertainty_unit_original": "bootstrap over split seeds; not independent episode-level replication"
+      },
+      "estimand": "equal-weight mean across source checkpoint/environment artifacts of alignment regret minus validation-error regret",
+      "source_effects": {
+        "DINO-WM-PointMaze-base": -0.05545434286541556,
+        "DINO-WM-PointMaze-s0": -0.06474527036547723,
+        "DINO-WM-PointMaze-s1": -0.07869159768920116,
+        "DINO-WM-PushT": 0.017628725108482995,
+        "JEPA-WM-PointMaze-s0": -3.983544136012696,
+        "JEPA-WM-PointMaze-s1": -1.7410046136221669,
+        "JEPA-WM-PointMaze-s42": -0.9232946457297864,
+        "JEPA-WM-PushT": 0.14103626473671232
+      },
+      "source_cluster_bootstrap": {
+        "mean": -0.8360087020549435,
+        "ci_low": -1.9072718746285113,
+        "ci_high": -0.06801180879741339,
+        "n_source_clusters": 8
+      },
+      "exact_one_sided_sign_pvalue": 0.0622568093385214,
+      "split_seed_count_total": 800,
+      "split_seeds_are_not_independent_units": true
+    }
+  },
+  "holm_correction": {
+    "raw": {
+      "h4_k65": 0.01556420233463035,
+      "h2_k65": 0.08949416342412451,
+      "h4_k17": 0.0622568093385214
+    },
+    "holm_adjusted": {
+      "h4_k65": 0.04669260700389105,
+      "h4_k17": 0.1245136186770428,
+      "h2_k65": 0.1245136186770428
+    },
+    "alpha": 0.05,
+    "reject": {
+      "h4_k65": true,
+      "h4_k17": false,
+      "h2_k65": false
+    }
+  },
+  "claim_boundary": [
+    "The primary result is a source-cluster stability analysis, not an episode-level generalization claim.",
+    "A positive result would support conditional model-selection utility for the declared fixed-spectrum probe family only.",
+    "The audit does not establish end-to-end neural training gains, physical causality, or online planning."
+  ]
+}
