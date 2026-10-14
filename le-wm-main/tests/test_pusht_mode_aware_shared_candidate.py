@@ -10,6 +10,8 @@ from experiments.run_pusht_mode_aware_shared_candidate import (
     current_mode_for_env,
     make_boundary_contact_roots,
     online_effect_key,
+    online_effect_descriptor,
+    local_observed_effect,
     physical_contact_geometry,
     update_contact_sign_consensus,
     current_mode,
@@ -146,5 +148,80 @@ def test_online_effect_key_does_not_alias_local_action_directions():
         second = 0.10 * (np.cos(np.pi / 3.0) * normal + np.sin(np.pi / 3.0) * tangent)
         assert np.isclose(np.linalg.norm(first), np.linalg.norm(second))
         assert online_effect_key(env, state, first) != online_effect_key(env, state, second)
+    finally:
+        env.close()
+
+
+def test_local_observed_effect_reuses_nearby_same_edge_action():
+    env = gym.make("swm/PushT-v1", render_mode="rgb_array")
+    try:
+        state = make_boundary_contact_roots(env, 1, 20261019)[0]["state"]
+        normal = boundary_inward_normal(env, state)
+        tangent = np.asarray([-normal[1], normal[0]], dtype=np.float64)
+        observed_action = 0.10 * normal + 0.06 * tangent
+        query_action = 0.10 * normal + 0.075 * tangent
+        descriptor = online_effect_descriptor(env, state, observed_action)
+        cache = {
+            "same_edge": {
+                "mean": [0.04, 1.0, 0.5, 0.0, 0.0, 0.0],
+                "count": 1,
+                "task_gain": 0.8,
+                "last_error": 0.1,
+                "descriptor": descriptor,
+            }
+        }
+        result = local_observed_effect(
+            env, state, query_action, cache, max_neighbors=3, max_radius=1.75,
+        )
+        assert result is not None
+        np.testing.assert_allclose(result["target"], [0.04, 1.0, 0.5, 0.0, 0.0, 0.0])
+        assert result["neighbor_count"] == 1
+        assert result["task_gain"] == 0.8
+    finally:
+        env.close()
+
+
+def test_local_observed_effect_fails_closed_across_polygon_edges():
+    env = gym.make("swm/PushT-v1", render_mode="rgb_array")
+    try:
+        state = make_boundary_contact_roots(env, 1, 20261020)[0]["state"]
+        action = np.asarray([0.1, 0.0], dtype=np.float64)
+        descriptor = online_effect_descriptor(env, state, action)
+        descriptor["region"] = "different-edge"
+        cache = {"wrong": {"mean": [0.0] * 6, "count": 1, "descriptor": descriptor}}
+        assert local_observed_effect(env, state, action, cache) is None
+    finally:
+        env.close()
+
+
+def test_local_observed_effect_uses_paired_contrast_for_angle_direction():
+    env = gym.make("swm/PushT-v1", render_mode="rgb_array")
+    try:
+        state = make_boundary_contact_roots(env, 1, 20261021)[0]["state"]
+        normal = boundary_inward_normal(env, state)
+        tangent = np.asarray([-normal[1], normal[0]], dtype=np.float64)
+        plus = 0.10 * normal + 0.06 * tangent
+        minus = 0.10 * normal - 0.06 * tangent
+        plus_descriptor = online_effect_descriptor(env, state, plus)
+        minus_descriptor = online_effect_descriptor(env, state, minus)
+        # The helper is a chart-level test; force the second sample to be the
+        # opposite signed intervention while keeping the same local chart
+        # coordinates, as a matched +/- pulse would do.
+        minus_descriptor["moment_sign"] = -int(plus_descriptor["moment_sign"])
+        cache = {
+            "plus": {
+                "mean": [0.10, 1.0, 0.0, 0.0, 0.0, 0.0], "count": 1,
+                "task_gain": 0.3, "last_error": 0.1, "descriptor": plus_descriptor,
+            },
+            "minus": {
+                "mean": [-0.10, 1.0, 0.0, 0.0, 0.0, 0.0], "count": 1,
+                "task_gain": -0.1, "last_error": 0.1, "descriptor": minus_descriptor,
+            },
+        }
+        result = local_observed_effect(env, state, plus, cache)
+        assert result is not None
+        assert result["paired"] is True
+        assert result["opposite_neighbor_count"] == 1
+        np.testing.assert_allclose(result["direction_target"][0], 0.10)
     finally:
         env.close()

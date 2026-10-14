@@ -24,6 +24,9 @@ evidence manifest 契约，再接入新的研究模块。
 本轮顶会严格审稿意见与全部研究方向的验收门槛见
 [docs/REVIEW_CRITIQUE_AND_EXECUTION_CRITERIA_20261014.md](docs/REVIEW_CRITIQUE_AND_EXECUTION_CRITERIA_20261014.md)。
 
+文献整合后的 predictive/action/decision sufficiency 三层协议、实验字段和硬否决规则见
+[docs/DECISION_SUFFICIENCY_RESEARCH_PLAN_20261014.md](docs/DECISION_SUFFICIENCY_RESEARCH_PLAN_20261014.md)。
+
 本轮实际执行状态、GPU 阻塞边界、代码修复和可恢复运行目录见
 [docs/EXECUTION_REPORT_20261014.md](docs/EXECUTION_REPORT_20261014.md)。
 

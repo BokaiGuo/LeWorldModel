@@ -792,6 +792,114 @@ def effect_gate_key(env: gym.Env, state: np.ndarray, action: np.ndarray) -> str:
     )
 
 
+def online_effect_descriptor(env: gym.Env, state: np.ndarray, action: np.ndarray) -> dict[str, float | int | str]:
+    """Return the fixed local coordinates used by the online effect cache.
+
+    The previous cache treated a floating-point contact/action bin as the
+    only reusable unit.  That is too brittle for a moving contact point: two
+    consecutive pulses can be physically local while landing in different
+    bins.  This descriptor is deliberately small and declared before the
+    held-out run.  It contains only current contact geometry and the executed
+    action, never a successor label.
+    """
+
+    geometry = physical_contact_geometry(env, state)
+    inward = boundary_inward_normal(env, state)
+    tangent = np.asarray([-inward[1], inward[0]], dtype=np.float64)
+    action_value = np.asarray(action, dtype=np.float64)
+    return {
+        "region": "%d:%d" % (int(geometry["shape_index"]), int(geometry["edge_index"])),
+        "edge_fraction": float(geometry["edge_fraction"]),
+        "normal_component": float(np.dot(action_value, inward)),
+        "tangent_component": float(np.dot(action_value, tangent)),
+        "action_norm": float(np.linalg.norm(action_value)),
+        "moment_sign": int(np.sign(action_moment_sign(state, action, env=env))),
+    }
+
+
+def _online_effect_descriptor_distance(
+    query: dict[str, float | int | str], entry: dict[str, Any],
+) -> float | None:
+    """Compare two local effect descriptors in a fixed dimensionless chart."""
+
+    descriptor = entry.get("descriptor")
+    if not isinstance(descriptor, dict) or descriptor.get("region") != query.get("region"):
+        return None
+    # The scales are frozen from the declared action bank, not fitted on the
+    # held-out roots.  Edge position is intentionally softer than action
+    # direction because nearby points on one polygon edge share a local chart.
+    differences = np.asarray([
+        (float(descriptor.get("edge_fraction", 0.0)) - float(query["edge_fraction"])) / 0.25,
+        (float(descriptor.get("normal_component", 0.0)) - float(query["normal_component"])) / 0.08,
+        (float(descriptor.get("tangent_component", 0.0)) - float(query["tangent_component"])) / 0.16,
+        (float(descriptor.get("action_norm", 0.0)) - float(query["action_norm"])) / 0.16,
+    ], dtype=np.float64)
+    distance = float(np.linalg.norm(differences))
+    return distance if np.isfinite(distance) else None
+
+
+def local_observed_effect(
+    env: gym.Env, state: np.ndarray, action: np.ndarray,
+    online_local_effects: dict[str, dict[str, Any]], *, max_neighbors: int = 3,
+    max_radius: float = 1.75,
+) -> dict[str, Any] | None:
+    """Aggregate nearby observed effects with a fail-closed support radius."""
+
+    query = online_effect_descriptor(env, state, action)
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for key, entry in online_local_effects.items():
+        if int(entry.get("count", 0)) < 1:
+            continue
+        distance = _online_effect_descriptor_distance(query, entry)
+        if distance is not None and distance <= float(max_radius):
+            candidates.append((distance, {"key": key, **entry}))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], str(item[1]["key"])))
+    same = [item for item in candidates if int(item[1].get("descriptor", {}).get("moment_sign", 0)) == int(query["moment_sign"])]
+    opposite = [item for item in candidates if int(item[1].get("descriptor", {}).get("moment_sign", 0)) == -int(query["moment_sign"])]
+    if not same:
+        return None
+
+    def aggregate(selected: list[tuple[float, dict[str, Any]]]) -> tuple[np.ndarray, float, float]:
+        selected = selected[: max(1, int(max_neighbors))]
+        weights = np.asarray([1.0 / (1.0 + distance) for distance, _ in selected], dtype=np.float64)
+        weights /= max(float(weights.sum()), 1.0e-12)
+        targets = np.asarray([np.asarray(item["mean"], dtype=np.float64) for _, item in selected])
+        target_value = np.sum(targets * weights[:, None], axis=0)
+        gains_value = float(np.sum(np.asarray([float(item.get("task_gain", 0.0)) for _, item in selected]) * weights))
+        errors_value = float(np.sum(np.asarray([float(item.get("last_error", 0.0)) for _, item in selected]) * weights))
+        return target_value, gains_value, errors_value
+
+    target, gain, error = aggregate(same)
+    paired = bool(opposite)
+    direction_target = target.copy()
+    opposite_target = None
+    if paired:
+        opposite_target, _, _ = aggregate(opposite)
+        # A matched opposite pulse estimates the action-dependent component;
+        # the absolute pulse can contain common drift from a moving contact.
+        # Replace only the angular component used for direction control and
+        # keep the same-sign pulse's translation effect.
+        contrast = 0.5 * (target - opposite_target)
+        direction_target = contrast
+        if abs(float(contrast[0])) > 1.0e-4:
+            target[0] = contrast[0]
+    return {
+        "target": target.tolist(),
+        "direction_target": direction_target.tolist(),
+        "paired": paired,
+        "opposite_target": None if opposite_target is None else opposite_target.tolist(),
+        "task_gain": gain,
+        "last_error": error,
+        "neighbor_count": int(min(len(same), max(1, int(max_neighbors)))),
+        "opposite_neighbor_count": int(min(len(opposite), max(1, int(max_neighbors)))),
+        "neighbor_distance": float(same[0][0]),
+        "neighbor_keys": [str(item[1]["key"]) for item in same[: max(1, int(max_neighbors))]],
+        "descriptor": query,
+    }
+
+
 def normalized_effect_error(predicted: np.ndarray, observed: np.ndarray) -> float:
     """Task-relevant local successor discrepancy used by the gate report."""
 
@@ -885,29 +993,33 @@ def effect_gate_decision(
 
 def choose_online_effect_action(
     env: gym.Env, state: np.ndarray, goal: np.ndarray, actions: np.ndarray,
-    online_local_effects: dict[str, dict[str, Any]],
+    online_local_effects: dict[str, dict[str, Any]], *, max_neighbors: int = 3,
+    max_radius: float = 1.75, task_gain_weight: float = 0.50,
 ) -> tuple[int | None, dict[str, Any] | None]:
-    """Rank only candidates with an observed local effect estimate.
+    """Rank candidates with a nearby observed effect estimate.
 
     This is the exploitation half of a short-pulse system-identification
-    controller.  A candidate is eligible only after the same coarse contact
-    bin has produced an observed transition; otherwise the caller must issue a
-    short probe or fail closed.
+    controller.  Reuse is local in the declared polygon-edge/action chart,
+    rather than requiring an exact floating-point bin.  Otherwise the caller
+    must issue a short probe or fail closed.
     """
 
     supported: list[tuple[int, float, dict[str, Any]]] = []
     desired_sign = float(np.sign(wrap_angle(float(goal[4]) - float(state[4]))))
     for index, action in enumerate(np.asarray(actions, dtype=np.float64)):
-        key = effect_gate_key(env, state, action)
-        entry = online_local_effects.get(key)
-        if entry is None or int(entry.get("count", 0)) < 1:
+        entry = local_observed_effect(
+            env, state, action, online_local_effects,
+            max_neighbors=max_neighbors, max_radius=max_radius,
+        )
+        if entry is None:
             continue
-        target = np.asarray(entry["mean"], dtype=np.float64)
+        target = np.asarray(entry["target"], dtype=np.float64)
         # An observed local effect is useful only if it points toward the
         # current task direction.  Never let online identification turn a
         # one-shot probe that rotated the wrong way into a committed policy.
-        if desired_sign != 0.0 and abs(float(target[0])) > 1.0e-4:
-            if float(np.sign(target[0])) != desired_sign:
+        direction_target = np.asarray(entry.get("direction_target", target), dtype=np.float64)
+        if desired_sign != 0.0 and abs(float(direction_target[0])) > 1.0e-4:
+            if float(np.sign(direction_target[0])) != desired_sign:
                 continue
         imagined = predicted_state(state, target)
         score = planning_pose_cost(state, imagined, goal, phase_aware=True)
@@ -916,8 +1028,12 @@ def choose_online_effect_action(
         # merely because it is the only observed candidate in the bin.
         if score > planning_pose_cost(state, state, goal, phase_aware=True) + 0.05:
             continue
+        # A locally observed task-cost gain is stronger evidence than a
+        # model-only imagined score, but it is bounded so one probe cannot
+        # dominate every later decision.
+        score -= float(task_gain_weight) * float(np.clip(entry.get("task_gain", 0.0), -2.0, 2.0))
         score += 0.5 * float(entry.get("last_error", 0.0))
-        supported.append((int(index), float(score), {"key": key, **entry}))
+        supported.append((int(index), float(score), entry))
     if not supported:
         return None, None
     selected, _, info = min(supported, key=lambda value: value[1])
@@ -926,13 +1042,13 @@ def choose_online_effect_action(
 
 def choose_identification_probe(
     env: gym.Env, state: np.ndarray, actions: np.ndarray,
-    desired_moment_sign: float | None,
+    desired_moment_sign: float | None, *, allow_outward: bool = False,
 ) -> int | None:
     """Choose the least invasive tangent pulse for local effect identification."""
 
     candidate_indices = [
         index for index, action in enumerate(np.asarray(actions, dtype=np.float64))
-        if float(np.dot(action, action_frame_normal(env, state, True))) >= 0.0
+        if (allow_outward or float(np.dot(action, action_frame_normal(env, state, True))) >= 0.0)
         and float(np.linalg.norm(action)) > 1.0e-8
     ]
     if desired_moment_sign is not None and abs(float(desired_moment_sign)) > 0.5:
@@ -1499,6 +1615,7 @@ def closed_loop(
         last_action_moment_sign: float | None = None
         online_effects: dict[str, dict[str, Any]] = {}
         online_local_effects: dict[str, dict[str, Any]] = {}
+        probe_moment_sign_by_region: dict[str, float] = {}
         calibration_attempts = 0
         calibration_successes = 0
         calibration_attempted_modes: set[int] = set()
@@ -1721,6 +1838,9 @@ def closed_loop(
                 ):
                     online_selected, online_info = choose_online_effect_action(
                         env, current, goal, actions, online_local_effects,
+                        max_neighbors=args.online_effect_neighbors,
+                        max_radius=args.online_effect_radius,
+                        task_gain_weight=args.online_task_gain_weight,
                     )
                     if online_selected is not None:
                         selected = int(online_selected)
@@ -1759,8 +1879,13 @@ def closed_loop(
                         desired_sign = float(np.sign(wrap_angle(goal[4] - current[4])))
                         if moment_to_angle_sign is not None and desired_sign != 0.0:
                             desired_moment_sign = desired_sign * float(moment_to_angle_sign)
+                        if args.paired_effect_probes and current_region_key is not None:
+                            previous_probe_sign = probe_moment_sign_by_region.get(current_region_key)
+                            if previous_probe_sign is not None:
+                                desired_moment_sign = -float(previous_probe_sign)
                         probe = choose_identification_probe(
                             env, current, actions, desired_moment_sign,
+                            allow_outward=bool(args.paired_effect_probes),
                         )
                     else:
                         probe = None
@@ -1787,6 +1912,12 @@ def closed_loop(
                 else args.fallback_pulse_steps if (fallback_used or identification_probe)
                 else args.calibration_pulse_steps if calibration_probe else args.pulse_steps
             )
+            if terminal_handoff and not recovery_macro and not calibration_probe and not fallback_used:
+                # Once translation is inside the terminal tube, use a short
+                # orientation pulse.  Reusing the transport pulse here can
+                # overshoot a nearly closed pose and is a protocol mismatch,
+                # not evidence about the learned effect model.
+                execution_steps = int(args.terminal_pulse_steps)
             predicted_target = None
             predicted_mode_probabilities = None
             predicted_direction_probability = None
@@ -1871,12 +2002,20 @@ def closed_loop(
             last_observed_delta = float(wrap_angle(current[4] - before[4]))
             if adaptive_online_effect and not recovery_macro and current_mode_id == 2:
                 local_key = effect_gate_key(env, before, action)
+                descriptor = online_effect_descriptor(env, before, action)
+                task_gain = planning_pose_cost(before, before, goal, phase_aware=True) - planning_pose_cost(
+                    before, current, goal, phase_aware=True,
+                )
                 local_entry = online_local_effects.get(local_key)
+                if identification_probe and current_region_key is not None:
+                    probe_moment_sign_by_region[current_region_key] = float(descriptor["moment_sign"])
                 if local_entry is None:
                     online_local_effects[local_key] = {
                         "mean": observed_target.tolist(), "count": 1,
                         "sign_sum": float(np.sign(observed_target[0]) * action_moment_sign(before, action, env=env)),
                         "last_error": 0.0 if predicted_target is None else normalized_effect_error(predicted_target, observed_target),
+                        "descriptor": descriptor,
+                        "task_gain": float(task_gain),
                     }
                 else:
                     count = int(local_entry["count"])
@@ -1890,6 +2029,10 @@ def closed_loop(
                     local_entry["last_error"] = float(
                         0.0 if predicted_target is None else normalized_effect_error(predicted_target, observed_target)
                     )
+                    local_entry["task_gain"] = float(
+                        (float(local_entry.get("task_gain", 0.0)) * count + float(task_gain)) / float(count + 1)
+                    )
+                    local_entry["descriptor"] = descriptor
             if args.online_effect_correction and not recovery_macro and not fallback_used and current_mode_id == 2:
                 key = online_effect_key(env, before, action)
                 cache = online_effects.get(key)
@@ -2127,6 +2270,14 @@ def parse_args() -> argparse.Namespace:
                         help="ablation: hard-gate contact candidates whose learned angle-direction probability disagrees with the goal")
     parser.add_argument("--online-effect-correction", action="store_true",
                         help="use observed same-region/action-bin transitions for subsequent runtime ranking")
+    parser.add_argument("--online-effect-neighbors", type=int, default=3,
+                        help="maximum nearby observed local effects reused by adaptive ranking")
+    parser.add_argument("--online-effect-radius", type=float, default=1.75,
+                        help="fixed dimensionless radius for local observed-effect reuse")
+    parser.add_argument("--online-task-gain-weight", type=float, default=0.50,
+                        help="fixed weight on observed local task-cost gain during adaptive reranking")
+    parser.add_argument("--paired-effect-probes", action="store_true",
+                        help="alternate local probe moment signs to estimate a paired action contrast")
     parser.add_argument("--uncertainty-gate", action="store_true",
                         help="execute learned contact actions only inside the training support/uncertainty gate")
     parser.add_argument("--fallback-only", action="store_true",
@@ -2148,6 +2299,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--terminal-angle-gate", type=float, default=float(np.pi / 9.0))
     parser.add_argument("--terminal-handoff", action="store_true",
                         help="enable the terminal geometric sign handoff as an explicit ablation")
+    parser.add_argument("--terminal-pulse-steps", type=int, default=1,
+                        help="short pulse length used only during terminal orientation handoff")
     parser.add_argument("--tangent-magnitudes", type=float, nargs="+", default=[0.06, 0.10, 0.16])
     parser.add_argument("--goal-translation-magnitudes", type=float, nargs="+", default=[],
                         help="optional task-directed tangent candidates; empty preserves the legacy bank")
@@ -2313,6 +2466,13 @@ def main() -> None:
             "direct_observed_sign_reversal": bool(args.direct_observed_sign_reversal),
             "strict_direction_gate": bool(args.strict_direction_gate),
             "online_effect_correction": bool(args.online_effect_correction),
+            "online_effect_neighborhood": {
+                "neighbors": int(args.online_effect_neighbors),
+                "radius": float(args.online_effect_radius),
+                "task_gain_weight": float(args.online_task_gain_weight),
+                "paired_effect_probes": bool(args.paired_effect_probes),
+                "chart": "same_polygon_edge_and_moment_sign; fixed normalized edge/action coordinates",
+            },
             "uncertainty_gate": True,
             "fallback_only_control": True,
             "effect_gate_thresholds": {
@@ -2330,6 +2490,7 @@ def main() -> None:
             "calibration_pulse_steps": args.calibration_pulse_steps,
             "calibration_angle_threshold": args.calibration_angle_threshold,
             "terminal_handoff": bool(args.terminal_handoff),
+            "terminal_pulse_steps": int(args.terminal_pulse_steps),
             "terminal_xy_gate": args.terminal_xy_gate,
             "terminal_angle_gate": args.terminal_angle_gate,
             "feedback_contact_threshold": args.feedback_contact_threshold,

@@ -25,6 +25,9 @@
 Euclidean 不可表示时的 fallback。
 短期历史、Fourier/时频、事件记忆和接触模式的文献边界与冻结实验协议见
 [MEMORY_EVENT_CONTACT_LITERATURE_20261013.md](MEMORY_EVENT_CONTACT_LITERATURE_20261013.md)。
+
+文献整合后的 predictive/action/decision sufficiency 三层协议见
+[docs/DECISION_SUFFICIENCY_RESEARCH_PLAN_20261014.md](docs/DECISION_SUFFICIENCY_RESEARCH_PLAN_20261014.md)。
 逐篇证据核验和文献边界见
 [LITERATURE_EVIDENCE_MAP_20261013.md](LITERATURE_EVIDENCE_MAP_20261013.md)。
 HTSC 控制理论及其 fail-closed gate 见

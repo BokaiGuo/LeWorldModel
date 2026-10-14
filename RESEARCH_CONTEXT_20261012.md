@@ -25,6 +25,7 @@
 | `LIFTED_TRANSFER_RESEARCH_SPEC_20261012.md` | 升维表示的正式 estimand、gates 和实现规范 |
 | `MATHEMATICAL_PHYSICS_TOOLKIT_20261012.md` | 数学、控制、物理、信号和信息论工具 |
 | `MEMORY_EVENT_CONTACT_LITERATURE_20261013.md` | 短期历史、Fourier/时频、事件记忆、接触模式的文献边界和实验协议 |
+| `docs/DECISION_SUFFICIENCY_RESEARCH_PLAN_20261014.md` | predictive/action/decision sufficiency 三层证据链、硬否决规则和当前执行门禁 |
 | `SPECTRAL_ANALYSIS_RESEARCH_GUIDE_20261012.md` | 谱分析主线的具体解释与公式推导 |
 | `SPECTRAL_ANALYSIS_RESEARCH_RECORD_20261012.md` | 相关原始逐字记录，不做内容改写 |
 | 本文档 | 完整上下文、研究边界、文献地图和证据账本 |

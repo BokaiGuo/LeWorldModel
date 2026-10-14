@@ -209,3 +209,72 @@ Accordingly, history is now permitted as a task-effect/context feature only
 after an independent action-effect gate. It is not promoted to a universal
 latent-dynamics improvement. The verifier also supports `--root-split` so
 that calibration and outcome roots cannot be confused by root ordering.
+
+## Candidate-conditioned successor collapse
+
+The next audit found a failure hidden by aggregate successor RMSE. The
+task-effect checkpoint projects candidate successors through one task-readout
+direction. Across the 40-root RGB candidate bank, predicted candidate spreads
+were only about `0.03--0.08` of realized RGB spreads and pairwise variation
+correlation was generally near zero. Different action candidates were thus
+mapped to nearly the same predicted successor.
+
+The old support gate also accepted every root because it checked only
+coordinatewise min/max ranges. The implementation now fits a train-only
+standardized joint nearest-neighbour radius over complete action sequences;
+coordinate bounds remain for diagnostics and cannot release the bank alone.
+The task-effect checkpoint still fails the new collapse gate on all outcome
+roots, so the stricter gate exposes the bottleneck rather than hiding it.
+
+Matched interventions separate the failure modes:
+
+- ordinary MLP stage 005: physical inversion `0.239`, outcome spread ratio
+  about `0.175`, collapse gate `0/8`;
+- ordinary MLP stage 075: outcome spread ratio about `0.889` and `5/8` collapse
+  gates pass, but RGB successor error is `6.2%` worse than the source baseline;
+- standardized MLP stage 005: physical inversion `0.217`, but outcome spread
+  ratio about `0.054` and collapse gate `0/8`.
+
+Thus candidate variation preservation and candidate prediction correctness are
+distinct conditions. Increasing late-stage variation is not a repair if it
+increases successor error. A train-root-only five-seed RGB candidate-successor
+adapter was also implemented as an intervention-supervised control; it reached
+held-out projection RMSE `0.2065` but physical inversion `0.442`. RGB
+counterfactual supervision alone did not recover decision ranking.
+
+The operational repair is fail-closed: a candidate bank must pass joint action
+support, candidate variation preservation, calibrated task contrast, and an
+independent held-out physical consequence before release. No current
+checkpoint passes this conjunction. The next legitimate method change is a
+mode/velocity-aware action-effect representation or short-pulse re-observation;
+changing selector weights or support thresholds would not address the measured
+collapse.
+
+## History-4 temporal contract repair and remaining transfer failure
+
+The verifier had a second protocol defect: it used only two RGB context frames
+for a bank whose predictor was trained with four causal latent windows. This
+has been repaired in
+le-wm-main/experiments/decision_benchmark/verify_rgb_successor.py and
+generate_candidate_bank.py. The repaired contract exposes
+source_frame-15,-10,-5,source_frame for history-4 and reads the realized
+terminal at context_length + predicted_horizon - 1; tests cover both legacy
+and history-4 contracts.
+
+The full GPU rerun (RTX 5060 Ti, 40 roots, 640 candidates) passes all
+renderer/source gates. Outcome-root RGB successor RMSE is 0.14927 versus
+0.19879 for the source baseline. A train-root-only five-seed adapter was
+then trained with the complete causal RGB history. Its outcome RMSE is
+0.1810, compared with 0.1915 for the same-bank current-source control.
+The adapter-level RGB candidate inversion improves to 0.4473 from 0.4656,
+and collapse-gate coverage improves to 32/40 from 27/40.
+
+The repair does not solve the decision problem: physical inversion becomes
+0.5178 for history-4 versus 0.4801 for the single-source control, and the
+calibrated release coverage remains 0/8. Therefore the correct conclusion is
+not that history-4 is a stable planning solution. It is that temporal
+interface consistency removes one confound and yields a real visual
+successor gain, while the remaining failure is an RGB/task/action-effect
+geometry mismatch. Any next method must improve within-mode action
+identifiability or use a short-pulse re-observation; relaxing the collapse or
+contrast gate would be invalid.

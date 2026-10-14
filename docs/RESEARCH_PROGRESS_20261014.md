@@ -140,3 +140,263 @@ uses held-out planning outcomes for metric selection.
 The newly added decision-benchmark, GDD-WM, RGB-verification, and PointMaze
 protocol tests pass together: `20 passed`. The complete data-dependent suite
 remains dependent on the local checkpoints and PushT dataset described above.
+
+### Decision-sufficiency gate implementation
+
+The literature-driven three-layer protocol is now executable through
+`experiments/empirical_spectral_audit/decision_sufficiency.py`. It requires
+predictive error, action-ranking regret, and an independent planning
+consequence in one paired record. It fail-closes when prediction improves
+without ranking improvement, when mode accuracy improves without pose closure,
+or when a panel contains any failed record. The focused regression covering
+this interface and adjacent horizon/schema/adapter paths passes `51 tests`.
+This is a protocol result, not a positive learned-model result.
+
+### ATM-to-HTSC task-contrast implementation
+
+`experiments/decision_benchmark/task_contrast.py` now implements the next
+decision-level object rather than another global score: root-wise pairwise
+task contrast error, pairwise ranking inversion, calibration-root maximum
+contrast envelopes, and conditional `permit`/`probe`/`abstain` decisions.
+The certificate is only for a declared fixed candidate bank and exchangeable
+calibration roots; support failure or missing bounds abstains. The focused
+regression for ATM, IAEI, PDTC, and the existing sufficiency protocols passes
+`19 tests`. This validates the implementation contract, not the empirical
+coverage or closed-loop benefit of the certificate.
+
+The first existing PointMaze shared-bank run now supplies an offline task
+contrast artifact. Across 8 outcome roots and 960 within-root candidate pairs,
+the predicted-vs-real task contrast inversion rate is `0.4078` and mean
+contrast error is `0.1081`. Eight independent calibration roots give a
+root-level maximum contrast bound of `0.4283`. Because the bank lacks RGB
+realized latents and independent support-coverage calibration, the operational
+certificate abstains on all roots (`released_root_count=0`). This is evidence
+of the ATM-to-task gap and a fail-closed protocol result, not an online
+planning gain.
+
+### ATM-style cross-domain audit
+
+The new post-hoc runner
+`experiments/empirical_spectral_audit/run_atm_cross_domain_audit.py` was applied
+to the current 20,000-row export at
+`results/full_spectral_transfer_cuda_downstream_final2_20261014/atm_cross_domain_audit.json`.
+The inverse-risk matrix (probe train domain × test domain) is
+
+```text
+[[0.5660, 0.5703],
+ [0.6499, 0.6124]]
+```
+
+The effect-only matrix is
+
+```text
+[[0.4154, 0.4265],
+ [0.4630, 0.4456]]
+```
+
+The state-only action-prior risk is `1.7577`, so this export does not show the
+specific state-only shortcut counterexample. The predicted-probe transfer gap
+is `0.0375`, while the true-probe gap is `0.0043`; this is a model-level
+diagnostic only. The export has no root/candidate/task-cost identifiers, so the
+runner correctly reports
+`unavailable_missing_candidate_root_identifiers` for finite-horizon action
+ranking. No candidate-wise planning claim is made from this matrix.
+
+### RGB-to-task decision bridge: positive successor prediction, negative decision release
+
+The new runner
+`le-wm-main/experiments/decision_benchmark/audit_rgb_task_contrast.py` joins the
+same 640-candidate bank with the realized RGB successor report, fits the task
+readout on train roots only, calibrates a simultaneous root-level contrast
+bound on eight disjoint calibration roots, and reports selective
+risk--coverage--regret on the eight outcome roots. The artifact is
+`le-wm-main/results/decision_benchmark_candidate_bank_20261014/rgb_task_transfer_sufficiency_audit.json`.
+
+The RGB successor gate is complete for all 640 rows and all eight outcome roots
+pass the fixed train-only coordinate support gate. Nevertheless, outcome
+pairwise inversion remains `0.4258` against realized RGB task costs and
+`0.4235` against the privileged post-hoc physical task costs. The calibration
+root-level contrast bound is `6.4728`, so no outcome root has a separated
+predicted margin and the release count is `0/8` (coverage `0.0`).
+
+This isolates the current negative result: the earlier `17.7%` RGB successor
+error improvement does not survive the task readout and candidate ranking
+operation. The task readout amplifies residual latent error and the resulting
+ranking is not decision-sufficient. The repair is therefore a real fail-closed
+policy (`probe`/`abstain` when the bound is not separated), not a relaxed
+certificate threshold. Frozen RGB online planning remains blocked until a
+fresh, independently calibrated short-pulse/probe protocol produces positive
+risk--coverage--regret on held-out roots.
+
+### Candidate-collapse diagnosis and stage/parameterization intervention
+
+The RGB/task audit now records within-root candidate spread, spread ratio,
+pairwise predicted/realized variation correlation, and action-to-variation
+correlations. The old coordinatewise action gate remains visible as a
+diagnostic, but release uses a train-root-only standardized joint nearest-
+neighbour support radius over the complete action-block sequence.
+
+On the task-effect checkpoint, all 40 roots exhibited candidate collapse:
+predicted/realized spread ratios were approximately `0.03--0.08`, with mostly
+near-zero predicted/realized variation correlation. This explains why lower
+aggregate RGB successor error did not yield a useful candidate ranking. The
+audit is
+`le-wm-main/results/decision_benchmark_candidate_bank_20261014/rgb_task_transfer_sufficiency_audit_joint_support.json`.
+
+The matched frozen-backbone intervention gives:
+
+| checkpoint | held-out RGB successor vs source | physical inversion | outcome spread ratio | collapse gate |
+| --- | ---: | ---: | ---: | ---: |
+| task-effect stage 005 | prior positive gain | `0.411` | `0.050` | `0/8` |
+| ordinary MLP stage 005 | `+13.7%` | `0.239` | `0.175` | `0/8` |
+| ordinary MLP stage 075 | `-6.2%` | `0.230` | `0.889` | `5/8` |
+| standardized MLP stage 005 | `+14.7%` | `0.217` | `0.054` | `0/8` |
+
+The stage-075 result is a useful boundary: restoring candidate variation while
+degrading successor accuracy is not a planning repair. Candidate diversity
+and candidate correctness are separate gates, and no current checkpoint is
+released because calibrated contrast coverage remains `0/8`.
+
+The new
+`le-wm-main/experiments/decision_benchmark/train_rgb_candidate_successor_adapter.py`
+fits a fixed five-seed residual adapter using train-root realized RGB
+successors only. On the ordinary stage-005 bank its held-out outcome
+projection RMSE is `0.2065`, but physical inversion is `0.442`; direct
+counterfactual RGB supervision alone does not recover task ranking. The
+current fail-closed chain is therefore:
+
+```text
+joint action support -> candidate variation -> task-contrast calibration
+-> independent physical consequence
+```
+
+Failure at any gate produces `abstain`/`probe`; no threshold is relaxed using
+outcome roots.
+
+### History-4 temporal-interface repair and controlled RGB adapter comparison
+
+The previous history-4 RGB verifier still encoded a two-frame context even
+though the candidate bank declared four causal windows. The verifier now
+derives its temporal contract from the bank metadata: the ordinary bank keeps
+the pair [source_frame-5, source_frame], while history-4 uses
+[source_frame-15, source_frame-10, source_frame-5, source_frame]. The
+terminal readout is now the explicit index
+context_length + predicted_horizon - 1, and the actual indices are recorded
+per root. The candidate-bank generator also records the corresponding
+history-dependent context length.
+
+The repaired GPU artifact is
+le-wm-main/results/decision_benchmark_candidate_bank_20261014/rgb_successor_history4_temporal_repaired/.
+All 40 roots and 640 candidate pairs have realized RGB successors; the
+renderer/source consistency gates pass for every root. On the eight
+predeclared outcome roots, the RGB successor PCA RMSE is 0.14927 versus
+0.19879 for the source baseline, a 20.83% relative improvement. This is
+successor-interface evidence only, not a planning release.
+
+To test whether the extracted history is usable rather than merely
+reconstructive, train_rgb_candidate_successor_adapter.py now accepts
+--history-windows. A five-seed train-root-only history-4 adapter obtains
+outcome RMSE 0.1810, compared with 0.1915 for the same-bank single-source
+adapter (a 5.5% relative improvement). The paired task-level audit gives
+RGB contrast inversion 0.4473 for history-4 versus 0.4656 for single-source,
+but privileged physical inversion is 0.5178 versus 0.4801. Candidate-collapse
+gates pass on 32/40 roots for history-4 versus 27/40 for single-source, yet
+calibrated selective release remains 0/8 because the root contrast bound is
+much larger than every decision margin.
+
+This is a useful positive-but-bounded result: causal history improves visual
+successor prediction and candidate diversity, but the gain does not yet
+transfer to physical action ranking. The immediate bottleneck is now the
+RGB-to-task readout/action-effect geometry, not temporal context extraction.
+The release rule therefore remains fail-closed.
+
+### PushT local observed-effect repair and paired probing (2026-10-14)
+
+The privileged PushT controller previously reused an observed action effect
+only when the next pulse landed in the same exact local action bin.  This
+made online identification nearly unusable as the contact point moved.  The
+implementation now adds a fixed local descriptor (polygon edge, edge
+fraction, normal/tangent action components, action norm, and moment sign), a
+bounded same-edge neighborhood aggregate, and an observed task-cost-gain term
+for adaptive re-ranking.  It remains fail-closed outside the declared chart
+and does not read held-out terminal outcomes.
+
+The CUDA smoke artifact is
+`le-wm-main/results/negative_cause_diagnosis_20261014/local_neighborhood_smoke_v2_8x8_seed20261014/`.
+It preserved the frozen strict protocol and produced mode accuracy `0.9837`,
+but adaptive online pose success was `0/8`, final XY `79.45`, and online
+identified use was only `4.17%`.  Thus local neighborhood reuse alone did not
+solve the sparse/support and common-drift problem.
+
+The next preregistered repair alternates opposite moment-sign probes and uses
+their local contrast to remove common angular drift.  The CUDA artifact is
+`le-wm-main/results/negative_cause_diagnosis_20261014/paired_contrast_smoke_8x8_seed20261014/`.
+It reduces adaptive final XY to `35.26` versus `79.45` for the neighborhood
+arm, lowers predicted/observed effect error to `0.286`, and raises online
+identified use to `10.07%`.  However pose success remains `0/8` and final
+angle is `1.545 rad`; a terminal one-step pulse rerun gives the same adaptive
+result in
+`paired_contrast_terminal_short_smoke_8x8_seed20261014/`.
+
+This is a genuine partial positive consequence: paired short probes improve
+translation while contact boundary loss remains `0/8`, but they do not close
+orientation.  The evidence therefore narrows the remaining failure to
+within-mode orientation/action identifiability under hybrid contact, not
+successor-mode classification or candidate count.  The privileged controller
+still cannot be promoted to stable pose closure or frozen RGB planning.
+
+The first neighborhood rerun
+`local_neighborhood_smoke_8x8_seed20261014/` is retained as an incomplete
+artifact because the numerical run finished but JSON serialization failed on
+an ndarray; it is not used as evidence.  The serializer and regression tests
+were repaired before the v2 artifact.
+
+### Independent orientation-response audit
+
+The new `experiments/audit_pusht_orientation_response.py` isolates the
+remaining orientation interface with a same-root zero/+moment/-moment probe.
+The corrected 32-root CUDA artifact is
+`results/negative_cause_diagnosis_20261014/orientation_response_full_32root_cuda_20261014/`.
+It has 32/32 valid equal-norm opposite-moment pairs and a paired angular
+separation of `0.09297 rad` (95% CI `[0.06867, 0.11803]`). However, sign
+consistency is `0.75` (CI `[0.59375, 0.875]`) and successor-mode agreement is
+`0.625` (CI `[0.4375, 0.78125]`). The result is therefore a partial
+mechanistic positive: local orientation response exists, but it is not a
+stable within-mode transfer law across edge/fraction strata. The orientation
+controller gate remains closed; the next experiment must use calibration-only
+support gating with independent roots.
+
+The calibration-only gate is implemented in
+`experiments/calibrate_pusht_orientation_gate.py` and evaluated on the frozen
+orientation artifact with a root-disjoint split. It authorized only one
+edge/fraction stratum: 18 calibration roots produced 14 evaluation roots, but
+only 2 evaluation roots were released. Those two roots had evaluation sign
+consistency `1.0`, successor-mode agreement `1.0`, and paired separation
+`0.1076 rad` (95% CI `[0.0718, 0.1434]`). This is a local mechanism positive
+with low coverage; the gate is not a general orientation certificate and does
+not open pose-closure or RGB-planning claims.
+
+### Edge-stratified independent replication (2026-10-15)
+
+The `random_boundary` sampler overrepresented edge `0:0`, and the coarse
+center-distance mode label rejected valid stem contacts. The audit now includes
+an `edge_boundary` protocol: edge and fraction are sampled first, the accepted
+nearest polygon edge is checked after reset, and continuous gap—not the coarse
+mode label—defines geometric validity. The mode label is retained only for
+successor analysis.
+
+Three CUDA runs use four roots per edge/fraction target, root-disjoint
+calibration/evaluation splits, and fixed thresholds. They cover all eight
+polygon edges with zero pairwise root-state digest overlap:
+
+| seed | roots | sign consistency | separation (rad) | mode agreement | authorized strata | released evaluation roots | released sign/mode |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 20261015 | 103 | 0.592 | 0.06513 | 0.893 | 6 | 12 | 0.917 / 1.000 |
+| 20261016 | 100 | 0.640 | 0.06958 | 0.890 | 6 | 12 | 1.000 / 1.000 |
+| 20261017 | 99 | 0.646 | 0.06514 | 0.869 | 8 | 15 | 1.000 / 1.000 |
+
+This resolves the earlier root-construction/seed-overlap confound, but does not
+turn the mechanism into a universal law. Pooled sign consistency is below the
+fixed `0.75` release threshold and only 6–8 strata per seed are authorized.
+Stable cross-mode orientation transfer, learned pose closure, frozen RGB online
+planning, and universal world-model claims remain unestablished.

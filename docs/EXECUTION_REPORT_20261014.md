@@ -108,6 +108,31 @@ run as positive evidence unless its input lock and all stages validate.
 
 ## Governance repair validation
 
+## Literature-driven protocol implementation
+
+The predictive/action/decision sufficiency framework is now implemented in
+`experiments/empirical_spectral_audit/decision_sufficiency.py` and documented
+in `docs/DECISION_SUFFICIENCY_RESEARCH_PLAN_20261014.md`. Its hard gates reject
+the two recurring false positives: prediction improvement without action-
+ranking improvement, and mode-accuracy improvement without pose closure.
+The focused regression across this gate, horizon memory, enriched schema, and
+RGB adapter paths passes `51 tests`. This does not promote any learned-model
+artifact to positive planning evidence.
+
+The next ATM-to-HTSC layer is implemented in
+`experiments/decision_benchmark/task_contrast.py`: it audits pairwise task
+contrasts, calibrates a root-level maximum contrast envelope, and returns
+`permit`, `probe`, or `abstain`. Its focused ATM/PDTC/sufficiency regression
+passes `19 tests`. No coverage or closed-loop claim is promoted until fresh
+calibration roots and RGB-only planning are run.
+
+The ATM-style post-hoc audit was also run on the current 20,000-row export.
+Its inverse-risk matrix is `[[0.5660, 0.5703], [0.6499, 0.6124]]`, with
+effect-only matrix `[[0.4154, 0.4265], [0.4630, 0.4456]]`. The export lacks
+root/candidate/task-cost identifiers, so finite-horizon ranking is explicitly
+`unavailable_missing_candidate_root_identifiers`; these numbers are not a
+candidate-wise planning certificate.
+
 After the review criteria were converted into runtime contracts, the following
 checks passed:
 
@@ -119,3 +144,65 @@ checks passed:
 
 These are software/reproducibility results only. They do not promote the
 blocked GPU run, the PushT pose-closure result, or any universal planning claim.
+
+## Latest CUDA PushT mechanism runs
+
+The host-permission PyTorch preflight was rerun before the new runs and passed
+on `NVIDIA GeForce RTX 5060 Ti` (`torch 2.12.0+cu130`, `cuda_available=True`,
+real CUDA tensor allocation). The NVML query still reports a user/kernel
+library mismatch, but no run below was routed to CPU.
+
+The local observed-effect neighborhood smoke completed with mode accuracy
+`0.9837`, adaptive final XY `79.45`, pose success `0/8`, and online identified
+use `4.17%`. The paired local-contrast smoke completed with final XY `35.26`,
+predicted/observed effect error `0.286`, pose success `0/8`, and final angle
+`1.545 rad`. A terminal one-step pulse rerun left the adaptive metrics
+unchanged. These are privileged PushT mechanism results: the translation
+improvement is real but does not pass the pose-closure gate.
+
+The first neighborhood run computed its metrics but failed final JSON writing
+because a NumPy array remained in a trace payload. The serializer was repaired
+and the v2 artifact is the only version used above.
+
+The independent orientation-response audit then completed on the same host
+GPU. The expanded artifact is
+`le-wm-main/results/negative_cause_diagnosis_20261014/orientation_response_full_32root_cuda_20261014/`.
+It passed CUDA analysis, equal-norm intervention, opposite-moment, and shared
+edge-chart checks for all 32 roots. The paired angular separation was `0.09297
+rad` (95% CI `[0.06867, 0.11803]`), while sign consistency was `0.75`
+(`[0.59375, 0.875]`) and successor-mode agreement was `0.625`
+(`[0.4375, 0.78125]`). This is a partial orientation-effect mechanism result;
+the calibration/support gate remains closed and no pose or RGB-planning claim
+is promoted.
+
+The calibration-only orientation gate was then run on the frozen 32-root
+artifact with a root-disjoint split. It authorized one edge/fraction stratum,
+releasing 2 of 14 evaluation roots. The released roots had sign consistency
+and successor-mode agreement `1.0`, with paired separation `0.1076 rad` (95%
+CI `[0.0718, 0.1434]`). The low coverage keeps this as a partial local
+mechanism result; it does not promote pose closure or RGB planning.
+
+### Edge-stratified independent orientation replication
+
+The host-permission project virtualenv CUDA preflight passed on an RTX 5060 Ti
+(`torch 2.12.0+cu130`; real CUDA tensor allocation). The NVML command still
+reports a driver/library mismatch, but all three audits completed on CUDA and
+record `cuda_analysis_completed=true`.
+
+The earlier random-boundary protocol was edge-biased, and its center-distance
+mode filter rejected valid stem contacts. The new `edge_boundary` runs cover
+all eight polygon edges and have zero exact root-state digest overlap across
+seeds:
+
+| seed | response roots | sign consistency | separation (rad) | mode agreement | authorized strata | released roots | released sign/mode |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 20261015 | 103 | 0.592 | 0.06513 | 0.893 | 6 | 12 | 0.917 / 1.000 |
+| 20261016 | 100 | 0.640 | 0.06958 | 0.890 | 6 | 12 | 1.000 / 1.000 |
+| 20261017 | 99 | 0.646 | 0.06514 | 0.869 | 8 | 15 | 1.000 / 1.000 |
+
+Gate thresholds were frozen before evaluation (`n_calibration >= 2`, sign and
+mode agreement `>=0.75`, separation `>=0.02 rad`, antisymmetry RMSE `<=0.06
+rad`). This repairs the previous protocol confound and establishes a
+reproducible local angular response, but still fails global orientation
+transfer. It does not open pose closure, learned RGB planning, or
+universal-world-model claims.

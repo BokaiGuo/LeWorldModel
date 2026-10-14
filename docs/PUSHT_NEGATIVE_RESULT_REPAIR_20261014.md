@@ -105,3 +105,118 @@ closure. `boundary_contact_loss` is not interchangeable with actual contact
 retention: it is zero in all three arms because the polygon-gap gate remains
 within its declared threshold even when the older center-distance contact
 metric reports loss. Future release gates must report both quantities.
+
+## Local observed-effect and paired-contrast follow-up
+
+The exact-bin online cache was replaced by a fixed local action/contact chart:
+nearby observations on the same polygon edge can be reused when their
+edge/action descriptor is within a predeclared radius. The re-ranker also
+uses the observed one-pulse task-cost gain, while retaining support and
+uncertainty fail-closed behavior. On the strict 8-root CUDA smoke this did
+not produce pose success (`0/8`); adaptive final XY was `79.45`, with only
+`4.17%` of runtime steps using an identified local effect.
+
+A second intervention alternated opposite moment-sign probes and used the
+local paired contrast to remove common angular drift. On the same roots it
+reduced adaptive final XY to `35.26` and predicted/observed effect error to
+`0.286`, while boundary contact loss remained `0/8`. It still produced
+`0/8` strict pose successes and final angle `1.545 rad`. A one-step terminal
+orientation pulse did not change this result.
+
+Interpretation: short-pulse local identification can improve translation but
+does not establish within-mode orientation effect identification. This is a
+partial mechanism result, not stable adapter closure. The paired method is
+implemented in `experiments/run_pusht_mode_aware_shared_candidate.py` and
+covered by the focused PushT regression; all learned/RGB claims remain
+closed.
+
+## Matched orientation-response audit
+
+The new `experiments/audit_pusht_orientation_response.py` isolates the
+remaining orientation interface with a same-root zero/+moment/-moment probe.
+It uses genuine contact states, the nearest transformed polygon edge,
+equal-norm block-radial inward components, opposite tangential moment
+components, and a zero pulse from the same reset state. The zero pulse is a
+common-drift reference; the paired contrast is computed only after subtracting
+that drift. Gym/Pymunk stepping is CPU-bound, while aggregate statistics and
+bootstrap intervals run on the validated CUDA device and are recorded as such.
+
+The expanded artifact is
+`le-wm-main/results/negative_cause_diagnosis_20261014/orientation_response_full_32root_cuda_20261014/`.
+The run passed all protocol checks: 32/32 opposite-moment pairs, equal +/-
+norms, one shared edge chart per root, and CUDA aggregate analysis. It found a
+nonzero action-dependent angular separation of `0.09297 rad` (bootstrap 95% CI
+`[0.06867, 0.11803]`), but sign consistency was only `0.75`
+(`[0.59375, 0.875]`) and +/- successor-mode agreement was `0.625`
+(`[0.4375, 0.78125]`). Paired antisymmetry residual was `0.03072 rad`
+(`[0.02125, 0.04128]`).
+
+This is a partial physical positive, not a pose-closure result: opposite
+moment pulses can produce an angular response, but the response is not yet
+stable enough across edge and contact-position strata to release an orientation
+controller. The next admissible repair is a calibration-only edge/fraction
+support gate evaluated on independent roots. It must fail closed when the
+calibration stratum does not establish both sign and successor-mode stability;
+no held-out pose outcome may set that gate.
+
+## Calibration-only orientation gate
+
+`experiments/calibrate_pusht_orientation_gate.py` now applies the predeclared
+support rule to the frozen 32-root artifact. It requires at least two
+calibration roots per edge/fraction stratum, sign consistency and successor
+mode agreement at least `0.75`, paired separation at least `0.02 rad`, and
+paired antisymmetry RMSE at most `0.06 rad`. The evaluation roots are never
+used to authorize a stratum.
+
+The CUDA artifact is
+`le-wm-main/results/negative_cause_diagnosis_20261014/orientation_gate_calibration_split_20261014/`.
+The split contains 18 calibration roots and 14 evaluation roots. Only one
+edge/fraction stratum was authorized, releasing 2 evaluation roots. Those
+roots retained sign consistency `1.0`, successor-mode agreement `1.0`, and
+paired separation `0.1076 rad` (95% CI `[0.0718, 0.1434]`). The low release
+coverage is itself evidence: the gate can identify a locally stable region,
+but not a generally available orientation law. It is therefore a mechanism
+repair and fail-closed warning, not adapter or planning evidence.
+
+## Explicit edge/fraction protocol repair and independent replication
+
+The first `random_boundary` implementation had a protocol bias: it sampled a
+pusher direction and then accepted the nearest edge, which concentrated the
+roots on `0:0`. A second bias came from using the center-distance
+`mode_for_state` label as an acceptance criterion; valid exterior contacts on
+the long T stem were labeled `approach` or `free`. The new `edge_boundary`
+protocol samples the polygon edge and fraction bin first, checks the
+post-reset nearest edge and continuous geometric gap, and records the coarse
+mode only as an outcome variable. It therefore does not censor the stem
+before measuring it.
+
+The three independent CUDA artifacts are:
+
+```text
+results/negative_cause_diagnosis_20261014/
+  orientation_response_edge_boundary_calibration_20261015/
+  orientation_response_edge_boundary_calibration_20261016/
+  orientation_response_edge_boundary_calibration_20261017/
+```
+
+All three cover all eight polygon edges, and exact root-state digest
+intersections across the three seeds are `0/0/0`. They contain 103, 100, and
+99 valid equal-norm opposite-moment roots respectively. The aggregate results
+are:
+
+| seed | roots | sign consistency | paired separation (rad) | +/- mode agreement | authorized strata | released roots | released sign/mode |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 20261015 | 103 | 0.592 | 0.06513 | 0.893 | 6 | 12 | 0.917 / 1.000 |
+| 20261016 | 100 | 0.640 | 0.06958 | 0.890 | 6 | 12 | 1.000 / 1.000 |
+| 20261017 | 99 | 0.646 | 0.06514 | 0.869 | 8 | 15 | 1.000 / 1.000 |
+
+The fixed gate was unchanged: at least two calibration roots, sign and mode
+agreement at least `0.75`, separation at least `0.02 rad`, and antisymmetry
+RMSE at most `0.06 rad`. It releases only strata that pass calibration; it
+does not use evaluation pose or planning outcomes. The result repairs the
+sampling and independence problem, but does not repair the scientific
+negative: sign consistency remains below `0.75` in the pooled edge-stratified
+sample, and only a minority of strata are released. The correct conclusion is
+stronger localization of the boundary—local moment response is reproducible,
+while cross-edge/mode orientation transfer is not globally stable—not stable
+learned-adapter pose closure.

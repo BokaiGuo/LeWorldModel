@@ -224,6 +224,39 @@ def _encode_sequences(model: Any, transform: Any, sequences: list[list[np.ndarra
     return np.stack(rows).astype(np.float64)
 
 
+def _temporal_contract(metadata: dict[str, Any], source_frame: int) -> tuple[list[int], int]:
+    """Return causal RGB context indices and the declared context length.
+
+    The ordinary bank historically used two observations (the frame five
+    steps before the source and the source itself).  History-conditioned
+    banks declare ``history_windows`` and must expose every causal window to
+    the frozen temporal encoder.  Keeping this mapping in one helper makes
+    the terminal readout index explicit instead of silently assuming a
+    two-frame interface.
+    """
+
+    history_windows = int(metadata.get("history_windows", 1))
+    if history_windows < 1:
+        raise ValueError("metadata history_windows must be positive")
+    declared_context = int(metadata.get("context_length", 2))
+    context_length = history_windows if history_windows > 1 else declared_context
+    if context_length < 1:
+        raise ValueError("metadata context_length must be positive")
+    # Candidate banks use five simulator steps between adjacent latent
+    # windows.  For the legacy single-window bank this preserves the original
+    # two-frame source contract; history-4 becomes source-15,-10,-5,source.
+    step = 5
+    indices = [source_frame - step * (context_length - 1 - offset) for offset in range(context_length)]
+    if indices[-1] != source_frame:
+        raise AssertionError("temporal context must end at source_frame")
+    if indices[0] < 0:
+        raise ValueError(
+            f"source frame {source_frame} has insufficient causal RGB context "
+            f"for context_length={context_length}: {indices}"
+        )
+    return indices, context_length
+
+
 def verify(
     candidate_dataset: Path,
     arrays_path: Path,
@@ -278,9 +311,7 @@ def verify(
             raise ValueError(f"source_frame {source_frame} outside episode RGB length {len(images)}")
         base, residual, offset = _static_scene_and_marker(images, images[source_frame], states[source_frame])
         renderer = _renderer_reconstruction(images, states, base, residual, offset)
-        context_indices = [source_frame - 5, source_frame]
-        if context_indices[0] < 0:
-            raise ValueError(f"source frame {source_frame} has no preceding five-step context")
+        context_indices, context_length = _temporal_contract(dataset["metadata"], source_frame)
         candidate_sequences: list[list[np.ndarray]] = []
         terminal_states: list[np.ndarray] = []
         terminal_images: list[np.ndarray] = []
@@ -292,7 +323,8 @@ def verify(
             terminal_images.append(rendered_blocks[-1])
             candidate_sequences.append([np.asarray(images[index], dtype=np.uint8) for index in context_indices] + rendered_blocks)
         encoded = _encode_sequences(encoder, transform, candidate_sequences, device)
-        source_projection = (encoded[0, 1] - pca_mean) @ pca_basis.T
+        source_history_projection = (encoded[0, :context_length] - pca_mean) @ pca_basis.T
+        source_projection = source_history_projection[-1]
         source_error = float(np.mean(np.abs(source_projection - np.asarray(group[0]["source_latent_model"], dtype=np.float64))))
         source_consistency = {
             "renderer": renderer,
@@ -309,7 +341,13 @@ def verify(
             source_model = np.asarray(record["source_latent_model"], dtype=np.float64)
             if predicted.shape != source_model.shape:
                 raise ValueError(f"predicted/source projection shape mismatch: {predicted.shape} vs {source_model.shape}")
-            realized_raw = encoded[candidate_index, 1 + int(record["predicted_horizon"])]
+            terminal_index = context_length + int(record["predicted_horizon"]) - 1
+            if terminal_index >= encoded.shape[1]:
+                raise ValueError(
+                    f"terminal index {terminal_index} outside encoded sequence length "
+                    f"{encoded.shape[1]} for context_length={context_length}"
+                )
+            realized_raw = encoded[candidate_index, terminal_index]
             realized_projection = (realized_raw - pca_mean) @ pca_basis.T
             projection_error = realized_projection - predicted
             all_rows.append({
@@ -320,6 +358,7 @@ def verify(
                 "renderer_consistency_pass": bool(source_consistency["passed"]),
                 "source_latent_projection_l1": source_error,
                 "source_projection": source_projection.tolist(),
+                "source_history_projection": source_history_projection.tolist(),
                 "predicted_terminal_projection": predicted.tolist(),
                 "realized_terminal_projection": realized_projection.tolist(),
                 "predicted_vs_realized_projection_l1": float(np.mean(np.abs(projection_error))),
@@ -337,6 +376,8 @@ def verify(
             "episode_id": episode,
             "split": str(group[0]["split"]),
             "candidate_count": len(group),
+            "temporal_context_length": int(context_length),
+            "temporal_context_indices": [int(index) for index in context_indices],
             "source_consistency": source_consistency,
         })
         print(f"[D1] root {root_index + 1}/{len(roots)} {root}: renderer_norm_l1={renderer['normalized_mean_l1']:.5f}, source_latent_l1={source_error:.5f}")
@@ -367,6 +408,9 @@ def verify(
         split_summaries[split] = _summary(split_rows) if split_rows else {"rows": 0}
     report = {
         "schema": "pointmaze_rgb_successor_verification.v1",
+        "record_count": int(len(all_rows)),
+        "instance_count": int(len(root_reports)),
+        "renderer": "dataset_matched_static_scene_plus_mujoco_terminal_qpos",
         "protocol": {
             "candidate_dataset": str(candidate_dataset.resolve()),
             "encoder_checkpoint": str(encoder_checkpoint.resolve()),
@@ -374,8 +418,10 @@ def verify(
             "renderer": "dataset_matched_static_scene_plus_mujoco_terminal_qpos",
             "runtime_encoder_input": "realized RGB only through the frozen export preprocessing contract",
             "preprocessing_contract": "PointMazeDataset transform followed by EncPredWM.encode preprocessing (reproduces frozen external export)",
-            "temporal_context": "observed frame source_frame-5, observed source_frame, then realized candidate states after each five-step action block",
-            "terminal_readout": "encoded temporal index 1 + predicted_horizon; no single-frame successor encoding",
+            "temporal_context": "causal observed frames determined by metadata history_windows; ordinary bank uses source_frame-5 and source_frame, history-4 uses source_frame-15,-10,-5,source_frame, then realized candidate states after each five-step action block",
+            "temporal_context_length": sorted({int(item["temporal_context_length"]) for item in root_reports}),
+            "temporal_context_indices": "recorded per root in root_reports",
+            "terminal_readout": "encoded temporal index context_length + predicted_horizon - 1; no single-frame successor encoding",
             "simulator_state_role": "action execution and posthoc renderer construction only",
             "source_consistency_threshold_normalized_mean_l1": float(source_consistency_threshold),
             "max_roots": int(max_roots),
