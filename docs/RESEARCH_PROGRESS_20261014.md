@@ -6,6 +6,12 @@ results, and blocked claims. Generated checkpoints and raw datasets are not
 committed; each result below points to the reproducible runner or compact
 result artifact in the repository.
 
+The latest execution audit is recorded in
+`docs/EXECUTION_REPORT_20261014.md`. The restricted shell still reports the
+host NVIDIA user/kernel library mismatch, but a host-permission CUDA probe and
+loader test now pass. A fresh capped rich CUDA protocol is running; no GPU
+experiment was rerouted to CPU or promoted from a partial artifact.
+
 ## Current scientific object
 
 The project is organized around finite-horizon **decision-transfer sufficiency**:
@@ -19,6 +25,19 @@ observability, and an independently calibrated error envelope. Alignment,
 commutator, Schur geometry, resolvent, and transient amplification are
 diagnostic components; none is presented as a universal transfer certificate
 on its own.
+
+### Horizon-conditioned memory repair
+
+The fresh five-split audit in
+`le-wm-main/results/horizon_conditioned_repair_20261014/summary.json` now
+separates memory-family selection from deployment. At `h=1`, the fit-only
+selector falls back on all five splits; stability ranges from `0.375` to
+`0.5625`, so fixed Fourier is the declared policy. At `h=4`, the frozen
+`Fourier+phase` policy beats the fixed-Fourier carrier on all five splits, with
+mean paired RMSE difference `-7.0122` and bootstrap 95% CI
+`[-8.5417,-5.7109]`. The selector remains unstable on two of five splits and
+is never deployed. This is a positive horizon-conditioned transfer-sufficiency
+diagnostic, not evidence for action ranking, pose closure, or online planning.
 
 ## Completed implementation and evidence
 

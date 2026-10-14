@@ -15,6 +15,18 @@
 本轮代码与证据完整性审计见
 [IMPLEMENTATION_COMPLETENESS_AUDIT_20261013.md](IMPLEMENTATION_COMPLETENESS_AUDIT_20261013.md)。
 
+科研工程治理与入口分类见
+[docs/RESEARCH_ENGINEERING_GOVERNANCE_20261014.md](docs/RESEARCH_ENGINEERING_GOVERNANCE_20261014.md)
+和 [docs/EXPERIMENT_REGISTRY.md](docs/EXPERIMENT_REGISTRY.md)；统一执行架构决策见
+[docs/decisions/ADR-001-unified-research-execution.md](docs/decisions/ADR-001-unified-research-execution.md)。
+新增实验必须先遵守 input fingerprint、artifact schema、stage status 与显式
+evidence manifest 契约，再接入新的研究模块。
+本轮顶会严格审稿意见与全部研究方向的验收门槛见
+[docs/REVIEW_CRITIQUE_AND_EXECUTION_CRITERIA_20261014.md](docs/REVIEW_CRITIQUE_AND_EXECUTION_CRITERIA_20261014.md)。
+
+本轮实际执行状态、GPU 阻塞边界、代码修复和可恢复运行目录见
+[docs/EXECUTION_REPORT_20261014.md](docs/EXECUTION_REPORT_20261014.md)。
+
 ## 新增 Workstream：GDD-WM
 
 [Decision Preference → Predictive Geometry (GDD-WM)](docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md)

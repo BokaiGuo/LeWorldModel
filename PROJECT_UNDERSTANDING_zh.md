@@ -5,6 +5,12 @@
 项目负责人对整体研究的综合理解记录见
 [docs/PROJECT_UNDERSTANDING_FROM_USER_20261014.md](docs/PROJECT_UNDERSTANDING_FROM_USER_20261014.md)。
 该文件记录研究定位、统一架构、负结果的共同解释和当前证据缺口，不替代实验结果。
+科研工程治理、入口注册表和保留历史入口的架构决策见
+[docs/RESEARCH_ENGINEERING_GOVERNANCE_20261014.md](docs/RESEARCH_ENGINEERING_GOVERNANCE_20261014.md)、
+[docs/EXPERIMENT_REGISTRY.md](docs/EXPERIMENT_REGISTRY.md) 和
+[docs/decisions/ADR-001-unified-research-execution.md](docs/decisions/ADR-001-unified-research-execution.md)。
+顶会严格审稿意见、Major Concerns、决定性实验矩阵和 Oral/Best Paper 证据门槛见
+[docs/REVIEW_CRITIQUE_AND_EXECUTION_CRITERIA_20261014.md](docs/REVIEW_CRITIQUE_AND_EXECUTION_CRITERIA_20261014.md)。
 数学物理工具包见
 [MATHEMATICAL_PHYSICS_TOOLKIT_20261012.md](MATHEMATICAL_PHYSICS_TOOLKIT_20261012.md)。
 本轮对话的完整结构化上下文、文献重叠、证据边界和负结果账本见

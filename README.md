@@ -83,6 +83,13 @@ listed in `REPRODUCIBILITY.md`; they are not committed to this repository.
 
 - `le-wm-main/` — LeWM implementation, experiment runners, tests, and configs.
 - `docs/` — finite-horizon transfer theorem and formal applicability notes.
+- `docs/RESEARCH_ENGINEERING_GOVERNANCE_20261014.md` — execution, cache, artifact and
+  evidence governance.
+- `docs/EXPERIMENT_REGISTRY.md` — active, baseline, legacy, utility and test entrypoints.
+- `docs/decisions/ADR-001-unified-research-execution.md` — decision to preserve both
+  historical runners while sharing one execution contract.
+- `docs/REVIEW_CRITIQUE_AND_EXECUTION_CRITERIA_20261014.md` — canonical strict-review
+  criteria, required theory, experiments, and claim boundaries.
 - `docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md` — proposed GDD-WM
   workstream, gates, and failure boundaries.
 - `docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml` — proposed D0–D2 protocol schema.
