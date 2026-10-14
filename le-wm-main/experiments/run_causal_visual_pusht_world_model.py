@@ -39,6 +39,19 @@ from torch.nn import functional as F
 PUSHT_RENDER_SIZE = 224.0
 
 
+def jsonable(value: Any) -> Any:
+    """Convert NumPy containers in audit traces before artifact serialization."""
+    if isinstance(value, dict):
+        return {str(key): jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [jsonable(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
@@ -95,6 +108,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--explicit-angle-readout", action="store_true",
         help="use a dedicated RGB block-angle readout and unit-circle supervision for current pose estimation",
+    )
+    parser.add_argument(
+        "--explicit-goal-angle-readout", action="store_true",
+        help="use a separate RGB block-angle readout and unit-circle supervision for the goal image only",
     )
     parser.add_argument("--angle-readout-loss-weight", type=float, default=0.0)
     parser.add_argument("--goal-angle-loss-weight", type=float, default=0.0)
@@ -242,6 +259,33 @@ def observable_pose_vector(state: np.ndarray) -> np.ndarray:
     return state_vector(state)[:6]
 
 
+def goal_pose_vector(goal_pose: np.ndarray) -> np.ndarray:
+    """Convert PushT's rendered target pose ``[x, y, angle]`` to the model chart.
+
+    ``info["goal_state"]`` is the simulator reset/evaluation state and is not
+    the pose rendered in ``info["goal"]``.  In particular, its block angle is
+    generally the sampled source angle, while the goal image uses
+    ``info["goal_pose"]``.  Mixing the two creates an unidentifiable target
+    readout task and invalidates orientation-planning labels.
+    """
+    pose = np.asarray(goal_pose, dtype=np.float32)
+    if pose.shape != (3,):
+        raise ValueError(f"goal_pose must have shape [3], got {pose.shape}")
+    return np.asarray([pose[0], pose[1], np.sin(pose[2]), np.cos(pose[2])], dtype=np.float32)
+
+
+def task_goal_state(goal_state: np.ndarray, goal_pose: np.ndarray) -> np.ndarray:
+    """Make the simulator goal-state chart agree with the rendered goal pose."""
+    pose = np.asarray(goal_pose, dtype=np.float32)
+    if pose.shape != (3,):
+        raise ValueError(f"goal_pose must have shape [3], got {pose.shape}")
+    corrected = np.asarray(goal_state, dtype=np.float32).copy()
+    corrected[2:4] = pose[:2]
+    corrected[4] = pose[2]
+    corrected[5:] = 0.0
+    return corrected
+
+
 def physical_contact_mode(source: np.ndarray, successor: np.ndarray) -> int:
     """Offline PushT contact-mode label; this label is never runtime input.
 
@@ -279,7 +323,7 @@ def diverse_source_cases(
     episode_count = int(math.ceil(roots / max(root_rollout_steps, 1)))
     for episode in range(episode_count):
         observation, info = env.reset(seed=seed + episode)
-        goal = np.asarray(info["goal_state"], dtype=np.float32).copy()
+        goal = task_goal_state(info["goal_state"], info["goal_pose"])
         goal_image = np.asarray(info["goal"], dtype=np.uint8).copy()
         previous_image = env.render().copy()
         previous_action = np.zeros(2, dtype=np.float32)
@@ -313,7 +357,7 @@ def contact_source_cases(
     cases: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, bool]] = []
     for episode in range(max(roots * 3, 1)):
         observation, info = env.reset(seed=seed + episode)
-        goal = np.asarray(info["goal_state"], dtype=np.float32).copy()
+        goal = task_goal_state(info["goal_state"], info["goal_pose"])
         goal_image = np.asarray(info["goal"], dtype=np.uint8).copy()
         previous_image = env.render().copy()
         previous_action = np.zeros(2, dtype=np.float32)
@@ -428,7 +472,7 @@ def terminal_pose_cases(
         if len(cases) >= roots:
             break
         _observation, info = env.reset(seed=seed + index)
-        goal = np.asarray(info["goal_state"], dtype=np.float32).copy()
+        goal = task_goal_state(info["goal_state"], info["goal_pose"])
         goal_image = np.asarray(info["goal"], dtype=np.uint8).copy()
         state = np.asarray(info["goal_state"], dtype=np.float32).copy()
         offset = rng.uniform(-position_jitter, position_jitter, size=2).astype(np.float32)
@@ -561,6 +605,7 @@ def bootstrap_closed_loop_source_cases(
         bool(saved.get("previous_action_dynamics", False)),
         bool(saved.get("explicit_angle_effect", False)),
         bool(saved.get("explicit_angle_readout", False)),
+        bool(saved.get("explicit_goal_angle_readout", False)),
     ).to(device)
     model.load_state_dict(payload["model"])
     model.eval()
@@ -593,7 +638,7 @@ def bootstrap_closed_loop_source_cases(
             if len(collected) >= roots:
                 break
             observation, info = env.reset(seed=seed + episode)
-            goal = np.asarray(info["goal_state"], dtype=np.float32).copy()
+            goal = task_goal_state(info["goal_state"], info["goal_pose"])
             goal_image = np.asarray(info["goal"], dtype=np.uint8).copy()
             previous = env.render().copy()
             previous_action = np.zeros(2, dtype=np.float32)
@@ -716,6 +761,7 @@ class VisualCausalWorldModel(nn.Module):
         previous_action_dynamics: bool = False,
         explicit_angle_effect: bool = False,
         explicit_angle_readout: bool = False,
+        explicit_goal_angle_readout: bool = False,
     ):
         super().__init__()
         if utility_mode not in {"scalar", "phase"}:
@@ -735,6 +781,7 @@ class VisualCausalWorldModel(nn.Module):
         self.previous_action_dynamics = bool(previous_action_dynamics)
         self.explicit_angle_effect = bool(explicit_angle_effect)
         self.explicit_angle_readout = bool(explicit_angle_readout)
+        self.explicit_goal_angle_readout = bool(explicit_goal_angle_readout)
         self._state_mean: torch.Tensor | None = None
         self._state_std: torch.Tensor | None = None
         if self.structured_readout and vision_encoder != "mask_moments":
@@ -784,6 +831,7 @@ class VisualCausalWorldModel(nn.Module):
                 nn.Linear(2 * feature_dim if self.temporal_context else feature_dim, 128),
                 nn.SiLU(), nn.Linear(128, 2),
             )
+        if self.explicit_goal_angle_readout:
             self.goal_angle_head = nn.Sequential(
                 nn.Linear(feature_dim, 128), nn.SiLU(), nn.Linear(128, 2),
             )
@@ -1003,9 +1051,9 @@ class VisualCausalWorldModel(nn.Module):
         """Decode target block position and orientation from the goal image."""
         features = self.encoder.features(goal_image) if self.uses_mask_moments else self.encoder(goal_image)
         pose = self.goal_head(features)
-        if self.explicit_angle_readout:
+        if self.explicit_goal_angle_readout:
             if self._state_mean is None or self._state_std is None:
-                raise RuntimeError("explicit_angle_readout requires set_state_normalization before goal encoding")
+                raise RuntimeError("explicit_goal_angle_readout requires set_state_normalization before goal encoding")
             raw_angle = F.normalize(self.goal_angle_head(features), dim=-1)
             normalized_angle = (raw_angle - self._state_mean[4:6]) / self._state_std[4:6]
             pose = pose.clone()
@@ -1191,12 +1239,34 @@ def model_loss(
     # A direct effect loss prevents action information from being discarded by
     # a state-only next-state predictor under matched source triples.
     effect = F.mse_loss(predicted - decoded, next_state - state)
-    block_effect = F.mse_loss(
-        (predicted - decoded)[:, 2:6], (next_state - state)[:, 2:6]
+    # Orientation/action-effect supervision is only identifiable when the
+    # source intervention has contact support.  On free-space rows the target
+    # orientation is mechanically unchanged, so including those rows gives a
+    # large, easy no-motion gradient and suppresses the rare contact signal.
+    # Mode 3 is retained: it denotes separation after a contact-supported
+    # transition and still carries a valid last-contact effect.
+    contact_supported = (
+        contact_mode > 0 if contact_mode is not None
+        else torch.ones(state.shape[0], dtype=torch.bool, device=state.device)
     )
-    orientation_transition = F.mse_loss(predicted[:, 4:6], next_state[:, 4:6])
-    orientation_effect = F.mse_loss(
-        (predicted - decoded)[:, 4:6], (next_state - state)[:, 4:6]
+
+    def masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        if values.ndim > 1:
+            values = values.reshape(values.shape[0], -1).mean(dim=-1)
+        if not bool(mask.any().item()):
+            return values.new_zeros(())
+        return values[mask].mean()
+
+    block_effect = masked_mean(
+        ((predicted - decoded)[:, 2:6] - (next_state - state)[:, 2:6]).square(),
+        contact_supported,
+    )
+    orientation_transition = masked_mean(
+        (predicted[:, 4:6] - next_state[:, 4:6]).square(), contact_supported
+    )
+    orientation_effect = masked_mean(
+        ((predicted - decoded)[:, 4:6] - (next_state - state)[:, 4:6]).square(),
+        contact_supported,
     )
     angle_effect = predicted.new_zeros(())
     if model.explicit_angle_effect:
@@ -1206,7 +1276,10 @@ def model_loss(
         target_angle_delta = torch.atan2(
             torch.sin(next_angle - current_angle), torch.cos(next_angle - current_angle),
         )
-        angle_effect = F.smooth_l1_loss(predicted_angle_delta, target_angle_delta)
+        angle_effect = masked_mean(
+            F.smooth_l1_loss(predicted_angle_delta, target_angle_delta, reduction="none"),
+            contact_supported,
+        )
     angle_readout = predicted.new_zeros(())
     if model.explicit_angle_readout:
         if raw_mean is None or raw_std is None:
@@ -1227,7 +1300,7 @@ def model_loss(
         mode_loss = F.cross_entropy(logits, contact_mode)
     goal = F.mse_loss(model.encode_goal_pose(goal_image), goal_pose)
     goal_angle = predicted.new_zeros(())
-    if model.explicit_angle_readout:
+    if model.explicit_goal_angle_readout:
         if raw_mean is None or raw_std is None:
             raise ValueError("explicit goal angle readout requires raw normalization")
         encoded_goal_raw = model.encode_goal_pose(goal_image) * raw_std[2:6] + raw_mean[2:6]
@@ -1320,6 +1393,7 @@ def model_loss(
         "goal_angle": goal_angle.detach(),
         "successor_rank": successor_rank.detach(),
         "uncertainty": uncertainty.detach(), "mode": mode_loss.detach(),
+        "contact_supported_fraction": contact_supported.float().mean().detach(),
     }
 
 
@@ -1335,6 +1409,7 @@ def train_model(
         args.previous_action_dynamics,
         args.explicit_angle_effect,
         args.explicit_angle_readout,
+        args.explicit_goal_angle_readout,
     ).to(device)
     normalizer = Normalization.fit(np.concatenate([train["state"], train["next_state"]], axis=0))
     mean, std = normalizer.tensors(device)
@@ -1902,7 +1977,7 @@ def evaluate_visual_planning(
         args._visual_contact_established = False
         observation, info = env.reset(seed=args.seed + 100_000 + episode)
         goal_image = np.asarray(info["goal"], dtype=np.uint8).copy()
-        goal = np.asarray(info["goal_state"], dtype=np.float32).copy()
+        goal = task_goal_state(info["goal_state"], info["goal_pose"])
         trace = []
         state = np.asarray(observation["state"], dtype=np.float32).copy()
         previous_image = env.render().copy()
@@ -2087,7 +2162,9 @@ def main() -> None:
         },
         "claim_boundary": "This is a newly trained, intervention-supervised visual world model. It is not evidence about the frozen released LeWM checkpoint and does not alone establish universal cross-environment world-model capability or a universal commutator certificate.",
     }
-    (output / "causal_visual_world_model.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    (output / "causal_visual_world_model.json").write_text(
+        json.dumps(jsonable(report), indent=2, sort_keys=True) + "\n"
+    )
     (output / "causal_visual_world_model.md").write_text(
         "# Intervention-supervised visual PushT world model\n\n"
         f"- Held-out paired action-effect error: {metrics['paired_plus_minus_effect_error']:.6g}.\n"

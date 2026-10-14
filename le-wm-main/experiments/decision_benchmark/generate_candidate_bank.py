@@ -34,7 +34,9 @@ from experiments.empirical_spectral_audit.train_pointmaze_learned_adapter_panel 
 
 
 def _bank_hash(actions: np.ndarray) -> str:
-    canonical = np.asarray(actions, dtype=np.float64).round(10).tobytes()
+    normalized = np.asarray(actions, dtype=np.float64).round(10).copy()
+    normalized[normalized == 0.0] = 0.0
+    canonical = normalized.tobytes()
     return hashlib.sha256(canonical).hexdigest()[:20]
 
 
@@ -45,6 +47,7 @@ def _candidate_sequences(
     steps: int,
     seed: int,
     family: str = "paired_order_v2",
+    canonical_action_frame: bool = False,
 ) -> np.ndarray:
     if count < 4 or steps < 1:
         raise ValueError("candidate count must be >=4 and steps must be positive")
@@ -54,8 +57,10 @@ def _candidate_sequences(
     goal = np.asarray(goal, dtype=np.float64)[:2]
     delta = goal - source
     norm = max(float(np.linalg.norm(delta)), 1e-8)
-    direct = delta / norm
-    perpendicular = np.asarray([-direct[1], direct[0]])
+    goal_direct = delta / norm
+    goal_perpendicular = np.asarray([-goal_direct[1], goal_direct[0]])
+    direct = np.asarray([1.0, 0.0]) if canonical_action_frame else goal_direct
+    perpendicular = np.asarray([0.0, 1.0]) if canonical_action_frame else goal_perpendicular
     sequences: list[np.ndarray] = []
 
     def constant(direction: np.ndarray, magnitude: float) -> np.ndarray:
@@ -106,8 +111,32 @@ def _candidate_sequences(
     rng = np.random.default_rng(seed)
     while len(sequences) < count:
         sequence = rng.uniform(-0.75, 0.75, size=(steps, 2))
+        if canonical_action_frame:
+            # A rotation preserves the 2-norm.  Bound the local vectors so
+            # every root remains inside the simulator's [-1, 1] controls.
+            norms = np.linalg.norm(sequence, axis=1, keepdims=True)
+            sequence = sequence * np.minimum(1.0, 0.75 / np.maximum(norms, 1.0e-12))
         sequences.append(sequence.astype(np.float64))
-    return np.stack(sequences[:count], axis=0)
+    local_sequences = np.stack(sequences[:count], axis=0)
+    if not canonical_action_frame:
+        return local_sequences
+    # The candidate bank is sampled once in a goal-relative frame, then
+    # rotated into each root's raw control coordinates.  This preserves the
+    # intended candidate semantics while keeping the simulator action valid.
+    return local_sequences[:, :, 0, None] * goal_direct + local_sequences[:, :, 1, None] * goal_perpendicular
+
+
+def _to_goal_frame(actions: np.ndarray, source: np.ndarray, goal: np.ndarray) -> np.ndarray:
+    source = np.asarray(source, dtype=np.float64)[:2]
+    goal = np.asarray(goal, dtype=np.float64)[:2]
+    delta = goal - source
+    norm = float(np.linalg.norm(delta))
+    if norm <= 1.0e-8:
+        raise ValueError("goal-frame action coordinates require a nonzero source-goal displacement")
+    direct = delta / norm
+    perpendicular = np.asarray([-direct[1], direct[0]], dtype=np.float64)
+    actions = np.asarray(actions, dtype=np.float64)
+    return np.stack([actions @ direct, actions @ perpendicular], axis=-1)
 
 
 def _simulate_sequence(source_state: np.ndarray, sequence: np.ndarray) -> np.ndarray:
@@ -152,6 +181,7 @@ def generate(
     split_assignment: str = "legacy_v1",
     source_window_start: int = 0,
     history_windows: int = 1,
+    canonical_action_bank: bool = False,
 ) -> dict[str, Any]:
     payload = load_payload(source_export)
     model, checkpoint_payload = _load_adapter(checkpoint, device)
@@ -219,9 +249,19 @@ def generate(
         source_state = np.asarray(row["source_state_raw"], dtype=np.float64)
         source_history_projection = history_by_episode[str(row["episode_id"])]
         sequences = _candidate_sequences(
-            source_state, goal_array, candidates, steps, 7000 + instance_index, candidate_family
+            source_state,
+            goal_array,
+            candidates,
+            steps,
+            7000 if canonical_action_bank else 7000 + instance_index,
+            candidate_family,
+            canonical_action_frame=canonical_action_bank,
         )
-        bank_hash = _bank_hash(sequences)
+        bank_hash = _bank_hash(
+            np.round(_to_goal_frame(sequences, source_state, goal_array), 8)
+            if canonical_action_bank
+            else sequences
+        )
         source_latent = np.asarray(row["source_latent"], dtype=np.float64)
         source_projection = (source_latent - pca_mean) @ pca_basis.T
         action_blocks = sequences.reshape(candidates, 4, steps // 4, 2).reshape(candidates, -1)
@@ -305,6 +345,8 @@ def generate(
         "runtime_teacher_forbidden": True,
         "candidate_bank_count": int(candidates),
         "candidate_family": candidate_family,
+        "candidate_bank_coordinate_frame": "goal_relative" if canonical_action_bank else "raw_control",
+        "canonical_action_bank": bool(canonical_action_bank),
         "source_selection": source_selection,
         "split_assignment": split_assignment,
         "source_window_start": int(source_window_start),
@@ -361,6 +403,7 @@ def main() -> None:
     parser.add_argument("--split-assignment", default="legacy_v1", choices=("legacy_v1", "distance_balanced_v1"))
     parser.add_argument("--source-window-start", type=int, default=0)
     parser.add_argument("--history-windows", type=int, default=1)
+    parser.add_argument("--canonical-action-bank", action="store_true")
     args = parser.parse_args()
     manifest = generate(
         args.source_export,
@@ -376,6 +419,7 @@ def main() -> None:
         split_assignment=args.split_assignment,
         source_window_start=args.source_window_start,
         history_windows=args.history_windows,
+        canonical_action_bank=args.canonical_action_bank,
     )
     print(json.dumps({key: manifest[key] for key in ("record_count", "instance_count", "split_instance_counts", "claim_boundary")}, indent=2))
 

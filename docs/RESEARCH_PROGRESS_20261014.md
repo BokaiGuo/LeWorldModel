@@ -12,6 +12,332 @@ host NVIDIA user/kernel library mismatch, but a host-permission CUDA probe and
 loader test now pass. A fresh capped rich CUDA protocol is running; no GPU
 experiment was rerouted to CPU or promoted from a partial artifact.
 
+## PushT contact-supported orientation repair (latest continuation)
+
+The RGB-only visual world-model runner now applies orientation/action-effect
+losses only on rows with offline contact support (`contact_mode > 0`). This
+prevents the abundant free-space no-motion rows from dominating the rare
+within-contact orientation signal. Mode 3 remains included because it denotes
+separation after a contact-supported transition. The change is in
+`le-wm-main/experiments/run_causal_visual_pusht_world_model.py`, with a
+regression test in
+`le-wm-main/tests/test_causal_visual_world_model_serialization.py`.
+
+The matched seed/data-seed pilot was rerun with identical 32/16 root splits,
+fan size 8, and CPU only after the fresh GPU check failed with NVML
+`Driver/library version mismatch`:
+
+| Variant | Paired motion top-1 | Contact motion top-1 | Contact orientation top-1 | Angle-delta corr. | Strict planning |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| prior torque baseline | 0.5625 | 0.8750 | 0.0000 | 0.1610 | 0/2 |
+| contact mask + soft mode/all losses | 0.1875 | 0.3750 | 0.7500 | -0.2634 | 0/2 |
+| contact mask + no mode routing | 0.1875 | 0.2500 | 0.0000 | -0.4691 | 0/2 |
+| contact-masked angle-effect only | **0.6875** | **0.8750** | 0.0000 | -0.1377 | 0/2 |
+| contact roots 75% | 0.1250 | 0.1667 | 0.1667 | -0.5816 | 0/2 |
+| terminal roots 25% | 0.1875 | 0.2000 | 0.0000 | -0.2556 | 0/2 |
+
+Artifacts are under
+`le-wm-main/results/causal_visual_pusht_*_cpu_pilot_20261014/`. The useful
+partial repair is specific: contact-masked wrapped-angle supervision improves
+translation/action ranking over the prior baseline, but it does not recover
+orientation ranking or strict pose closure. Adding soft mode routing,
+sin/cos orientation losses, more contact roots, or terminal roots does not
+solve that remaining bottleneck and can damage the translation geometry.
+
+The mode audit on the matched split found contact rows are almost entirely
+`mode=2` sliding and free rows are `mode=0`; therefore the failure is not a
+simple mode-label coding error. It is now localized to RGB pose/action-effect
+identifiability and shared-gradient interference, not missing contact labels.
+
+As an interface control, the same learned checkpoint was evaluated with the
+RGB geometry servo. It achieved `0/16` strict success, although some episodes
+reached small angle error while remaining outside the XY tube. This separates
+usable RGB geometry from reliable closed-loop contact transfer; the artifact
+is `le-wm-main/results/visual_geometry_servo_from_contactmasked_angleeffect_cpu_20261014/`.
+
+The privileged mode-aware short-pulse benchmark was started with boundary
+contact, observed-sign calibration/feedback, paired probes, and fail-closed
+support gates, but was interrupted after a long CPU candidate-scoring loop
+before producing an artifact. It is not evidence and is not counted in the
+table above. Current conclusions remain bounded: no learned latent causal
+dynamics, stable pose adapter, frozen visual online-planning, universal
+world-model, or universal commutator claim is opened by this continuation.
+
+## Unified ATM -> HTSC -> GDD-WM baseline rerun
+
+The unified paper spine is recorded in
+`docs/UNIFIED_DECISION_TRANSFER_PAPER_PLAN_20261014.md`. The fresh P0/P1
+post-hoc rerun is under
+`le-wm-main/results/unified_decision_transfer_p0p1_20261014/`, with its
+machine-readable gate summary in `unified_manifest.json`.
+
+The rerun reproduces the PointMaze task-contrast gap: 960 within-root pairs,
+inversion rate `0.4077976818`, mean contrast error `0.1081297232`, and an
+independent calibration bound `0.4282840914`. Because realized RGB successor
+and support calibration are absent, HTSC remains
+`abstain_support_gate_unavailable`.
+
+The ATM post-hoc export audit reproduces inverse-risk matrices but has no
+candidate/root/task-cost identifiers, so finite-horizon ranking is explicitly
+`unavailable_missing_candidate_root_identifiers`. The refreshed learned-panel
+audit has one identifiable stratum in one environment and remains
+`gated_single_environment`; the independent cross-environment quality-matched
+artifact remains `gated_positive_delta_not_established`. These are the
+current Diagnose-stage boundaries. GDD-WM remains proposed and is not trained
+from these outcomes.
+
+### GDD-WM D0/D1 audit
+
+The D0/D1 implementation and artifact are in
+`le-wm-main/experiments/gdd_wm/` and
+`le-wm-main/results/gdd_wm_d0_d1_audit_20261014_v4/`. D0 passes schema and
+root-split validation for 640 rows and 40 candidate sets. The v4 artifact
+reported 128 outcome rows without predicted/realized latent references; that
+support gap has now been repaired in the isolated v5 continuation below. v4
+is retained as the historical pre-join audit.
+
+The new D1 audit isolates two causes of the previous apparent positive result:
+each root has only one candidate-set context, so preference flip/stability is
+not estimable; and `teacher_score` is exactly `-real_task_cost`, making the
+observed execution consistency of `1.0` label leakage. D1 therefore rejects
+all eligible pairs. The corrected same-root aggregation contains 4,800 pairs
+(4,764 non-ties), but this does not change the fail-closed decision. D2 remains
+blocked. This is a protocol repair and a negative boundary result, not a
+GDD-WM failure after valid teacher training.
+
+#### v5 provenance-safe realized-reference continuation
+
+The join implementation is
+`le-wm-main/experiments/gdd_wm/join_rgb_realized_refs.py`. It copies the
+candidate bank into a new artifact and joins only the realized RGB projection
+references from the dataset-matched `rgb_successor_v1` report. It requires
+exact candidate-dataset path agreement, unique and complete
+`(instance_id, candidate_id, split)` coverage, matching NPZ projection keys
+and values, and refuses to overwrite any existing reference or protected
+teacher/cost/split/action field.
+
+The v5 artifact is
+`le-wm-main/results/gdd_wm_d0_d1_audit_20261014_v5/`. The join covers 640/640
+records and 640/640 projection keys; D0 passes with 40 sets of 16 candidates,
+and the source candidate bank remains unchanged. D1 now has zero missing
+runtime references, but still rejects fail-closed: preference stability is
+unavailable because each root has only one candidate-set context, and
+execution consistency is invalid because the teacher is
+`offline_environment_cost_v1` with the exact leakage
+`teacher_score = -real_task_cost`. Thus the realized-reference repair removes
+one protocol defect but does not create D1 evidence or make D2 ready.
+
+#### Non-leaking predicted-latent teacher control
+
+To separate label leakage from representation failure, the control
+`le-wm-main/experiments/gdd_wm/audit_nonleaking_teacher_control.py` fits a
+fixed standardized ridge readout from predicted latent to `real_task_cost`
+using train roots only. It evaluates candidate ranking on untouched
+calibration and outcome roots; it is explicitly not a D-JEPA teacher and is
+not used to authorize D2.
+
+The artifact is
+`le-wm-main/results/gdd_wm_nonleaking_teacher_control_20261014/nonleaking_teacher_control.json`.
+Held-out pairwise consistency is `0.4301` on calibration and `0.5096` on
+outcome. Outcome mean candidate regret is `0.1510` over eight roots, with
+zero roots achieving zero regret. Removing the exact cost-label leakage does
+not recover reliable transfer; the predicted latent/action-conditioned
+geometry is itself insufficient for held-out task ranking.
+
+#### Predeclared feature-family panel
+
+The next control fixes five feature families before evaluation:
+`predicted_terminal`, `source_plus_terminal`, `source_plus_delta`,
+`source_delta_action`, and `action_summary`. Each uses the same standardized
+train-root-only ridge readout and the same candidate bank protocol. The
+runner is
+`le-wm-main/experiments/gdd_wm/audit_transfer_sufficient_feature_families.py`,
+with the cross-bank wrapper
+`le-wm-main/experiments/gdd_wm/audit_feature_family_panel.py`.
+
+The five-bank artifact is
+`le-wm-main/results/gdd_wm_transfer_sufficient_feature_family_panel_20261014/panel.json`.
+No feature family wins consistently across both calibration and outcome
+across all five banks. For the repaired task-effect bank, `action_summary`
+reaches outcome consistency `0.6195` and regret `0.1060`, but calibration
+consistency is only `0.4626`; `source_delta_action` reaches calibration
+consistency `0.6125` but outcome falls to `0.4995`. Across checkpoints the
+winner changes. This rules out a fixed concatenation as the current repair and
+supports the narrower diagnosis that source-conditioned action-effect geometry
+is missing, rather than merely more latent history.
+
+#### Relative-effect, low-rank, and pairwise ranking controls
+
+The follow-up runner
+`le-wm-main/experiments/gdd_wm/audit_relative_action_effect_geometry.py` fixes
+the candidate-level estimand to a train-root-centered effect. It compares the
+source/delta/action carrier with the full interaction and train-only PCA
+controls of ranks 2, 4, 8, and 16. The panel wrapper reports paired root
+bootstrap intervals in
+`le-wm-main/results/gdd_wm_relative_action_effect_panel_20261014/panel.json`.
+
+The result is a negative diagnosis: the full 188-dimensional interaction
+improves train fit but its outcome effect intervals cross zero across the five
+banks. Low-rank controls reduce capacity but do not produce a positive
+held-out consistency and regret interval across all banks. Within-root
+pairwise ridge controls, which directly optimize candidate ordering rather
+than absolute task cost, also have bank-dependent point estimates and CIs
+crossing zero. Thus more interaction capacity, PCA compression, and an
+objective swap do not repair transfer. With only eight outcome roots per bank,
+the intervals are wide; this remains diagnostic evidence, not a selector or
+planning claim. The next admissible repair is independently collected
+cross-root action-support data with the same paired estimand. D-JEPA teacher
+validation and D2 remain blocked.
+
+#### Root-dependent action-bank mismatch and goal-frame repair
+
+The cross-root audit
+`le-wm-main/experiments/gdd_wm/audit_cross_root_action_effect_consistency.py`
+found a concrete protocol defect in the current PointMaze bank. Although the
+metadata says `shared_candidate_bank=true`, the raw action sequence for the
+same candidate id differs across roots (`shared_action_bank=false`). Raw
+candidate-pair ranking flips occur for about `0.52/0.69/0.89` of pairs on
+calibration/outcome/train in the final MLP bank, and `0.88/0.98/1.00` in the
+history-4 bank. Thus the readout was asked to transfer a root-dependent raw
+action coordinate system as if it were a shared candidate bank.
+
+The repair adds goal-frame action canonicalization to the relative-effect
+audit: each action is represented in the root's
+`[goal-direction, perpendicular]` frame before fitting. On the existing
+post-hoc records, outcome consistency gain versus the raw-action carrier is
+`+0.316` `[+0.211,+0.424]` for `final_mlp_s005`, `+0.313`
+`[+0.210,+0.413]` for `final_standardized_s005`, and `+0.371`
+`[+0.226,+0.515]` for `task_effect_readout_s005`; corresponding regret
+reductions are `+0.139`, `+0.124`, and `+0.135`, with CIs entirely above zero.
+The two history-conditioned banks remain inconclusive (`CI` crosses zero).
+
+The candidate generator now also supports `--canonical-action-bank`, samples
+the bank once in goal-relative coordinates, rotates it into each simulator
+root, and records the coordinate frame explicitly. The positive post-hoc
+canonicalization result is a protocol/diagnostic repair using privileged
+source state and goal; it is not RGB online planning, D-JEPA evidence, causal
+dynamics, or a universal world model. A fresh learned canonical-bank export
+still requires a working GPU-first learned-inference environment.
+
+#### Fresh CUDA canonical-bank replication
+
+Host-permission GPU preflight subsequently passed with a real CUDA allocation
+on an RTX 5060 Ti. Two fresh frozen-checkpoint banks were regenerated with
+`--canonical-action-bank`; each contains 640 records over 40 roots with a
+24/8/8 train/calibration/outcome split. The generator now constrains random
+goal-frame actions so rotated controls remain in `[-1,1]`; both artifacts have
+one bank hash and maximum raw control magnitude `0.99865`.
+
+The corrected cross-root audit reports `shared_action_bank=true` for both
+fresh banks. Same-pair real-cost order still flips on `0.675` of outcome
+pairs, so canonicalization repairs the candidate protocol but does not remove
+state-conditioned dynamics. With `source+delta` as the fixed baseline,
+goal-frame action features yield outcome consistency gains of `+0.381`
+`[+0.240,+0.513]` and `+0.350` `[+0.223,+0.466]` for the MLP and standardized
+checkpoints; regret reductions are `+0.122` `[+0.051,+0.188]` and `+0.149`
+`[+0.082,+0.204]`. These are fresh GPU-generated, held-out offline
+action-effect diagnostics, not D-JEPA preference validation, RGB online
+planning, or causal-dynamics proof. Realized RGB references and D1 remain
+blocked.
+
+#### Cross-seed and cross-architecture canonical replication
+
+The same frozen protocol was then rerun for seed `8412` on both the final and
+standardized MLP checkpoints, yielding four case units (`architecture x seed`)
+with identical 40-root, 16-candidate banks. The aggregation runner is
+`le-wm-main/experiments/gdd_wm/aggregate_relative_action_effect_panel.py` and
+the aggregate artifact is
+`le-wm-main/results/gdd_wm_relative_action_effect_panel_20261014/canonical_2arch_2seed_aggregate.json`.
+
+Against the predeclared `source+delta+raw-action` carrier, goal-frame action
+features are positive in all four case units. The case-macro consistency gain
+is `+0.2784`, with two-level case/root bootstrap 95% CI
+`[+0.2110,+0.3442]`; the corresponding regret reduction is `+0.0739`, CI
+`[+0.0415,+0.1110]`. The report keeps case-level and root-level uncertainty
+separate rather than treating 32 root-by-checkpoint cells as independent model
+replications.
+
+This is the strongest current evidence that the original negative result had
+a real action-coordinate protocol component, and that goal-frame
+canonicalization gives a reproducible offline action-effect gain across two
+MLP variants and two seeds. It still does not establish D-JEPA preference
+stability, learned causal dynamics, RGB online planning, or universal transfer:
+the teacher remains an offline cost oracle, the outcome is simulator-labeled,
+and no closed-loop planning consequence has been measured.
+
+#### Independent RGB successor consequence
+
+The same 10 canonical cases were passed through the frozen RGB successor
+verifier on the independent outcome roots (`8 roots x 16 candidates` per
+case). All cases passed renderer consistency, realized-RGB-latent availability,
+and PCA successor comparison. The verifier outputs are under
+`le-wm-main/results/decision_benchmark_candidate_bank_20261014/rgb_successor_canonical_*_outcome8/`;
+the cross-case aggregate is
+`le-wm-main/results/decision_benchmark_candidate_bank_20261014/rgb_successor_canonical_2arch_5seed_aggregate.json`.
+
+Relative to the no-action/source-latent baseline, the action-conditioned
+predictor improves realized RGB successor error by `+14.21%`, with two-level
+case/root bootstrap 95% CI `[+8.47%,+19.69%]`; `66.56%` of candidate rows are
+closer to the realized RGB successor than the baseline, CI
+`[59.77%,73.05%]`. This is an independent successor-transfer consequence of
+the repaired protocol, not closed-loop online planning: actions are still
+executed in the declared simulator and RGB is reconstructed by the
+dataset-matched renderer.
+
+#### Latent-estimated action canonicalization
+
+The raw-action feature family was then tested against a targeted repair. A
+train-root-only ridge probe predicts source XY from the frozen source latent;
+candidate actions are transformed into the estimated
+`[goal-direction, perpendicular]` frame before fitting the task readout. This
+adds `source_delta_estimated_goalframe_action` without using held-out state at
+inference time. The runner and aggregate are
+`le-wm-main/experiments/gdd_wm/audit_transfer_sufficient_feature_families.py`
+and
+`le-wm-main/results/decision_benchmark_candidate_bank_20261014/canonical_2arch_5seed_feature_family_aggregate.json`.
+
+Relative to `source_plus_delta`, the estimated-frame family improves held-out
+consistency by `+0.0985`, two-level case/root CI `[+0.0534,+0.1449]`, and
+reduces candidate regret by `+0.0546`, CI `[+0.0176,+0.0888]`. The regret
+effect is positive on 9/10 case units; standardized seed `8413` remains
+negative (`-0.0249`). Thus latent-estimated canonicalization is a promising
+partial repair, but not a universal or architecture-invariant transfer
+certificate. In particular, standardized seed `8413` still improves realized
+RGB successor error by about `14.39%` while its estimated-frame candidate
+regret worsens by `0.0249`; prediction accuracy alone therefore does not close
+the action-identifiability-to-planning gap.
+
+#### Successor-calibration negative control
+
+To test whether the remaining failure was merely a systematic RGB successor
+error, standardized seed `8413` received a train-only affine/ridge calibration
+from predicted terminal projection to realized RGB terminal projection. The
+calibration reduced train successor RMSE to `0.1628`, but outcome candidate
+regret for `source_plus_delta` increased from `0.0872` to `0.1503`; the
+raw-action and estimated-frame variants also remained worse than their
+uncalibrated decision readouts. Thus generic successor calibration is not a
+valid repair: it can improve prediction-space fidelity while destroying
+task-readout geometry. This is a direct negative control for the
+prediction-to-decision gap.
+
+#### Five-seed replication
+
+The canonical export was then extended without changing any protocol choice to
+all five available seeds (`8411`--`8415`) for both MLP variants. The resulting
+10-case panel and aggregate are
+`le-wm-main/results/gdd_wm_relative_action_effect_panel_20261014/canonical_2arch_5seed.json`
+and
+`le-wm-main/results/gdd_wm_relative_action_effect_panel_20261014/canonical_2arch_5seed_aggregate.json`.
+Every case contains 40 roots, with 24/8/8 train/calibration/outcome roots.
+
+The goal-frame variant is positive in all 10 architecture-by-seed cases. The
+case-macro consistency gain is `+0.2777`, with two-level case/root bootstrap
+95% CI `[+0.2356,+0.3212]`; regret reduction is `+0.0751`, CI
+`[+0.0455,+0.1073]`. The weakest case remains positive (`+0.0182` regret
+reduction), so the result is not driven by a single seed. This closes the
+current seed-stability check for the repaired offline action-effect diagnostic,
+but not the independent planning consequence required for a planning claim.
+
 ## Current scientific object
 
 The project is organized around finite-horizon **decision-transfer sufficiency**:
@@ -400,3 +726,132 @@ turn the mechanism into a universal law. Pooled sign consistency is below the
 fixed `0.75` release threshold and only 6–8 strata per seed are authorized.
 Stable cross-mode orientation transfer, learned pose closure, frozen RGB online
 planning, and universal world-model claims remain unestablished.
+
+### Indexed canonical-action repair for the GDD-WM ranking failure (2026-10-14)
+
+The remaining standardized-seed-8413 failure was isolated more sharply. A
+train-root-only latent-to-source-XY probe had position RMSE `0.4156` on its
+fit roots and `0.6682` over all roots. A quadratic latent chart drove the
+training error near zero but worsened held-out candidate regret, so increasing
+chart capacity was rejected as overfitting rather than retained as a repair.
+
+The actionable repair uses the declared shared candidate bank as the action
+geometry. Each candidate's raw simulator action is transformed to the
+goal-relative frame once on train roots and indexed by `candidate_id`.
+Calibration and outcome roots use only this frozen train-derived lookup; their
+source state is not used to construct features. The post-hoc bank check passes
+on all 640 rows with maximum canonical-summary deviation below `7e-16`.
+
+The fresh two-architecture/five-seed panel is at
+`le-wm-main/results/decision_benchmark_candidate_bank_20261014/indexed_canonical_action_2arch_5seed_aggregate.json`.
+Against the fixed `source+delta` baseline, the indexed canonical-action
+readout improves outcome execution consistency by `+0.2845` with a two-level
+case/root bootstrap 95% CI `[+0.2425,+0.3275]`, and reduces candidate regret by
+`+0.1090` with CI `[+0.0820,+0.1372]`. All 10 architecture-by-seed cases are
+positive; standardized seed `8413` is repaired (`+0.0708` regret reduction).
+
+This closes the specific raw-action/latent-frame reconstruction failure in the
+offline benchmark. It remains an offline task-readout consequence with
+simulator-labeled costs, not D-JEPA preference validation, causal physical
+dynamics, closed-loop RGB online planning, or universal-world-model evidence.
+
+### Independent RGB-compatible task consequence (2026-10-14)
+
+The indexed action repair was then evaluated with the frozen RGB successor
+reports on the same root-disjoint train/calibration/outcome protocol. The
+aggregate artifact is
+`le-wm-main/results/decision_benchmark_candidate_bank_20261014/rgb_indexed_canonical_task_2arch_5seed_aggregate.json`.
+It contains two MLP architectures and five seeds per architecture, with eight
+outcome roots per case. The RGB feature readout is fit on train roots only;
+the canonical action bank is also fit on train roots only and accessed on
+calibration/outcome through `candidate_id`.
+
+Against the RGB source-plus-predicted-delta baseline, the indexed canonical
+action family improves outcome execution consistency by `+0.2845`, with a
+two-level case/root bootstrap 95% CI `[+0.2425,+0.3275]`, and reduces outcome
+candidate regret by `+0.1090`, CI `[+0.0820,+0.1372]`. All 10 cases are
+positive. The previously failing standardized seed `8413` remains positive
+(`+0.0708` regret reduction). The standardized-8413 train report used the
+content-identical canonical-named artifact because its indexed-named alias was
+not emitted; this is recorded as an artifact naming alias, not a new data
+selection.
+
+This is an independent RGB-compatible successor/task-readout consequence,
+not frozen RGB online planning: RGB is dataset-matched rendered input,
+actions are executed in the simulator for labels, and no closed-loop planner
+or test planning result was used for feature fitting or selection. The new
+synthetic tests enforce train-only bank provenance, root-disjoint transfer,
+and fail-closed RGB gates.
+
+### RGB-only visual world-model pilot and runner repairs (2026-10-14)
+
+The first CPU end-to-end smoke of
+`experiments/run_causal_visual_pusht_world_model.py` exposed an artifact bug:
+the planning trace contained NumPy arrays and could not be serialized. The
+runner now recursively converts NumPy arrays/scalars before writing its JSON
+artifact. A separate CPU smoke confirmed the repaired pipeline completes
+dataset construction, training, held-out counterfactual metrics, and one
+RGB-only planning episode.
+
+The smoke still has a clear mechanism failure: paired orientation top-1 is
+`0.0`, angle-delta prediction correlation is `0.0543`, and strict success is
+`0/1`. This is retained as evidence that the current visual representation
+does not yet identify within-contact orientation effects.
+
+A matched contact-frame/torque pilot was then run on the identical root seed
+with temporal context, contact-frame dynamics, signed torque features, explicit
+angle heads, and visual contact gating. It improves action-motion top-1 to
+`0.5625` and angle-delta correlation to `0.1610`, but orientation top-1 stays
+`0.0` and planning strict success stays `0/2`; this is a partial translation
+mechanism gain, not pose closure.
+
+Finally, enabling all orientation/block-effect losses and soft
+mode-conditioned routing on the same data is a negative control: action-motion
+top-1 falls to `0.0625`, angle-delta correlation becomes `-0.1717`, and mode
+top-1 is only `0.1420`. The result shows that adding orientation losses without
+adequate contact-mode support destabilizes the action geometry; it does not
+justify increasing those weights further. Artifacts:
+
+- `results/causal_visual_pusht_rgb_only_smoke_20261014/`;
+- `results/causal_visual_pusht_contactframe_torque_cpu_pilot_20261014/`;
+- `results/causal_visual_pusht_contactframe_torque_angleweighted_cpu_pilot_20261014/`.
+
+The runner fix is covered by nested-NumPy serialization tests. The visual
+online-planning claim remains gated because all pilot strict-success rates are
+zero and the current runs use CPU only after the CUDA preflight reported both
+NVML/driver communication failure and `torch.cuda.is_available() == False`.
+
+### PushT goal-pose label audit and protocol repair (2026-10-14)
+
+The next GPU pilot isolated a separate protocol defect in the visual runner.
+PushT's `info["goal"]` is rendered from `info["goal_pose"]`, whereas
+`info["goal_state"]` is the simulator reset/evaluation state and carries the
+randomly sampled source block angle. The runner had been using
+`goal_state[2:6]` as the target-image supervision, so the goal-angle head was
+asked to predict a label that was not identifiable from the goal image.
+
+The repair adds `goal_pose_vector()` and carries the rendered target pose
+through every source-root constructor, counterfactual dataset, split manifest,
+and planning evaluator. It also separates `--explicit-goal-angle-readout`
+from the current-frame `--explicit-angle-readout`, so a goal-only calibration
+cannot silently replace the current dynamics state with an untrained head.
+The targeted regression suite passes (`5 passed`), and the source compiles in
+the project environment.
+
+The matched CUDA pilot after the label repair reduced goal-pose readout RMSE
+from the prior `43--58` range to `9.334`, and goal-angle readout RMSE to
+`0.245`. This confirms a real label/protocol bug. However, the same run still
+had angle-delta correlation `-0.571`, contact action-motion top-1 `0.000`,
+paired orientation top-1 `0.000`, and strict visual planning `0/2`.
+Therefore the repair removes one confound but does not establish learned
+physical causality, stable pose closure, or RGB online planning. The remaining
+bottleneck is within-contact current-pose/action-effect identification.
+
+The matched CUDA follow-ups were also completed with the corrected labels:
+`causal_visual_pusht_gpu_goalposefix_currentgoalreadout_20261014` and
+`causal_visual_pusht_gpu_goalposefix_angleeffectonly_20261014`. The former
+reached goal-angle RMSE `0.143` and terminal angle error `0.592` on two
+episodes, but action-motion top-1 was `0.125`; the latter reached goal-angle
+RMSE `0.059`, contact action-motion top-1 `0.500`, but contact orientation
+top-1 remained `0.0` and strict success remained `0/2`. These are matched
+mechanism results, not a positive planning claim.
