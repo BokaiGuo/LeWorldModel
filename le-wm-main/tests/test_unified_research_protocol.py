@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -49,3 +52,16 @@ def test_unified_manifest_is_immutable(tmp_path):
     assert payload["manifest_sha256"] == digest
     with pytest.raises(FileExistsError, match="refusing to overwrite frozen unified manifest"):
         write_manifest(path, manifest)
+
+
+def test_unified_runner_script_help_is_executable_from_repo_root():
+    repo = os.path.dirname(os.path.dirname(__file__))
+    completed = subprocess.run(
+        [sys.executable, "experiments/run_unified_research_protocol.py", "--help"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert "--output-root" in completed.stdout

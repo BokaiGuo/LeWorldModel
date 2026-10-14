@@ -49,6 +49,7 @@ from experiments.run_pusht_counterfactual import (
     pose_target,
 )
 from experiments.run_pusht_learned_physical_dynamics import state_features
+from experiments.research_runtime.artifacts import atomic_write_json
 
 gym.logger.min_level = 40
 
@@ -81,8 +82,60 @@ def parse_args() -> argparse.Namespace:
         help="weight for auxiliary normalized contact-pose consistency loss",
     )
     p.add_argument("--seed", type=int, default=8421)
-    p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    p.add_argument("--device", default="cuda")
     return p.parse_args()
+
+
+def protocol_payload(args: argparse.Namespace) -> dict[str, Any]:
+    """Return the immutable protocol fields shared by all checkpoints."""
+    return {
+        "environment": "swm/PushT-v1",
+        "train_cases": args.train_cases,
+        "held_out_cases": args.held_out,
+        "episodes": args.episodes,
+        "prediction_horizon": args.prediction_horizon,
+        "action_block": args.action_block,
+        "candidates": args.candidates,
+        "repair_epochs": args.repair_epochs,
+        "free_run_weight": args.free_run_weight,
+        "pose_loss_weight": args.pose_loss_weight,
+        "seed": args.seed,
+        "approach_phase": "state-guided contact bootstrap; reported separately",
+        "online_phase": "same candidate proposals and live simulator for base/compositional-repaired predictor",
+        "repair_data": "five contact action-sequence arms per case: constant, piecewise noisy, reverse, and random",
+        "endpoint_readout": "separate Ridge fit on each predictor's autoregressive latent distribution",
+        "state_source": args.state_source,
+        "planning_cost": args.cost,
+        "bootstrap_mode": args.bootstrap_mode,
+        "candidate_mode": args.candidate_mode,
+        "frozen": "visual encoder and projector",
+    }
+
+
+def write_checkpoint(
+    out: Path,
+    args: argparse.Namespace,
+    *,
+    status: str,
+    phase: str,
+    reports: list[dict[str, Any]] | None = None,
+    repair_training: dict[str, Any] | None = None,
+    heldout_teacher_forced_audit: dict[str, Any] | None = None,
+    residual_gate: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    """Persist resumable progress instead of leaving a misleading null JSON."""
+    payload: dict[str, Any] = {
+        "status": status,
+        "phase": phase,
+        "protocol": protocol_payload(args),
+        "reports": reports or [],
+        "repair_training": repair_training,
+        "heldout_teacher_forced_audit": heldout_teacher_forced_audit,
+        "residual_gate": residual_gate,
+        "error": error,
+    }
+    atomic_write_json(out / "repaired_predictor_mpc.json", payload)
 
 
 def bootstrap(values: np.ndarray, seed: int, draws: int = 2000) -> dict[str, Any]:
@@ -101,6 +154,53 @@ def bootstrap(values: np.ndarray, seed: int, draws: int = 2000) -> dict[str, Any
 def fit_readout(features: np.ndarray, targets: np.ndarray) -> tuple[Ridge, StandardScaler]:
     scaler = StandardScaler().fit(targets)
     return Ridge(alpha=1.0).fit(features, scaler.transform(targets)), scaler
+
+
+class CalibratedResidualAdapter:
+    """Regularized residual around the base predictor with fail-closed use."""
+
+    def __init__(self, ridge: Ridge, latent_dim: int, action_dim: int):
+        self.ridge = ridge
+        self.latent_dim = int(latent_dim)
+        self.action_dim = int(action_dim)
+
+    @classmethod
+    def fit(
+        cls,
+        predicted: np.ndarray,
+        actions: np.ndarray,
+        targets: np.ndarray,
+        *,
+        alpha: float = 10.0,
+    ) -> "CalibratedResidualAdapter":
+        predicted = np.asarray(predicted, dtype=np.float64)
+        actions = np.asarray(actions, dtype=np.float64)
+        targets = np.asarray(targets, dtype=np.float64)
+        if predicted.ndim != 3 or targets.shape != predicted.shape:
+            raise ValueError("predicted and targets must have matching (N,H,D) shapes")
+        if actions.ndim != 3 or actions.shape[0] != predicted.shape[0]:
+            raise ValueError("actions must be (N,T,A) and match predicted rows")
+        horizon = predicted.shape[1]
+        if actions.shape[1] < horizon + 2:
+            raise ValueError("actions must include two context rows plus future rows")
+        future_actions = actions[:, 2 : 2 + horizon]
+        features = np.concatenate([predicted, future_actions], axis=-1)
+        residual = targets - predicted
+        ridge = Ridge(alpha=float(alpha)).fit(
+            features.reshape(-1, features.shape[-1]), residual.reshape(-1, residual.shape[-1])
+        )
+        return cls(ridge, predicted.shape[-1], actions.shape[-1])
+
+    def apply(self, predicted: np.ndarray, actions: np.ndarray) -> np.ndarray:
+        predicted = np.asarray(predicted, dtype=np.float64)
+        actions = np.asarray(actions, dtype=np.float64)
+        horizon = predicted.shape[1]
+        future_actions = actions[:, 2 : 2 + horizon]
+        features = np.concatenate([predicted, future_actions], axis=-1)
+        correction = self.ridge.predict(
+            features.reshape(-1, self.latent_dim + self.action_dim)
+        ).reshape(predicted.shape)
+        return (predicted + correction).astype(np.float32)
 
 
 def decode(decoder: Ridge, scaler: StandardScaler, features: np.ndarray) -> np.ndarray:
@@ -474,6 +574,7 @@ def predict_candidates(
     candidates: np.ndarray,
     transform,
     device: str,
+    residual_adapter: CalibratedResidualAdapter | None = None,
 ) -> np.ndarray:
     context_z = encode_images(model, context_images, transform, 16, device)
     context = torch.as_tensor(np.repeat(context_z[None], candidates.shape[0], axis=0), dtype=torch.float32, device=device)
@@ -483,7 +584,10 @@ def predict_candidates(
     action_tensor = torch.as_tensor(actions, dtype=torch.float32, device=device)
     with torch.no_grad():
         predicted = predict_latent_sequence(model, context, action_tensor)
-    return predicted[:, -1].detach().cpu().numpy()
+    predicted_np = predicted.detach().cpu().numpy()
+    if residual_adapter is not None:
+        predicted_np = residual_adapter.apply(predicted_np, actions)
+    return predicted_np[:, -1]
 
 
 def run_policy(
@@ -497,6 +601,7 @@ def run_policy(
     policy: str,
     args: argparse.Namespace,
     bootstrap_fn,
+    residual_adapter: CalibratedResidualAdapter | None = None,
 ) -> dict[str, Any]:
     rng = np.random.default_rng(args.seed + (0 if policy == "base_mpc" else 100000))
     rows = []
@@ -533,7 +638,8 @@ def run_policy(
                 selected_predicted = None
             elif policy in {"base_mpc", "repaired_mpc"}:
                 predicted_z = predict_candidates(
-                    model, context_images, past_actions, candidates, transform, args.device
+                    model, context_images, past_actions, candidates, transform, args.device,
+                    residual_adapter=residual_adapter,
                 )
                 predicted_pose = decode(endpoint_decoder, endpoint_scaler, predicted_z)
                 cost_fn = task_state_cost if args.cost == "task" else block_cost
@@ -602,6 +708,7 @@ def main() -> None:
         raise ValueError("prediction_horizon must be >= 2 and action_block positive")
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
+    write_checkpoint(out, args, status="running", phase="initializing")
     torch.manual_seed(args.seed)
     base_model = load_compatible_pretrained("pusht/lewm", device=args.device)
     repaired_model = load_compatible_pretrained("pusht/lewm", device=args.device)
@@ -651,6 +758,16 @@ def main() -> None:
             repaired_train = predict_all(repaired_model, train_data, args.device).cpu().numpy()
             base_test = predict_all(base_model, test_data, args.device).cpu().numpy()
             repaired_test = predict_all(repaired_model, test_data, args.device).cpu().numpy()
+        heldout_audit = {
+            "base_endpoint_latent_mse_h8": float(np.mean((base_test[:, -1] - test_data["target_z"][:, -1]) ** 2)),
+            "repaired_endpoint_latent_mse_h8": float(np.mean((repaired_test[:, -1] - test_data["target_z"][:, -1]) ** 2)),
+        }
+        write_checkpoint(
+            out, args, status="running", phase="predictor_repair_complete",
+            repair_training=repair_training,
+            heldout_teacher_forced_audit=heldout_audit,
+            residual_gate=residual_gate,
+        )
         # Each decoder is calibrated on the predictor's own autoregressive
         # distribution; using observed target latents here would leak a better
         # representation into the online ranking comparison.
@@ -665,53 +782,82 @@ def main() -> None:
         repaired_decoder, repaired_scaler = fit_readout(
             repaired_train.reshape(-1, repaired_train.shape[-1]), target_state_train.reshape(-1, 8)
         )
+        # Calibrate a low-variance residual on a case-disjoint slice of the
+        # training split.  The final held-out cases remain untouched.
+        arms_per_case = train_data["target_state"].shape[0] // len(train_cases)
+        calibration_cases = max(1, len(train_cases) // 5)
+        calibration_rows = np.arange(
+            (len(train_cases) - calibration_cases) * arms_per_case,
+            len(train_cases) * arms_per_case,
+        )
+        residual_adapter = CalibratedResidualAdapter.fit(
+            base_train, train_data["actions"], train_data["target_z"], alpha=10.0
+        )
+        base_calibration_mse = float(
+            np.mean((base_train[calibration_rows] - train_data["target_z"][calibration_rows]) ** 2)
+        )
+        residual_calibration_pred = residual_adapter.apply(
+            base_train[calibration_rows], train_data["actions"][calibration_rows]
+        )
+        residual_calibration_mse = float(
+            np.mean((residual_calibration_pred - train_data["target_z"][calibration_rows]) ** 2)
+        )
+        residual_gate = {
+            "enabled": bool(residual_calibration_mse < base_calibration_mse),
+            "alpha": 10.0,
+            "calibration_cases": int(calibration_cases),
+            "calibration_rows": int(calibration_rows.size),
+            "base_mse": base_calibration_mse,
+            "residual_mse": residual_calibration_mse,
+            "decision": "deploy_residual" if residual_calibration_mse < base_calibration_mse else "fallback_base",
+        }
         state_targets = np.asarray([state_features(case["state"]) for case in train_cases], dtype=np.float64)
         # Every compositional arm reuses the case's contact-frame label.
-        arms_per_case = train_data["target_state"].shape[0] // len(train_cases)
         state_targets = np.repeat(state_targets, arms_per_case, axis=0)
         state_decoder, state_scaler = fit_readout(train_data["context_z"][:, 2], state_targets)
         policy_models = {
-            "base_mpc": (base_model, base_decoder, base_scaler),
-            "repaired_mpc": (repaired_model, repaired_decoder, repaired_scaler),
+            "base_mpc": (base_model, base_decoder, base_scaler, None),
+            "repaired_mpc": (repaired_model, repaired_decoder, repaired_scaler, None),
         }
         reports = []
-        for name, (model, decoder, scaler) in policy_models.items():
+        for name, (model, decoder, scaler, adapter) in policy_models.items():
             reports.append(run_policy(
                 env, model, decoder, scaler, state_decoder, state_scaler,
                 transform, name, args,
                 bootstrap_fn,
+                residual_adapter=adapter,
             ))
+            write_checkpoint(
+                out, args, status="running", phase=f"online_{name}_complete",
+                reports=reports, repair_training=repair_training,
+                heldout_teacher_forced_audit=heldout_audit,
+                residual_gate=residual_gate,
+            )
         reports.append(run_policy(
             env, repaired_model, repaired_decoder, repaired_scaler,
             state_decoder, state_scaler, transform, "heuristic", args,
             bootstrap_fn,
         ))
+        if residual_gate["enabled"]:
+            reports.append(run_policy(
+                env, base_model, base_decoder, base_scaler,
+                state_decoder, state_scaler, transform, "residual_gated_mpc", args,
+                bootstrap_fn, residual_adapter=residual_adapter,
+            ))
+        write_checkpoint(
+            out, args, status="running", phase="online_heuristic_complete",
+            reports=reports, repair_training=repair_training,
+            heldout_teacher_forced_audit=heldout_audit,
+            residual_gate=residual_gate,
+        )
     finally:
         env.close()
     report = {
-        "protocol": {
-            "environment": "swm/PushT-v1",
-            "train_cases": args.train_cases,
-            "held_out_cases": args.held_out,
-            "episodes": args.episodes,
-            "prediction_horizon": args.prediction_horizon,
-            "action_block": args.action_block,
-            "candidates": args.candidates,
-            "repair_epochs": args.repair_epochs,
-            "free_run_weight": args.free_run_weight,
-            "pose_loss_weight": args.pose_loss_weight,
-            "seed": args.seed,
-            "approach_phase": "state-guided contact bootstrap; reported separately",
-            "online_phase": "same candidate proposals and live simulator for base/compositional-repaired predictor",
-            "repair_data": "five contact action-sequence arms per case: constant, piecewise noisy, reverse, and random",
-            "endpoint_readout": "separate Ridge fit on each predictor's autoregressive latent distribution",
-            "state_source": args.state_source,
-            "planning_cost": args.cost,
-            "bootstrap_mode": args.bootstrap_mode,
-            "candidate_mode": args.candidate_mode,
-            "frozen": "visual encoder and projector",
-        },
+        "status": "completed",
+        "phase": "complete",
+        "protocol": protocol_payload(args),
         "repair_training": repair_training,
+        "residual_gate": residual_gate,
         "reports": reports,
         "heldout_teacher_forced_audit": {
             "base_endpoint_latent_mse_h8": float(np.mean((base_test[:, -1] - test_data["target_z"][:, -1]) ** 2)),
@@ -729,7 +875,7 @@ def main() -> None:
             "task success; negative results are decomposed by endpoint error and candidate ranking."
         ),
     }
-    (out / "repaired_predictor_mpc.json").write_text(json.dumps(report, indent=2, sort_keys=True))
+    atomic_write_json(out / "repaired_predictor_mpc.json", report)
     lines = [
         "# Repaired-predictor PushT MPC",
         "",

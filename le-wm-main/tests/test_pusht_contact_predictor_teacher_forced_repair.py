@@ -55,3 +55,15 @@ def test_teacher_forced_rollout_rejects_short_action_context():
         assert "at least one future row" in str(error)
     else:
         raise AssertionError("short action context must be rejected")
+
+
+def test_rollout_respects_no_grad_for_numpy_evaluation_path():
+    model = _AdditivePredictor()
+    context = torch.zeros(1, 3, 1, requires_grad=True)
+    actions = torch.zeros(1, 4, 1)
+    with torch.no_grad():
+        prediction = predict_latent_sequence(model, context, actions)
+    assert not prediction.requires_grad
+    # Training callers still receive a differentiable rollout.
+    prediction = predict_latent_sequence(model, context, actions)
+    assert prediction.requires_grad

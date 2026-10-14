@@ -23,8 +23,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+# Keep the documented ``python experiments/<runner>.py`` invocation usable in
+# addition to ``python -m experiments.<runner>``.  Direct script execution
+# puts ``experiments/`` (rather than the repository root) on sys.path.
+if __package__ in (None, ""):
+    _REPO_ROOT = Path(__file__).resolve().parents[1]
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
 
-PROTOCOL_VERSION = "covariance_predictor_memory_input_output.v2"
+from experiments.research_runtime.artifacts import artifact_is_valid, atomic_write_json
+from experiments.research_runtime.fingerprint import (
+    build_run_identity,
+    fingerprint_inputs,
+    fingerprint_file,
+    git_identity,
+)
+from experiments.research_runtime.stage_state import ExecutionStatus, StageStateStore
+
+
+PROTOCOL_VERSION = "covariance_predictor_memory_input_output.v3"
 DEFAULT_SOURCE = Path(
     "results/protocol_corrected_temporal_export_20261012/"
     "jepa_pusht_windows4_metrics_enriched_export.json"
@@ -195,6 +212,7 @@ def build_stages(
         python,
         "experiments/build_six_goal_evidence_matrix.py",
         "--output", _rel(matrix_output, repo),
+        "--evidence-manifest", _rel(output_root / "evidence_manifest.json", repo),
         "--temporal-summary", _rel(legacy_summary, repo),
         "--temporal-action-history-summary", _rel(history_summary, repo),
         "--temporal-fourier-summary", _rel(fourier_summary, repo),
@@ -263,6 +281,32 @@ def build_manifest(
         split_seeds=split_seeds,
         adapter_seeds=adapter_seeds,
     )
+    input_lock = fingerprint_inputs((source,))
+    code = git_identity(repo)
+    config = {
+        "source_export": str(source.resolve()),
+        "split_seeds": list(split_seeds),
+        "adapter_seeds": list(adapter_seeds),
+        "stage_names": [stage.name for stage in stages],
+    }
+    identity = build_run_identity(
+        protocol_version=PROTOCOL_VERSION,
+        config=config,
+        input_lock=input_lock,
+        code=code,
+    )
+    evidence_records = {
+        "geometry": {"path": str((output_root / "geometry" / "gauge_nonnormal_audit.json").resolve()), "provenance": "protocol"},
+        "controlled_alignment": {"path": str((output_root / "controlled_alignment" / "diagnostic.json").resolve()), "provenance": "protocol"},
+        "legacy_memory": {"path": str((output_root / "transfer" / "legacy_memory" / "summary.json").resolve()), "provenance": "protocol"},
+        "action_history_memory": {"path": str((output_root / "transfer" / "action_history_memory" / "summary.json").resolve()), "provenance": "protocol"},
+        "fourier_state_memory": {"path": str((output_root / "transfer" / "fourier_state_memory" / "summary.json").resolve()), "provenance": "protocol"},
+        "adaptive_event_memory": {"path": str((output_root / "transfer" / "adaptive_event_memory" / "summary.json").resolve()), "provenance": "protocol"},
+        "contact_control": {"path": str((output_root / "control" / f"pose_adapter_seed{adapter_seeds[0]}" / "lifted_contact_adapter.json").resolve()), "provenance": "protocol"},
+        "temporal_summary": {"path": str((output_root / "transfer" / "legacy_memory" / "summary.json").resolve()), "provenance": "protocol"},
+        "temporal_action_history": {"path": str((output_root / "transfer" / "action_history_memory" / "summary.json").resolve()), "provenance": "protocol"},
+        "temporal_fourier": {"path": str((output_root / "transfer" / "fourier_state_memory" / "summary.json").resolve()), "provenance": "protocol"},
+    }
     return {
         "artifact": "unified_research_protocol",
         "protocol_version": PROTOCOL_VERSION,
@@ -276,12 +320,28 @@ def build_manifest(
         "source_export": str(source.resolve()),
         "split_seeds": list(split_seeds),
         "adapter_seeds": list(adapter_seeds),
+        "code": code,
+        "input_lock": input_lock,
+        "run_identity": identity,
+        "evidence_manifest": str((output_root / "evidence_manifest.json").resolve()),
+        "evidence_records": evidence_records,
         "stages": [
             {
                 "name": stage.name,
                 "purpose": stage.purpose,
                 "commands": [list(command) for command in stage.commands],
                 "expected": list(stage.expected),
+                "stage_fingerprint": _sha256_bytes(
+                    json.dumps(
+                        {
+                            "name": stage.name,
+                            "purpose": stage.purpose,
+                            "commands": [list(command) for command in stage.commands],
+                            "expected": list(stage.expected),
+                        },
+                        sort_keys=True,
+                    ).encode("utf-8")
+                ),
             }
             for stage in stages
         ],
@@ -298,49 +358,160 @@ def write_manifest(path: Path, manifest: dict[str, Any]) -> str:
     digest = _sha256_bytes(encoded)
     payload = dict(manifest)
     payload["manifest_sha256"] = digest
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    atomic_write_json(path, payload)
     return digest
+
+
+def write_evidence_manifest(manifest: dict[str, Any], path: Path) -> None:
+    """Write declared records with current checksums, never discover history."""
+
+    records = {}
+    for key, record in manifest.get("evidence_records", {}).items():
+        entry = dict(record)
+        entry.update(fingerprint_file(Path(str(entry["path"]))))
+        records[key] = entry
+    atomic_write_json(
+        path,
+        {
+            "artifact": "explicit_evidence_manifest",
+            "protocol_version": manifest["protocol_version"],
+            "protocol_manifest": str(Path(manifest["output_root"]) / "manifest.json"),
+            "records": records,
+            "claim_boundary": (
+                "Only declared records are eligible for this protocol matrix; "
+                "execution completion is not evidence support."
+            ),
+        },
+    )
 
 
 def _run_stage(stage: dict[str, Any], *, repo: Path, output_root: Path) -> dict[str, Any]:
     name = str(stage["name"])
     log_dir = output_root / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+    state = StageStateStore(
+        output_root / "stages" / name / "stage_status.json",
+        stage=name,
+        input_fingerprint=str(stage.get("stage_fingerprint", "unknown")),
+    )
+    state.update(ExecutionStatus.RUNNING)
     commands = stage["commands"]
     command_logs: list[dict[str, Any]] = []
-    for index, command in enumerate(commands):
-        print(f"[{name}] purpose: {stage['purpose']}")
-        print(f"[{name}] command {index + 1}/{len(commands)}: {' '.join(command)}")
-        log_path = log_dir / f"{name}_{index:03d}.log"
-        with log_path.open("w") as handle:
-            completed = subprocess.run(
-                command,
-                cwd=repo,
-                stdout=handle,
-                stderr=subprocess.STDOUT,
-                check=False,
-                env=dict(os.environ),
-            )
-        command_logs.append({
-            "command": command,
-            "returncode": int(completed.returncode),
-            "log": str(log_path),
-        })
-        if completed.returncode != 0:
-            raise RuntimeError(f"stage {name} command {index} failed; see {log_path}")
-    missing = [path for path in stage["expected"] if not (repo / path).exists()]
-    if missing:
-        raise FileNotFoundError(f"stage {name} completed but expected artifacts are missing: {missing}")
-    return {"name": name, "status": "completed", "commands": command_logs, "expected": stage["expected"]}
+    try:
+        for index, command in enumerate(commands):
+            print(f"[{name}] purpose: {stage['purpose']}")
+            print(f"[{name}] command {index + 1}/{len(commands)}: {' '.join(command)}")
+            log_path = log_dir / f"{name}_{index:03d}.log"
+            with log_path.open("w") as handle:
+                completed = subprocess.run(
+                    command,
+                    cwd=repo,
+                    stdout=handle,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                    env=dict(os.environ),
+                )
+            command_logs.append({
+                "command": command,
+                "returncode": int(completed.returncode),
+                "log": str(log_path),
+            })
+            if completed.returncode != 0:
+                raise RuntimeError(f"stage {name} command {index} failed; see {log_path}")
+        invalid = []
+        for relative in stage["expected"]:
+            valid, reason = artifact_is_valid(repo / relative)
+            if not valid:
+                invalid.append({"path": relative, "reason": reason})
+        if invalid:
+            raise FileNotFoundError(f"stage {name} produced invalid artifacts: {invalid}")
+        state.update(ExecutionStatus.COMPLETED, command_count=len(command_logs))
+        return {"name": name, "status": "completed", "commands": command_logs, "expected": stage["expected"]}
+    except KeyboardInterrupt:
+        state.update(ExecutionStatus.INTERRUPTED, error="keyboard_interrupt")
+        raise
+    except Exception as exc:
+        state.update(ExecutionStatus.FAILED, error=str(exc), command_count=len(command_logs))
+        raise
 
 
 def execute(manifest_path: Path, *, repo: Path) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text())
+    frozen = dict(manifest)
+    recorded_digest = frozen.pop("manifest_sha256", None)
+    actual_digest = _sha256_bytes(json.dumps(frozen, indent=2, sort_keys=True).encode("utf-8"))
+    if recorded_digest != actual_digest:
+        raise ValueError(
+            f"manifest fingerprint mismatch: recorded={recorded_digest} actual={actual_digest}"
+        )
+    source = Path(manifest["source_export"])
+    current_input_lock = fingerprint_inputs((source,))
+    if current_input_lock != manifest.get("input_lock"):
+        raise ValueError("declared source input changed after manifest creation; refusing execution")
+    current_code = git_identity(repo)
+    if current_code != manifest.get("code"):
+        raise ValueError("repository code provenance changed after manifest creation; refusing execution")
     output_root = Path(manifest["output_root"])
     stages = manifest["stages"]
     results = []
-    for stage in stages:
-        results.append(_run_stage(stage, repo=repo, output_root=output_root))
+    status_path = output_root / "run_status.json"
+    atomic_write_json(
+        status_path,
+        {
+            "artifact": "unified_research_protocol_status",
+            "protocol_version": manifest["protocol_version"],
+            "execution_status": "running",
+            "evidence_status": "not_evaluated",
+            "manifest_sha256": manifest.get("manifest_sha256"),
+            "completed_stages": [],
+        },
+    )
+    evidence_manifest_path = Path(manifest["evidence_manifest"])
+    write_evidence_manifest(manifest, evidence_manifest_path)
+    try:
+        for stage in stages:
+            if stage["name"] == "claim_matrix":
+                # All preceding outputs must be fingerprinted immediately
+                # before the matrix consumes them.
+                write_evidence_manifest(manifest, evidence_manifest_path)
+            result = _run_stage(stage, repo=repo, output_root=output_root)
+            results.append(result)
+            atomic_write_json(
+                status_path,
+                {
+                    "artifact": "unified_research_protocol_status",
+                    "protocol_version": manifest["protocol_version"],
+                    "execution_status": "running",
+                    "evidence_status": "not_evaluated",
+                    "manifest_sha256": manifest.get("manifest_sha256"),
+                    "completed_stages": [item["name"] for item in results],
+                },
+            )
+    except Exception as exc:
+        atomic_write_json(
+            status_path,
+            {
+                "artifact": "unified_research_protocol_status",
+                "protocol_version": manifest["protocol_version"],
+                "execution_status": "failed",
+                "evidence_status": "not_evaluated",
+                "manifest_sha256": manifest.get("manifest_sha256"),
+                "completed_stages": [item["name"] for item in results],
+                "error": str(exc),
+            },
+        )
+        report = {
+            "artifact": "unified_research_protocol_execution",
+            "protocol_version": manifest["protocol_version"],
+            "manifest": str(manifest_path.resolve()),
+            "manifest_sha256": manifest.get("manifest_sha256"),
+            "status": "failed",
+            "stages": results,
+            "error": str(exc),
+            "claim_boundary": manifest["claim_boundary"],
+        }
+        atomic_write_json(output_root / "execution_report.json", report)
+        raise
     report = {
         "artifact": "unified_research_protocol_execution",
         "protocol_version": manifest["protocol_version"],
@@ -351,7 +522,18 @@ def execute(manifest_path: Path, *, repo: Path) -> dict[str, Any]:
         "claim_boundary": manifest["claim_boundary"],
     }
     report_path = output_root / "execution_report.json"
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    atomic_write_json(report_path, report)
+    atomic_write_json(
+        status_path,
+        {
+            "artifact": "unified_research_protocol_status",
+            "protocol_version": manifest["protocol_version"],
+            "execution_status": "completed",
+            "evidence_status": "not_evaluated",
+            "manifest_sha256": manifest.get("manifest_sha256"),
+            "completed_stages": [item["name"] for item in results],
+        },
+    )
     return report
 
 
@@ -377,6 +559,7 @@ def main() -> None:
     )
     manifest_path = output_root / "manifest.json"
     digest = write_manifest(manifest_path, manifest)
+    write_evidence_manifest(manifest, output_root / "evidence_manifest.json")
     print(json.dumps({"manifest": str(manifest_path), "manifest_sha256": digest}, indent=2))
     if args.run:
         print(json.dumps(execute(manifest_path, repo=repo), indent=2, sort_keys=True))

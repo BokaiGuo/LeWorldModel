@@ -65,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--action-magnitude", type=float, default=0.85)
     parser.add_argument("--batch-size-encode", type=int, default=16)
     parser.add_argument("--seed", type=int, default=8421)
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--device", default="cuda")
     return parser.parse_args()
 
 

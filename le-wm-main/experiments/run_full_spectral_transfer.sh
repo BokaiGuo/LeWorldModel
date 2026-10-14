@@ -5,7 +5,7 @@ ENV_NAME="pusht"
 POLICY="pusht/lewm"
 OUTPUT=""
 PYTHON_BIN="${PYTHON:-}"
-DEVICE=""
+DEVICE="cuda"
 NUM_WORKERS=0
 PROGRESS_EVERY=10
 STAGE1_CHUNK_BATCHES=20
@@ -88,7 +88,7 @@ Options:
   --output DIR                   Run output directory. Default: results/<env>/lewm_full_<timestamp>
   --summary-output PATH          Summary markdown path. Default: <output>/summary.md
   --python PATH                  Python executable. Default: .venv/bin/python if present, else python
-  --device DEVICE                Optional device passed to audit scripts, e.g. cuda or cpu
+  --device DEVICE                Device passed to audit scripts. Default: cuda; CUDA is fail-closed
   --num-workers N                DataLoader workers. Default: 0
   --progress-every N             Progress log interval. Default: 10
   --stage1-chunk-batches N       Phase 1 chunk size in batches. Default: 20
@@ -199,7 +199,14 @@ while [[ $# -gt 0 ]]; do
     --skip-completed) SKIP_COMPLETED=1; shift ;;
     --keep-chunks) KEEP_CHUNKS=1; shift ;;
     --no-keep-chunks) KEEP_CHUNKS=0; shift ;;
-    --no-theory) RUN_THEORY=0; shift ;;
+    --no-theory)
+      RUN_THEORY=0
+      RUN_THEORY_RICH=0
+      RUN_THEORY_DIM_SWEEP=0
+      RUN_THEORY_ROBUSTNESS=0
+      RUN_THEORY_MECHANISM=0
+      shift
+      ;;
     --no-theory-rich) RUN_THEORY_RICH=0; shift ;;
     --no-theory-dim-sweep) RUN_THEORY_DIM_SWEEP=0; shift ;;
     --no-theory-robustness) RUN_THEORY_ROBUSTNESS=0; shift ;;
@@ -238,7 +245,31 @@ if [[ -z "$SUMMARY_OUTPUT" ]]; then
   SUMMARY_OUTPUT="${OUTPUT}/summary.md"
 fi
 
-mkdir -p "$OUTPUT"
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  mkdir -p "$OUTPUT"
+  if [[ "$DEVICE" == cuda* ]]; then
+    "$PYTHON_BIN" experiments/gpu_preflight.py \
+      --device "$DEVICE" \
+      --output "$OUTPUT/gpu_preflight.json"
+  fi
+  CACHE_CONTRACT="$OUTPUT/run_contract.json"
+  if [[ "$SKIP_COMPLETED" -eq 1 && ! -f "$CACHE_CONTRACT" ]]; then
+    printf '[rerun] no input-lock contract found; existing artifacts will not be reused\n'
+    SKIP_COMPLETED=0
+  fi
+  "$PYTHON_BIN" -m experiments.research_runtime.cache_contract \
+    --repo "$PWD" \
+    --output "$CACHE_CONTRACT" \
+    --protocol-version "full_spectral_transfer.compat.v1" \
+    --env "$ENV_NAME" \
+    --policy "$POLICY" \
+    --device "$DEVICE" \
+    --input "$0" \
+    --input "experiments/latent_eigenspace_audit.py" \
+    --input "experiments/planning_alignment_audit.py" \
+    --input "experiments/summarize_spectral_transfer_evidence.py" \
+    --input "config/${ENV_NAME}.yaml"
+fi
 
 COMMON_ARGS=(--env "$ENV_NAME" --policy "$POLICY" --output "$OUTPUT" --num-workers "$NUM_WORKERS" --progress-every "$PROGRESS_EVERY")
 DEVICE_ARGS=()
@@ -296,8 +327,15 @@ run_logged_if_needed() {
   local log_path="$2"
   shift 2
   if [[ "$SKIP_COMPLETED" -eq 1 && -s "$artifact_path" ]]; then
-    printf '[skip] artifact exists: %s\n' "$artifact_path"
-    return
+    # A non-empty file is not sufficient: JSON artifacts must parse.  The
+    # stronger manifest/input-lock contract is used by the unified runner;
+    # this compatibility shell path at least refuses corrupt cache entries.
+    if [[ "$artifact_path" == *.json ]] && ! "$PYTHON_BIN" -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$artifact_path" >/dev/null 2>&1; then
+      printf '[rerun] invalid JSON cache: %s\n' "$artifact_path"
+    else
+      printf '[skip] validated artifact exists: %s\n' "$artifact_path"
+      return
+    fi
   fi
   run_logged "$log_path" "$@"
 }
@@ -397,7 +435,9 @@ fi
 
 if [[ "$RUN_EMPIRICAL_CONDITION" -eq 1 ]]; then
   CONDITION_OUTPUT="$OUTPUT/empirical_condition_sweep"
-  mkdir -p "$CONDITION_OUTPUT"
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    mkdir -p "$CONDITION_OUTPUT"
+  fi
   for condition in "${EMPIRICAL_CONDITION_VALUES[@]}"; do
     run_logged_if_needed "$CONDITION_OUTPUT/${condition}.json" "$OUTPUT/empirical_condition_${condition}.log" \
       "$PYTHON_BIN" experiments/empirical_spectral_audit/run_audit.py \
@@ -509,6 +549,7 @@ if [[ "$RUN_EVIDENCE_SUMMARY" -eq 1 ]]; then
       --theory-dim "$OUTPUT/theory_dim_sweep/cross_dim_summary.json" \
       --theory-robustness "$OUTPUT/theory_robustness_sweep/robustness_summary.json" \
       --empirical-condition "$OUTPUT/empirical_condition_sweep/condition_summary.json" \
+    --planning-alignment "$OUTPUT/planning_alignment.json" \
       --output "$OUTPUT"
   else
     printf '[skip] evidence summary requires theory sweep and empirical condition artifacts under %s\n' "$OUTPUT"

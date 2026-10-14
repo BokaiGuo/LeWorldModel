@@ -100,7 +100,6 @@ def normalized_context_action_sequence(
     return np.asarray([np.tile(row, 5) for row in normalized], dtype=np.float32)
 
 
-@torch.enable_grad()
 def predict_latent_sequence(
     model: torch.nn.Module,
     context: torch.Tensor,
@@ -113,6 +112,12 @@ def predict_latent_sequence(
     prediction in the next context window during training.  Evaluation omits
     this argument and is therefore fully autoregressive, matching
     ``JEPA.rollout``.
+    The function deliberately respects the caller's autograd context.  Training
+    calls it with gradients enabled; evaluation callers use ``torch.no_grad``.
+    Previously this function was decorated with ``torch.enable_grad``, which
+    overrode evaluation's no-grad guard.  The MPC runner then attempted to
+    convert a graph-attached tensor to NumPy and exited after writing only its
+    initial protocol JSON, leaving misleading ``metrics: null`` artifacts.
     """
     if context.ndim != 3 or actions.ndim != 3:
         raise ValueError("context and actions must be 3D tensors")

@@ -151,18 +151,26 @@ def _load_pretrained_compat(policy: str):
 
 
 def load_policy(policy: str, device: str = "cuda"):
-    """Load a LeWM policy from stable_worldmodel or a direct torch checkpoint."""
-    import stable_worldmodel as swm
+    """Load a LeWM policy without poisoning CUDA on legacy checkpoints.
 
-    try:
-        model = swm.wm.utils.load_pretrained(policy)
-    except RuntimeError:
-        model = _load_pretrained_compat(policy)
-    except Exception as err:
-        path = Path(policy)
-        if not path.exists():
-            raise err
+    The installed ``stable_worldmodel`` loader cannot read the legacy ViT key
+    layout used by the checked-in LeWM checkpoint.  Calling it first raises
+    during state-dict loading and, on the current CUDA/cu13 runtime, can leave
+    the CUDA initialization path in a bad state before the compatibility
+    loader is reached.  Resolve and remap the checkpoint directly for named
+    LeWM policies; use the generic loader only for explicit checkpoint paths.
+    """
+    path = Path(policy)
+    if str(device).startswith("cuda"):
+        # Initialize CUDA before importing stable_worldmodel.  Its import path
+        # initializes JAX/registries and can otherwise expose the host's NVML
+        # mismatch as a spurious "No CUDA GPUs" error on the first tensor
+        # allocation.
+        torch.empty(0, device=device)
+    if path.exists():
         model = torch.load(path, map_location="cpu", weights_only=False)
+    else:
+        model = _load_pretrained_compat(policy)
     model = model.to(device).eval()
     model.requires_grad_(False)
     return model

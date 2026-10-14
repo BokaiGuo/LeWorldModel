@@ -1,6 +1,7 @@
 import numpy as np
 
 from experiments.run_pusht_repaired_predictor_mpc import (
+    CalibratedResidualAdapter,
     block_cost,
     make_action_sequence,
     proposal_sequences,
@@ -63,6 +64,18 @@ def test_block_cost_ignores_agent_position_but_keeps_block_pose():
     goal = np.asarray([100.0, 100.0, 220.0, 100.0, 0.0, 0.0, 0.0])
     exact_block = np.asarray([0.0, 0.0, 220.0, 100.0, 0.0, 1.0, 0.0, 0.0])
     assert block_cost(exact_block, goal) == 0.0
+
+
+def test_residual_adapter_preserves_shape_and_can_correct_base_prediction():
+    rng = np.random.default_rng(4)
+    predicted = rng.normal(size=(12, 4, 3)).astype(np.float32)
+    actions = rng.normal(size=(12, 6, 2)).astype(np.float32)
+    targets = predicted + 0.2 * actions[:, 2:6, :1]
+    adapter = CalibratedResidualAdapter.fit(predicted, actions, targets, alpha=1e-6)
+    corrected = adapter.apply(predicted, actions)
+    assert corrected.shape == predicted.shape
+    assert np.isfinite(corrected).all()
+    assert np.mean((corrected - targets) ** 2) < np.mean((predicted - targets) ** 2)
 
 
 def test_two_stage_objective_separates_block_from_agent_return():

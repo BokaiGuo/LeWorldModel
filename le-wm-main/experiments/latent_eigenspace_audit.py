@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 from pathlib import Path
 from typing import Any
@@ -79,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--policy", default=None, help="stable_worldmodel policy name or checkpoint path")
     parser.add_argument("--dataset", default=None, help="override dataset name")
     parser.add_argument("--output", required=True, help="output directory")
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--num-steps", type=int, default=4)
@@ -178,6 +179,25 @@ def _normalized_horizons(horizons: list[int] | tuple[int, ...]) -> list[int]:
     if not values or values[0] < 1:
         raise ValueError("rich horizons must contain positive integers")
     return values
+
+
+def install_interrupt_status(output: Path) -> None:
+    """Record an auditable interruption before terminating a long export."""
+
+    def _handle(signum: int, _frame: Any) -> None:
+        chunk_count = len(list((output / "chunks").glob("chunk_*.npz")))
+        write_run_status(
+            output,
+            "phase1_latent_audit",
+            "interrupted",
+            signal=int(signum),
+            chunks=chunk_count,
+            reason="process_interrupt; resumable_chunks_retained",
+        )
+        raise SystemExit(128 + int(signum))
+
+    signal.signal(signal.SIGINT, _handle)
+    signal.signal(signal.SIGTERM, _handle)
 
 
 @torch.no_grad()
@@ -588,8 +608,15 @@ def save_latent_outputs(arrays: dict[str, np.ndarray], args: argparse.Namespace,
 
 def main() -> None:
     args = parse_args()
+    if str(args.device).startswith("cuda"):
+        # Probe the CUDA runtime before importing the checkpoint/data stack.
+        # The host's NVML/kernel-version mismatch makes lazy initialization
+        # inside a later Module.to call intermittent; a genuine device failure
+        # must remain a hard error rather than silently falling back to CPU.
+        torch.empty(0, device=args.device)
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
+    install_interrupt_status(output)
 
     if args.finalize_chunks_only:
         arrays = load_latent_chunks(output, max_chunks=args.max_finalize_chunks)

@@ -42,6 +42,16 @@ def parse_args() -> argparse.Namespace:
         "--output",
         default="results/spectral_transfer_evidence_20260801",
     )
+    parser.add_argument(
+        "--planning-alignment",
+        default="",
+        help="Optional completed planning-alignment JSON used to distinguish a run blocker from an unrun online eval.",
+    )
+    parser.add_argument(
+        "--online-eval",
+        default="",
+        help="Optional online-evaluation artifact. Omit when the protocol intentionally skipped online eval.",
+    )
     return parser.parse_args()
 
 
@@ -112,6 +122,8 @@ def _build_payload(args: argparse.Namespace) -> dict[str, Any]:
             for warning in record.get("warnings", [])
         }
     )
+    planning_path = Path(args.planning_alignment) if args.planning_alignment else None
+    online_eval_path = Path(args.online_eval) if args.online_eval else None
 
     return {
         "inputs": {
@@ -119,6 +131,8 @@ def _build_payload(args: argparse.Namespace) -> dict[str, Any]:
             "theory_dim": args.theory_dim,
             "theory_robustness": args.theory_robustness,
             "empirical_condition": args.empirical_condition,
+            "planning_alignment": args.planning_alignment,
+            "online_eval": args.online_eval,
         },
         "theory": {
             "dim": mechanism["dim"],
@@ -205,7 +219,8 @@ def _build_payload(args: argparse.Namespace) -> dict[str, Any]:
             "true_empirical_multihorizon": "available" if multi_horizon_horizons else "missing dynamics_h* arrays",
             "observability": "missing physical_* arrays",
             "counterfactual_control": "missing counterfactual_* arrays",
-            "online_eval_and_planning": "PushT HDF5 dataset missing",
+            "planning_alignment": "available" if planning_path and planning_path.is_file() else "not run",
+            "online_eval": "available" if online_eval_path and online_eval_path.is_file() else "not run by protocol",
         },
     }
 
@@ -228,13 +243,16 @@ def _write_markdown(output: Path, payload: dict[str, Any]) -> None:
         if controllability
         else "- Cross-paper coordination: the controllability alignment sweep is not loaded in this summary.",
         (
-            "- This is not yet a complete causal or control result: physical observability, counterfactual transition, planning-alignment, "
-            "and online-evaluation evidence remain open or blocked for the empirical paper."
+            "- This is not yet a complete causal or control result: physical observability and counterfactual transition evidence remain open; "
+            + ("planning-alignment is available in the capped run; " if payload["blocked"]["planning_alignment"] == "available" else "planning-alignment remains open; ")
+            + ("online visual evaluation is available." if payload["blocked"]["online_eval"] == "available" else "online visual evaluation was not run by this protocol.")
             if not multi_horizon_horizons
             else
             "- Rich PushT audits now include empirical multi-horizon readouts for "
             + ", ".join(multi_horizon_horizons)
-            + "; physical observability, counterfactual transition, planning-alignment, and online-evaluation evidence remain open or blocked for the empirical paper."
+            + "; physical observability and counterfactual transition evidence remain open; "
+            + ("planning-alignment is available in the capped run; " if payload["blocked"]["planning_alignment"] == "available" else "planning-alignment remains open; ")
+            + ("online visual evaluation is available." if payload["blocked"]["online_eval"] == "available" else "online visual evaluation was not run by this protocol.")
         ),
         "",
         "## Manuscript Index",
@@ -329,7 +347,11 @@ def _write_markdown(output: Path, payload: dict[str, Any]) -> None:
                 if multi_horizon_horizons
                 else "- Requested horizons 3 and 5 were passed to the audit, but the report correctly limits empirical multi-horizon evidence to h=1 because `dynamics_h*` arrays are absent."
             ),
-            "- Online eval and planning alignment are blocked by the missing `pusht_expert_train.h5` dataset.",
+            (
+                "- Planning-alignment evidence is available from the capped offline run; online visual evaluation is available."
+                if payload["blocked"]["planning_alignment"] == "available"
+                else "- Planning-alignment and online visual evaluation were not run by this protocol."
+            ),
             "",
             "## Schema Gaps",
             "",

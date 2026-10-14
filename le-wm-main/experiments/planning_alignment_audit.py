@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--policy", required=True)
     parser.add_argument("--dataset", default=None)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--num-steps", type=int, default=8)

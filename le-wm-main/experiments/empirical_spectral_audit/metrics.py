@@ -413,27 +413,87 @@ def _cell_audit(
         "lifts": {},
         "fingerprints": {},
     }
+    # Compute each tangent projection once.  The previous implementation
+    # called the Torch-based ``lift_curve`` separately for every k and then
+    # repeated the same work for every control permutation.  On a 50k-row
+    # export this made the audit appear to hang in ``total_energy``.  The
+    # cumulative rank-energy representation is algebraically equivalent and
+    # turns each family into one BLAS projection plus cheap prefix sums.
+    projected_energy: dict[str, np.ndarray] = {}
+    total_energy_by_name: dict[str, float] = {}
     for name, tangent in tangents.items():
-        out["lifts"][name] = lift_curve(eigvecs, tangent, ks)
-        out["fingerprints"][name] = rank_wise_transfer_fingerprint(eigvecs, tangent, bands)
+        tangent_np = _as_2d(tangent)
+        energy = np.square(tangent_np @ eigvecs).mean(axis=0, dtype=np.float64)
+        projected_energy[name] = energy
+        total_energy_by_name[name] = float(energy.sum())
+        cumulative = np.cumsum(energy)
+        d = float(eigvecs.shape[1])
+        out["lifts"][name] = {
+            str(int(k)): float(
+                cumulative[min(int(k), energy.size) - 1]
+                / max((min(int(k), energy.size) / d) * total_energy_by_name[name], EPS)
+            )
+            for k in ks
+            if min(int(k), energy.size) > 0
+        }
+        out["fingerprints"][name] = {
+            f"{lo}:{hi}": float(
+                energy[max(0, int(lo)):min(int(hi), energy.size)].sum()
+                / max(total_energy_by_name[name], EPS)
+            )
+            for lo, hi in bands
+            if int(hi) > int(lo)
+        }
 
     if "dynamics" in tangents:
         random_basis = matched_eigenvalue_random_rotation(latents.shape[1], seed=seed)
         random_tangent = norm_matched_random_tangents(tangents["dynamics"], seed=seed)
         random_rotation_tangent = matched_eigenvalue_random_rotation_like(tangents["dynamics"], seed=seed + 31)
         isotropic = isotropic_gaussian_tangents_like(tangents["dynamics"], seed=seed + 17)
-        out["controls"] = {
-            "random_basis_dynamics_lift": lift_curve(random_basis, tangents["dynamics"], ks),
-            "matched_eigenvalue_random_rotation_dynamics_lift": lift_curve(eigvecs, random_rotation_tangent, ks),
-            "norm_matched_random_dynamics_lift": lift_curve(eigvecs, random_tangent, ks),
-            "diagonal_gaussian_dynamics_lift": lift_curve(eigvecs, to_numpy(gaussian_control_like(tangents["dynamics"], seed=seed)), ks),
-            "isotropic_gaussian_dynamics_lift": lift_curve(eigvecs, isotropic, ks),
+        controls = {
+            "random_basis_dynamics_lift": (random_basis, tangents["dynamics"]),
+            "matched_eigenvalue_random_rotation_dynamics_lift": (eigvecs, random_rotation_tangent),
+            "norm_matched_random_dynamics_lift": (eigvecs, random_tangent),
+            "diagonal_gaussian_dynamics_lift": (eigvecs, to_numpy(gaussian_control_like(tangents["dynamics"], seed=seed))),
+            "isotropic_gaussian_dynamics_lift": (eigvecs, isotropic),
         }
+        out["controls"] = {}
+        for control_name, (basis, control_tangent) in controls.items():
+            basis_np = _as_2d(basis)
+            tangent_np = _as_2d(control_tangent)
+            control_energy = np.square(tangent_np @ basis_np).mean(axis=0, dtype=np.float64)
+            control_cumulative = np.cumsum(control_energy)
+            control_total = float(control_energy.sum())
+            dimension = float(basis_np.shape[1])
+            out["controls"][control_name] = {
+                str(int(k)): float(
+                    control_cumulative[min(int(k), control_energy.size) - 1]
+                    / max((min(int(k), control_energy.size) / dimension) * control_total, EPS)
+                )
+                for k in ks
+                if min(int(k), control_energy.size) > 0
+            }
 
     if {"dynamics", "predicted_dynamics"}.issubset(tangents):
-        out["prediction_spectral_error"] = prediction_spectral_error(
-            eigvecs, tangents["dynamics"], tangents["predicted_dynamics"], bands
-        )
+        true = _as_2d(tangents["dynamics"])
+        pred = _as_2d(tangents["predicted_dynamics"])
+        residual = pred - true
+        true_energy = np.square(true @ eigvecs).mean(axis=0, dtype=np.float64)
+        pred_energy = np.square(pred @ eigvecs).mean(axis=0, dtype=np.float64)
+        residual_energy = np.square(residual @ eigvecs).mean(axis=0, dtype=np.float64)
+        def _profile(energy: np.ndarray) -> dict[str, float]:
+            total = max(float(energy.sum()), EPS)
+            return {f"{lo}:{hi}": float(energy[int(lo):int(hi)].sum() / total) for lo, hi in bands}
+        true_profile = _profile(true_energy)
+        pred_profile = _profile(pred_energy)
+        out["prediction_spectral_error"] = {
+            "mse": float(np.square(residual).mean()),
+            "mean_cosine": tangent_cosine(true, pred),
+            "profile_l1": float(sum(abs(true_profile[key] - pred_profile.get(key, 0.0)) for key in true_profile)),
+            "true_fingerprint": true_profile,
+            "predicted_fingerprint": pred_profile,
+            "residual_fingerprint": _profile(residual_energy),
+        }
 
     if planning_direction is not None:
         out["ppte_latent"] = projected_covariance_lift(latents, planning_direction)
@@ -444,10 +504,26 @@ def _cell_audit(
         }
 
     if {"planning", "nuisance"}.issubset(tangents):
-        out["nuisance_contamination"] = {
-            str(k): nuisance_contamination_ratio(eigvecs, tangents["planning"], tangents["nuisance"], int(k))
-            for k in ks
-        }
+        plan_energy = projected_energy["planning"]
+        nuis_energy = projected_energy["nuisance"]
+        plan_total = max(total_energy_by_name["planning"], EPS)
+        nuis_total = max(total_energy_by_name["nuisance"], EPS)
+        plan_cum = np.cumsum(plan_energy)
+        nuis_cum = np.cumsum(nuis_energy)
+        out["nuisance_contamination"] = {}
+        for k in ks:
+            kk = min(int(k), eigvecs.shape[1])
+            plan_share = float(plan_cum[kk - 1] / plan_total)
+            nuis_share = float(nuis_cum[kk - 1] / nuis_total)
+            out["nuisance_contamination"][str(int(k))] = {
+                "k": kk,
+                "planning_share": plan_share,
+                "nuisance_share": nuis_share,
+                "nuisance_over_planning": float(nuis_share / max(plan_share, EPS)),
+                "planning_purity": float(plan_share / max(nuis_share, EPS)),
+                "planning_lift": float(plan_share / max(kk / eigvecs.shape[1], EPS)),
+                "nuisance_lift": float(nuis_share / max(kk / eigvecs.shape[1], EPS)),
+            }
     return out
 
 

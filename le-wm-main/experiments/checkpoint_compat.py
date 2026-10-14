@@ -64,6 +64,11 @@ def remap_legacy_vit_keys(state_dict: dict[str, torch.Tensor]) -> tuple[dict[str
 def load_compatible_pretrained(
     name: str, *, cache_dir: str | None = None, device: str | torch.device = "cpu"
 ) -> torch.nn.Module:
+    if torch.device(device).type == "cuda":
+        # Do not let a broken NVML probe silently turn a learned-model run into
+        # a CPU run.  A real allocation is the contract required by the
+        # experiment, and fails closed on hosts with driver/device mismatch.
+        torch.empty(0, device=device)
     weights_path, config_path = _resolve_local(name, cache_dir=cache_dir)
     config = json.loads(config_path.read_text())
     model = instantiate(config)
