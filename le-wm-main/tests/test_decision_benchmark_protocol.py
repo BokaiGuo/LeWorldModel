@@ -3,6 +3,7 @@ import numpy as np
 from experiments.decision_benchmark.generate_candidate_bank import (
     _bank_hash,
     _candidate_sequences,
+    _to_goal_frame,
     _split_for_index,
 )
 
@@ -26,3 +27,18 @@ def test_candidate_bank_changes_sequences_not_duration_and_split_is_root_level()
     assert [_split_for_index(i, "distance_balanced_v1") for i in range(5)] == [
         "outcome", "train", "train", "calibration", "train"
     ]
+
+
+def test_canonical_action_bank_is_shared_in_goal_relative_coordinates():
+    goal = np.asarray([1.2, 1.2])
+    first_source = np.asarray([0.4, 2.0])
+    second_source = np.asarray([1.0, 1.0])
+    first = _candidate_sequences(first_source, goal, 16, 20, 7000, canonical_action_frame=True)
+    second = _candidate_sequences(second_source, goal, 16, 20, 7000, canonical_action_frame=True)
+    assert np.allclose(_to_goal_frame(first, first_source, goal), _to_goal_frame(second, second_source, goal))
+    assert np.array_equal(
+        _bank_hash(np.round(_to_goal_frame(first, first_source, goal), 8)),
+        _bank_hash(np.round(_to_goal_frame(second, second_source, goal), 8)),
+    )
+    assert float(np.max(np.abs(first))) <= 1.0 + 1.0e-12
+    assert float(np.max(np.abs(second))) <= 1.0 + 1.0e-12

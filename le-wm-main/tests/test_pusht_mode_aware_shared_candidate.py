@@ -17,11 +17,19 @@ from experiments.run_pusht_mode_aware_shared_candidate import (
     current_mode,
     planning_pose_cost,
     predicted_state,
+    protocol_contact_loss,
+    largest_action_for_moment_sign,
     smallest_action_for_moment_sign,
     successor_mode,
     transition_target,
     update_mode_sign_consensus,
     update_observed_sign_calibration,
+    choose_identification_probe,
+    staged_predictor_for_state,
+    orientation_action_score,
+    macro_ranker_features,
+    xy_shield_mask,
+    macro_phase_name,
 )
 
 
@@ -33,6 +41,56 @@ def test_current_mode_thresholds_are_explicit():
     assert current_mode(_state(100.0)) == 0
     assert current_mode(_state(60.0)) == 1
     assert current_mode(_state(30.0)) == 2
+
+
+def test_staged_predictor_switches_only_at_declared_xy_gate():
+    state = _state(30.0)
+    goal = state.copy()
+    goal[2:4] = state[2:4] + np.asarray([28.0, 0.0])
+    assert staged_predictor_for_state(state, goal, 28.0) == "tree"
+    goal[2:4] = state[2:4] + np.asarray([28.01, 0.0])
+    assert staged_predictor_for_state(state, goal, 28.0) == "goal_ranker"
+
+
+def test_orientation_macro_score_prioritizes_angle_after_translation():
+    env = gym.make("swm/PushT-v1", render_mode="rgb_array")
+    try:
+        state = make_boundary_contact_roots(env, 1, 20261026)[0]["state"]
+        goal = state.copy()
+        goal[4] = state[4] + 0.4
+        action = np.asarray([0.08, 0.0], dtype=np.float64)
+        low_angle_target = np.asarray([0.25, 0.0, 0.0, 0.0, 0.0, 0.0])
+        high_angle_target = np.asarray([0.02, 0.0, 0.0, 0.0, 0.0, 0.0])
+        probabilities = np.asarray([0.0, 0.0, 1.0, 0.0])
+        low = orientation_action_score(
+            env, state, goal, action, low_angle_target, probabilities, 1.0,
+            boundary_action_frame=True, strict_direction_gate=False,
+        )
+        high = orientation_action_score(
+            env, state, goal, action, high_angle_target, probabilities, 1.0,
+            boundary_action_frame=True, strict_direction_gate=False,
+        )
+        assert low < high
+    finally:
+        env.close()
+
+
+def test_macro_ranker_features_are_finite_and_pair_conditioned():
+    env = gym.make("swm/PushT-v1", render_mode="rgb_array")
+    try:
+        root = make_boundary_contact_roots(env, 1, 20261027)[0]
+        state = np.asarray(root["state"], dtype=np.float64)
+        goal = np.asarray(root["goal"], dtype=np.float64)
+        first = np.asarray([0.08, 0.0], dtype=np.float64)
+        second = np.asarray([0.0, 0.08], dtype=np.float64)
+        features = macro_ranker_features(
+            state, goal, first, state.copy(), second,
+            env=env, boundary_action_frame=True,
+        )
+        assert features.ndim == 1
+        assert np.isfinite(features).all()
+    finally:
+        env.close()
 
 
 def test_successor_modes_distinguish_stall_slide_and_separation():
@@ -75,6 +133,37 @@ def test_smallest_signed_candidate_is_deterministic():
     assert smallest_action_for_moment_sign(state, actions, 0.0) is None
 
 
+def test_largest_signed_candidate_is_explicit_terminal_breakaway_control():
+    state = _state(30.0)
+    actions = np.asarray([[0.1, 0.0], [0.0, 0.05], [0.0, -0.2]], dtype=np.float64)
+    desired = action_moment_sign(state, actions[2])
+    index = largest_action_for_moment_sign(state, actions, desired)
+    assert index == 2
+    assert largest_action_for_moment_sign(state, actions, 0.0) is None
+
+
+def test_active_probe_can_select_largest_declared_moment_without_new_support():
+    state = _state(30.0)
+    actions = np.asarray([[0.05, 0.0], [0.0, 0.10], [0.0, -0.20]], dtype=np.float64)
+    desired = action_moment_sign(state, actions[2])
+    smallest = choose_identification_probe(
+        None, state, actions, desired, allow_outward=True, maximize=False,
+    )
+    largest = choose_identification_probe(
+        None, state, actions, desired, allow_outward=True, maximize=True,
+    )
+    assert smallest is not None and largest is not None
+    assert np.linalg.norm(actions[largest]) >= np.linalg.norm(actions[smallest])
+
+
+def test_contact_loss_uses_declared_geometry_not_center_distance_for_boundary_roots():
+    legal_boundary_trace = [{"contact_distance_after": 101.0, "boundary_distance_after": 15.0}]
+    lost_boundary_trace = [{"contact_distance_after": 101.0, "boundary_distance_after": 71.0}]
+    assert protocol_contact_loss(legal_boundary_trace, "boundary_contact") is False
+    assert protocol_contact_loss(lost_boundary_trace, "boundary_contact") is True
+    assert protocol_contact_loss(legal_boundary_trace, "terminal_pose") is True
+
+
 def test_phase_aware_cost_prioritizes_translation_when_far():
     current = _state(30.0)
     goal = current.copy()
@@ -84,6 +173,25 @@ def test_phase_aware_cost_prioritizes_translation_when_far():
     rotated = current.copy()
     rotated[4] += 0.8
     assert planning_pose_cost(current, imagined, goal, True) < planning_pose_cost(current, rotated, goal, True)
+
+
+def test_xy_shield_keeps_orientation_candidates_inside_translation_tube():
+    state = _state(30.0)
+    goal = state.copy()
+    goal[2:4] = state[2:4] + np.asarray([10.0, 0.0])
+    targets = np.asarray([
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 10.0, 0.0, 0.0, 0.0],
+    ])
+    mask = xy_shield_mask(state, goal, targets, tolerance=2.0)
+    assert mask.tolist() == [True, False]
+
+
+def test_reverse_macro_has_translation_correction_after_orientation():
+    assert macro_phase_name(False, 0) == "translation"
+    assert macro_phase_name(False, 1) == "orientation"
+    assert macro_phase_name(True, 0) == "orientation"
+    assert macro_phase_name(True, 1) == "translation"
 
 
 def test_mode_sign_consensus_accumulates_informative_pulses():
@@ -112,6 +220,40 @@ def test_boundary_contact_protocol_generates_real_polygon_contacts():
         gaps = [float(physical_contact_geometry(env, root["state"])["distance"]) for root in roots]
         assert all(12.0 <= gap <= 18.0 for gap in gaps)
         assert all(current_mode_for_env(env, root["state"]) == 2 for root in roots)
+    finally:
+        env.close()
+
+
+def test_goal_aligned_boundary_roots_have_task_compatible_support():
+    env = gym.make("swm/PushT-v1", render_mode="rgb_array")
+    try:
+        roots = make_boundary_contact_roots(
+            env, 4, 20261024, min_goal_support_alignment=0.35,
+        )
+        for root in roots:
+            geometry = physical_contact_geometry(env, root["state"])
+            outward = np.asarray(geometry["normal_world"], dtype=np.float64)
+            goal_delta = np.asarray(root["goal"][2:4] - root["state"][2:4], dtype=np.float64)
+            alignment = float(np.dot(outward, -goal_delta / max(np.linalg.norm(goal_delta), 1.0e-8)))
+            assert alignment >= 0.35 - 1.0e-6
+    finally:
+        env.close()
+
+
+def test_boundary_root_angle_gate_is_explicit_and_root_disjoint():
+    env = gym.make("swm/PushT-v1", render_mode="rgb_array")
+    try:
+        roots = make_boundary_contact_roots(
+            env, 4, 20261025, min_goal_support_alignment=0.35,
+            max_initial_angle_error=1.55,
+        )
+        errors = [
+            abs(float(np.arctan2(np.sin(root["state"][4] - root["goal"][4]),
+                                 np.cos(root["state"][4] - root["goal"][4]))))
+            for root in roots
+        ]
+        assert len(roots) == 4
+        assert all(error <= 1.55 + 1.0e-8 for error in errors)
     finally:
         env.close()
 
@@ -208,6 +350,7 @@ def test_local_observed_effect_uses_paired_contrast_for_angle_direction():
         # opposite signed intervention while keeping the same local chart
         # coordinates, as a matched +/- pulse would do.
         minus_descriptor["moment_sign"] = -int(plus_descriptor["moment_sign"])
+        minus_descriptor["tangent_component"] = -float(plus_descriptor["tangent_component"])
         cache = {
             "plus": {
                 "mean": [0.10, 1.0, 0.0, 0.0, 0.0, 0.0], "count": 1,
@@ -223,5 +366,67 @@ def test_local_observed_effect_uses_paired_contrast_for_angle_direction():
         assert result["paired"] is True
         assert result["opposite_neighbor_count"] == 1
         np.testing.assert_allclose(result["direction_target"][0], 0.10)
+    finally:
+        env.close()
+
+
+def test_online_reuse_rejects_single_zero_angle_probe_when_paired_support_required():
+    env = gym.make("swm/PushT-v1", render_mode="rgb_array")
+    try:
+        state = make_boundary_contact_roots(env, 1, 20261022)[0]["state"]
+        action = np.asarray([0.1, 0.0], dtype=np.float64)
+        descriptor = online_effect_descriptor(env, state, action)
+        cache = {
+            "stale": {
+                "mean": [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                "count": 1,
+                "informative_count": 0,
+                "mean_angle_abs": 0.0,
+                "descriptor": descriptor,
+            }
+        }
+        assert local_observed_effect(
+            env, state, action, cache,
+            min_informative_count=1,
+            min_effect_angle=0.005,
+            require_paired=True,
+        ) is None
+    finally:
+        env.close()
+
+
+def test_online_reuse_accepts_only_informative_matched_opposite_pulses():
+    env = gym.make("swm/PushT-v1", render_mode="rgb_array")
+    try:
+        state = make_boundary_contact_roots(env, 1, 20261023)[0]["state"]
+        action = np.asarray([0.1, 0.0], dtype=np.float64)
+        descriptor = online_effect_descriptor(env, state, action)
+        opposite = dict(descriptor)
+        opposite["moment_sign"] = -int(descriptor["moment_sign"])
+        cache = {
+            "same": {
+                "mean": [0.10, 1.0, 0.0, 0.0, 0.0, 0.0],
+                "count": 1,
+                "informative_count": 1,
+                "mean_angle_abs": 0.10,
+                "descriptor": descriptor,
+            },
+            "opposite": {
+                "mean": [-0.08, 1.0, 0.0, 0.0, 0.0, 0.0],
+                "count": 1,
+                "informative_count": 1,
+                "mean_angle_abs": 0.08,
+                "descriptor": opposite,
+            },
+        }
+        result = local_observed_effect(
+            env, state, action, cache,
+            min_informative_count=1,
+            min_effect_angle=0.005,
+            require_paired=True,
+        )
+        assert result is not None
+        assert result["paired"] is True
+        assert result["opposite_neighbor_count"] == 1
     finally:
         env.close()

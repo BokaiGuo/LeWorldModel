@@ -288,11 +288,37 @@ GDD-WM。
 | 研究对象 | 当前入口 | 状态 |
 |---|---|---|
 | D0 schema/provenance | `experiments/gdd_wm/build_shared_candidate_dataset.py` | 已实现，只有 schema audit |
-| shared candidate bank | `experiments/decision_benchmark/` | 部分基础设施，尚缺 D-JEPA teacher/realized RGB refs |
-| D1 stability | 待新增 `gdd_wm/audit_preference_stability.py` | not-run |
+| shared candidate bank | `experiments/decision_benchmark/` | 部分基础设施；v5 已有 realized RGB refs，但尚缺独立 D-JEPA teacher |
+| D1 stability | `experiments/gdd_wm/audit_preference_stability.py` | implemented; current bank rejected fail-closed |
 | D2 projection | 待新增 `gdd_wm/train_projection_distillation.py` | not-run |
 | D3 co-training | 待新增 `gdd_wm/train_gdd_student.py` | blocked on D0-D2 |
 | D4 fixed/CEM evaluation | 复用 decision benchmark 与 planning gates | blocked on valid student |
 
 本文件的实现顺序是 D0 -> D1 -> D2 -> D3 -> D4；任何阶段失败都要保存 artifact 和
 失败标签，不能用后续阶段的 test consequence 反向选择 teacher、pair、权重或 checkpoint。
+
+### D0/D1 当前运行结果（2026-10-14）
+
+历史审计 artifact 位于
+`le-wm-main/results/gdd_wm_d0_d1_audit_20261014_v4/`；当前 continuation 位于
+`le-wm-main/results/gdd_wm_d0_d1_audit_20261014_v5/`。v5 通过
+`experiments/gdd_wm/join_rgb_realized_refs.py` 补齐 640/640 条 realized RGB
+references，D0 schema/provenance 检查通过（640 rows、40 candidate sets、
+train/calibration/outcome root split），因此 D1 的 runtime-reference support
+gate 已通过。
+
+D1 进一步发现当前 `teacher_score` 与 `real_task_cost` 精确满足
+`teacher_score = -real_task_cost`。表面上的 execution consistency 为 1.0 是标签泄漏，
+不是 teacher 的独立验证；审计已将
+`teacher_execution_leakage.exact_negative_cost_match=true`，并拒绝所有 D1 eligible
+pairs。此外每个 root 只有一个 `teacher_set_id`，因此 candidate-set preference
+stability 的 flip rate 不可估计。当前 teacher 还是
+`offline_environment_cost_v1`，不是已验证的 D-JEPA teacher。
+
+v5 的 D1 仍然 fail-closed：每个 root 只有一个 candidate-set context，无法估计
+preference stability；同时 teacher 是 `offline_environment_cost_v1`，且
+`teacher_score = -real_task_cost`，execution consistency 属于标签泄漏而非独立
+验证。因而 v5 不是 D-JEPA teacher 证据，D2 projection distillation 仍然 blocked。
+下一份合格 D1 数据必须同时提供：同一
+root/candidate pair 的至少两个独立 candidate-set contexts、独立 frozen teacher score、
+execution-grounded realized observation refs，以及 teacher/execution 互不泄漏的 provenance。

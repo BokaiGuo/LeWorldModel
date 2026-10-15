@@ -153,6 +153,11 @@ def main() -> None:
         bool(getattr(runtime, "previous_action_dynamics", False)),
         bool(getattr(runtime, "explicit_angle_effect", False)),
         bool(getattr(runtime, "explicit_angle_readout", False)),
+        bool(getattr(runtime, "explicit_goal_angle_readout", False)),
+        bool(getattr(runtime, "rich_temporal_dynamics", False)),
+        invariant_angle_readout=bool(getattr(runtime, "invariant_angle_readout", False)),
+        contact_interface_dynamics=bool(getattr(runtime, "contact_interface_dynamics", False)),
+        angle_readout_current_only=bool(getattr(runtime, "angle_readout_current_only", False)),
     ).to(args.device)
     model.load_state_dict(payload["model"])
     model.eval()
@@ -182,6 +187,11 @@ def main() -> None:
             bool(orientation_saved.get("previous_action_dynamics", False)),
             bool(orientation_saved.get("explicit_angle_effect", False)),
             bool(orientation_saved.get("explicit_angle_readout", False)),
+            bool(orientation_saved.get("explicit_goal_angle_readout", False)),
+            bool(orientation_saved.get("rich_temporal_dynamics", False)),
+            invariant_angle_readout=bool(orientation_saved.get("invariant_angle_readout", False)),
+            contact_interface_dynamics=bool(orientation_saved.get("contact_interface_dynamics", False)),
+            angle_readout_current_only=bool(orientation_saved.get("angle_readout_current_only", False)),
         ).to(args.device)
         orientation_model.load_state_dict(orientation_payload["model"])
         orientation_model.eval()

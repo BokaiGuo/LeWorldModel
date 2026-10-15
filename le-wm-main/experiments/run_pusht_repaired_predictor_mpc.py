@@ -710,6 +710,11 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     write_checkpoint(out, args, status="running", phase="initializing")
     torch.manual_seed(args.seed)
+    # The residual gate is computed only after predictor repair and its
+    # calibration slice.  Keep the intermediate checkpoint fail-closed when
+    # an earlier data/model stage raises, instead of masking the original
+    # exception with an UnboundLocalError during checkpoint serialization.
+    residual_gate: dict[str, Any] | None = None
     base_model = load_compatible_pretrained("pusht/lewm", device=args.device)
     repaired_model = load_compatible_pretrained("pusht/lewm", device=args.device)
     transform = image_transform()
@@ -766,7 +771,7 @@ def main() -> None:
             out, args, status="running", phase="predictor_repair_complete",
             repair_training=repair_training,
             heldout_teacher_forced_audit=heldout_audit,
-            residual_gate=residual_gate,
+            residual_gate=None,
         )
         # Each decoder is calibrated on the predictor's own autoregressive
         # distribution; using observed target latents here would leak a better

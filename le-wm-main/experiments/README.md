@@ -128,6 +128,103 @@ artifact therefore has the boundary `schema_audit_only_not_teacher_validation`;
 D1 preference stability, D2 projection distillation, and independent planning
 remain unrun until a real frozen teacher/data package is supplied.
 
+The current v5 continuation also provides
+`experiments/gdd_wm/join_rgb_realized_refs.py`, which can only copy and join
+dataset-matched realized RGB references after exact path, key, and value
+coverage checks. This repaired the runtime-reference support gap in the
+PointMaze bank, but D1 remains fail-closed because the available teacher is an
+offline cost oracle with `teacher_score = -real_task_cost` and each root has
+only one candidate-set context. It does not authorize D2.
+
+The non-leaking control
+`experiments/gdd_wm/audit_nonleaking_teacher_control.py` fits a fixed
+train-root-only predicted-latent task readout and evaluates held-out ranking.
+Its result is diagnostic only: the current PointMaze bank reaches about
+`0.51` outcome pairwise consistency and does not establish D-JEPA preference
+stability or planning transfer.
+
+The fixed feature-family panel
+`experiments/gdd_wm/audit_feature_family_panel.py` compares source, predicted
+terminal, predicted delta, action-summary, and combined features with one
+train-only ridge protocol. It does not select the best family from held-out
+results. The current five-bank audit has no family that is stable across both
+calibration and outcome, so concatenation is not promoted as the repair.
+
+The follow-up
+`experiments/gdd_wm/audit_relative_action_effect_panel.py` evaluates a
+root-centered action-effect estimand over the same five banks. It includes
+full interaction, train-only PCA low-rank controls, and pairwise ridge
+controls, and writes paired root-bootstrap CIs to
+`results/gdd_wm_relative_action_effect_panel_20261014/panel.json`. The full
+interaction's lower train error is not matched by stable held-out transfer;
+neither low-rank compression nor direct pairwise ranking produces a positive
+interval across banks. Treat this as an action-support/identifiability
+diagnostic, not as D-JEPA, causal-dynamics, adapter, or planning evidence.
+
+The current PointMaze negative result also exposed a bank-coordinate bug:
+`shared_candidate_bank` metadata did not imply identical raw action sequences
+across roots. Use the optional generator flag
+`--canonical-action-bank` to sample once in a goal-relative coordinate frame
+and rotate into each root; the metadata records the frame and the bank hash is
+computed after canonicalization. The post-hoc goal-frame readout is positive
+on three of five outcome banks, while two history-conditioned banks remain
+inconclusive. This is a protocol repair using source state/goal fields, not
+evidence for RGB planning or D-JEPA distillation.
+
+The fresh CUDA replication is stored under
+`results/decision_benchmark_candidate_bank_20261014/*canonical_goalframe_v1/`.
+Both frozen checkpoints pass the corrected shared-bank audit. With
+`source+delta` as the fixed baseline, goal-frame action features improve
+held-out offline outcome consistency and regret in both checkpoints, with
+paired root-bootstrap intervals above zero. This is the first clean positive
+repair of the raw-action bank confound, but it remains an action-effect
+diagnostic: the teacher/D1 gate, realized RGB successor support, and online
+planning evidence are still closed.
+
+The cross-seed/architecture aggregate is written by
+`experiments/gdd_wm/aggregate_relative_action_effect_panel.py`. On the four
+fresh cases (two MLP variants x seeds `8411,8412`), the case-macro goal-frame
+consistency gain is `+0.2784` (two-level case/root CI `[+0.2110,+0.3442]`) and
+regret reduction is `+0.0739` (CI `[+0.0415,+0.1110]`). The aggregate keeps
+architecture/seed uncertainty separate from root uncertainty and remains
+offline diagnostic evidence only.
+
+The panel was subsequently extended to all five available seeds for both MLP
+variants (10 case units). The goal-frame gain is positive in every case; the
+case-macro consistency gain is `+0.2777` (two-level case/root CI
+`[+0.2356,+0.3212]`) and regret reduction is `+0.0751` (CI
+`[+0.0455,+0.1073]`). The weakest case has positive regret reduction
+`+0.0182`. The five-seed artifact is
+`results/gdd_wm_relative_action_effect_panel_20261014/canonical_2arch_5seed_aggregate.json`;
+this remains offline diagnostic evidence only.
+
+The same 10 cases were verified on independent outcome roots through the
+dataset-matched frozen RGB successor bridge. All three verifier gates passed;
+the aggregate successor error improvement over the source-latent baseline is
+`+14.21%` (two-level case/root CI `[+8.47%,+19.69%]`) and the predicted
+successor is closer on `66.56%` of candidate rows (CI `[59.77%,73.05%]`). The
+aggregator is
+`experiments/gdd_wm/aggregate_rgb_successor_panel.py`, with output at
+`results/decision_benchmark_candidate_bank_20261014/rgb_successor_canonical_2arch_5seed_aggregate.json`.
+This is realized RGB successor evidence, not closed-loop online planning.
+
+The feature-family audit also includes a train-only latent-to-source-XY probe
+that estimates the goal-relative action frame at inference time. Relative to
+`source_plus_delta`, `source_delta_estimated_goalframe_action` improves
+outcome consistency by `+0.0985` (two-level case/root CI
+`[+0.0534,+0.1449]`) and reduces candidate regret by `+0.0546` (CI
+`[+0.0176,+0.0888]`). It is positive on 9/10 cases; standardized seed 8413
+remains negative. The aggregate is written by
+`experiments/gdd_wm/aggregate_feature_family_panel.py`. This is a partial
+representation repair, not universal transfer or closed-loop planning.
+
+The failure-case control
+`experiments/gdd_wm/audit_rgb_calibrated_candidate_selection.py` fits a
+successor calibration only on train-root realized RGB references before task
+readout. On standardized seed 8413, train successor RMSE improved to `0.1628`,
+but outcome `source_plus_delta` regret worsened from `0.0872` to `0.1503`.
+Generic RGB successor calibration therefore does not repair decision geometry.
+
 The first PointMaze P0/P1 implementation is under
 `experiments/decision_benchmark/`. It repairs the train-only affine task
 readout, audits action identifiability, generates equal-duration candidate

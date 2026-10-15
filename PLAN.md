@@ -27,6 +27,9 @@ evidence manifest 契约，再接入新的研究模块。
 文献整合后的 predictive/action/decision sufficiency 三层协议、实验字段和硬否决规则见
 [docs/DECISION_SUFFICIENCY_RESEARCH_PLAN_20261014.md](docs/DECISION_SUFFICIENCY_RESEARCH_PLAN_20261014.md)。
 
+ATM → HTSC → GDD-WM 的统一论文主线、阶段门和当前 P0/P1 证据状态见
+[docs/UNIFIED_DECISION_TRANSFER_PAPER_PLAN_20261014.md](docs/UNIFIED_DECISION_TRANSFER_PAPER_PLAN_20261014.md)。
+
 本轮实际执行状态、GPU 阻塞边界、代码修复和可恢复运行目录见
 [docs/EXECUTION_REPORT_20261014.md](docs/EXECUTION_REPORT_20261014.md)。
 
@@ -54,8 +57,9 @@ execution-grounded preference
 机器可读协议见
 [`docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml`](docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml)。
 当前状态固定为 `Proposed / Not Yet Validated`：仓库没有可直接声明为 D-JEPA
-teacher 的 checkpoint/data package，D0 shared candidate dataset、D1 teacher
-stability audit 和 D2 projection-only distillation 尚未运行。现有 PointMaze JEPA
+teacher 的 checkpoint/data package。D0 schema audit 已运行，D1 preference
+stability audit 已实现并在当前 bank 上 fail-closed，D2 projection-only distillation
+尚未运行。现有 PointMaze JEPA
 permission-gate 结果只提供候选基础设施；DINO 的 `rejected_fail_closed` 结果不能
 被重新解释为 teacher preference。
 

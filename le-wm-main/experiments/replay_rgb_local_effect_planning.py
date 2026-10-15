@@ -55,6 +55,14 @@ def _rgb_calibrator(state: dict[str, Any] | None) -> LinearRGBPoseCalibrator | N
     """
     if state is None:
         return None
+    # Newer training artifacts may serialize a support-constrained KNN readout
+    # as ``{support, values}`` rather than the affine calibrator's coefficient
+    # triplet.  The replay path has a separate reconstruction for the paired
+    # RGB chart and must not interpret KNN tensors as affine parameters.  Keep
+    # this optional legacy slot fail-closed; an explicit force request below
+    # will report that the requested decoder is unavailable.
+    if "coefficients" not in state:
+        return None
     return LinearRGBPoseCalibrator(
         np.asarray(state["coefficients"], dtype=np.float32),
         np.asarray(state["feature_mean"], dtype=np.float32),
@@ -176,6 +184,15 @@ def parse_args() -> argparse.Namespace:
         help="override whether the artifact's gated RGB current-angle readout is used during replay",
     )
     parser.add_argument(
+        "--current-angle-policy", choices=("model", "rgb_shape", "rgb_shape_gated"),
+        default=None,
+        help=(
+            "override the current-angle interface for an audit replay; model "
+            "uses the root-disjoint learned orientation decoder while the RGB "
+            "paired XY chart remains image-native"
+        ),
+    )
+    parser.add_argument(
         "--disable-rgb-goal-angle", action=argparse.BooleanOptionalAction, default=False,
         help=(
             "disable the serialized RGB goal-angle calibrator during replay; "
@@ -220,6 +237,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--force-rgb-current-calibrator", action=argparse.BooleanOptionalAction, default=False,
         help="audit-only override to replay the stored dynamic RGB current-XY calibrator",
+    )
+    parser.add_argument(
+        "--force-paired-rgb-current-calibrator",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "audit-only override for a serialized paired RGB current/goal chart "
+            "that failed its held-out gate; normal replay fails closed"
+        ),
     )
     parser.add_argument(
         "--contact-action-projection", action=argparse.BooleanOptionalAction, default=None,
@@ -293,6 +319,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--terminal-local-angle-weight", type=float, default=None)
     parser.add_argument("--online-local-min-samples", type=int, default=None)
     parser.add_argument("--online-local-window", type=int, default=None)
+    parser.add_argument("--online-local-contact-only", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--online-local-angle-residual-max", type=float, default=None)
+    parser.add_argument("--online-local-angle-condition-max", type=float, default=None)
     parser.add_argument("--side-recovery-mode", choices=("contact_target", "retreat"), default=None)
     parser.add_argument("--terminal-side-reacquisition", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--online-signed-torque-probe", action=argparse.BooleanOptionalAction, default=None)
@@ -355,6 +384,18 @@ def main() -> None:
     artifact = cli.adapter_artifact.resolve()
     report_path = artifact.parent / "rgb_local_effect_adapter.json"
     report = json.loads(report_path.read_text())
+    if cli.runtime_current_xy_policy == "paired_rgb_calibrated":
+        paired_metrics = report.get("paired_rgb_current_xy_readout", {})
+        if (
+            not bool(paired_metrics.get("selected_for_runtime", False))
+            and not cli.force_paired_rgb_current_calibrator
+        ):
+            raise RuntimeError(
+                "paired_rgb_calibrated replay refused: serialized artifact did not "
+                "pass its held-out paired current/goal XY gate; use a newly trained "
+                "artifact or explicitly pass --force-paired-rgb-current-calibrator "
+                "for an audit-only override"
+            )
     payload = _load_replay_artifact(artifact)
     protocol = dict(report["protocol"])
     args = Namespace(**protocol)
@@ -451,6 +492,12 @@ def main() -> None:
         args.online_local_min_samples = int(cli.online_local_min_samples)
     if cli.online_local_window is not None:
         args.online_local_window = int(cli.online_local_window)
+    if cli.online_local_contact_only is not None:
+        args.online_local_contact_only = bool(cli.online_local_contact_only)
+    if cli.online_local_angle_residual_max is not None:
+        args.online_local_angle_residual_max = float(cli.online_local_angle_residual_max)
+    if cli.online_local_angle_condition_max is not None:
+        args.online_local_angle_condition_max = float(cli.online_local_angle_condition_max)
     if cli.side_recovery_mode is not None:
         args.side_recovery_mode = str(cli.side_recovery_mode)
     if cli.terminal_side_reacquisition is not None:
@@ -501,6 +548,8 @@ def main() -> None:
         args.rgb_temporal_angle_min_confidence = float(cli.rgb_temporal_angle_min_confidence)
     if cli.use_rgb_current_angle_runtime is not None:
         args._use_rgb_current_angle_runtime = bool(cli.use_rgb_current_angle_runtime)
+    if cli.current_angle_policy is not None:
+        args.current_angle_policy = str(cli.current_angle_policy)
     args._runtime_last_block_xy = None
     args._force_geometry_translation = False
     args._signed_torque_probe_state = {}
@@ -720,6 +769,15 @@ def main() -> None:
             ),
             "online_local_window": int(
                 getattr(args, "online_local_window", 4)
+            ),
+            "online_local_contact_only": bool(
+                getattr(args, "online_local_contact_only", True)
+            ),
+            "online_local_angle_residual_max": float(
+                getattr(args, "online_local_angle_residual_max", 0.25)
+            ),
+            "online_local_angle_condition_max": float(
+                getattr(args, "online_local_angle_condition_max", 100.0)
             ),
             "approach_action_max_magnitude": float(
                 getattr(args, "approach_action_max_magnitude", -1.0)

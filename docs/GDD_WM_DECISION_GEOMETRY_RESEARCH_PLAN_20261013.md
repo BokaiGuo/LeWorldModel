@@ -312,7 +312,8 @@ non-universality；它只能为这些边界提供新的偏好层诊断。
   外部提供的 candidate table，不生成 teacher、action outcome 或 latent 引用；
 - D0 validator 的 schema smoke tests 已加入
   `le-wm-main/tests/test_gdd_wm_d0_candidate_dataset.py`；
-- D-JEPA/GDD-WM 的 D0–D2 结果尚未运行；
+- D0 schema 已运行；D1 stability audit 已实现并在当前 bank 上 fail-closed；D2
+  projection distillation 尚未运行；
 - 当前仓库没有可直接声明为 D-JEPA teacher 的已验证 checkpoint/data package；
 - 现有 PointMaze JEPA positive gate 只是候选基础设施，不是 GDD-WM 结果；
 - 任何论文表述必须使用 `Proposed / Not Yet Validated`。

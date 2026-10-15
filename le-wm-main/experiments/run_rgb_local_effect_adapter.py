@@ -1015,6 +1015,28 @@ def parse_args() -> argparse.Namespace:
         help="number of most recent same-interface contact effects used by online local identification",
     )
     parser.add_argument(
+        "--online-local-contact-only", action=argparse.BooleanOptionalAction, default=True,
+        help=(
+            "only fit online local effects from consecutive torque/hold frames "
+            "inside the RGB contact tube; non-contact/recovery frames clear the "
+            "history instead of contaminating the local Jacobian"
+        ),
+    )
+    parser.add_argument(
+        "--online-local-angle-residual-max", type=float, default=0.25,
+        help=(
+            "maximum recent-fit angular residual in radians before the local "
+            "angle correction fails closed to the frozen adapter"
+        ),
+    )
+    parser.add_argument(
+        "--online-local-angle-condition-max", type=float, default=100.0,
+        help=(
+            "maximum action-design condition number for enabling local angle "
+            "identification; non-finite or larger values fail closed"
+        ),
+    )
+    parser.add_argument(
         "--online-local-angle-jump", type=float, default=0.75,
         help="fail-closed angular jump threshold for online RGB local-effect measurements",
     )
@@ -1729,6 +1751,11 @@ def load_base(path: Path, device: str) -> tuple[VisualCausalWorldModel, Normaliz
         bool(saved_args.get("previous_action_dynamics", False)),
         bool(saved_args.get("explicit_angle_effect", False)),
         bool(saved_args.get("explicit_angle_readout", False)),
+        bool(saved_args.get("explicit_goal_angle_readout", False)),
+        bool(saved_args.get("rich_temporal_dynamics", False)),
+        invariant_angle_readout=bool(saved_args.get("invariant_angle_readout", False)),
+        contact_interface_dynamics=bool(saved_args.get("contact_interface_dynamics", False)),
+        angle_readout_current_only=bool(saved_args.get("angle_readout_current_only", False)),
     ).to(device)
     load_result = model.load_state_dict(payload["model"], strict=False)
     # Some older otherwise-compatible checkpoints predate the optional
@@ -4942,13 +4969,13 @@ def runtime_observation(
             previous_base_state[4:6] = predict_orientation(
                 orientation_decoder, previous_features, orientation_decoder_training, device,
             )[0]
-        runtime_current_angle = float(np.arctan2(base_state[4], base_state[5]))
-        runtime_previous_angle = float(np.arctan2(previous_base_state[4], previous_base_state[5]))
-        runtime_goal_angle = float(np.arctan2(goal_pose[2], goal_pose[3]))
+        # The paired XY transport is validated with the image-native directed
+        # shape angles.  Do not substitute the learned absolute-angle readout
+        # here: contact occlusion can make that readout wrong by nearly pi,
+        # which rotates the centroid correction into a large XY error while
+        # leaving the paired validation gate unchanged.
         paired_current = paired_rgb_current_xy_from_images(
             image, goal_image, goal_pose[:2],
-            current_angle_override=runtime_current_angle,
-            target_angle_override=runtime_goal_angle,
         )
         raw_current, _raw_current_angle = rgb_geometry_xy_angle_from_image(image, "block")
         calibrated_current = None
@@ -4990,19 +5017,27 @@ def runtime_observation(
             <= float(current_xy_disagreement_threshold)
         ):
             current_reference = np.asarray(calibrated_current, dtype=np.float32)
-        if (
+        if current_xy_policy == "paired_rgb_calibrated":
+            # The paired chart has its own root-disjoint validation gate.  A
+            # fixed disagreement threshold against the raw centroid is not a
+            # valid second gate: on the asymmetric T, the legitimate rigid
+            # centroid correction can exceed that threshold (the raw chart is
+            # precisely the biased observer that pairing is meant to repair).
+            # Keep the validated paired estimate and rely on the bounded
+            # workspace/innovation guards below for runtime safety.  This also
+            # keeps the current and previous frames in the same paired gauge.
+            if paired_current is None and current_reference is not None:
+                paired_current = np.asarray(current_reference, dtype=np.float32)
+        elif (
             paired_current is not None
             and current_reference is not None
             and float(np.linalg.norm(np.asarray(paired_current) - np.asarray(current_reference)))
             > float(current_xy_disagreement_threshold)
         ):
-            # A directed PCA axis can differ by nearly pi between a current
-            # blue T mask and an isolated green target mask.  Transporting a
-            # large target centroid offset across that false relative angle
-            # creates a catastrophic current-XY jump.  Keep the paired chart
-            # only when it agrees with the simultaneously available raw
-            # centroid; otherwise fail closed to the same RGB chart used by
-            # local-effect finite differences.
+            # Non-paired protocols retain the legacy disagreement gate.  A
+            # directed PCA axis can differ by nearly pi between a current
+            # blue T mask and an isolated green target mask; without the
+            # paired validation contract, a large correction is not trusted.
             paired_current = np.asarray(current_reference, dtype=np.float32)
         elif paired_current is None and current_reference is not None:
             paired_current = np.asarray(current_reference, dtype=np.float32)
@@ -5030,8 +5065,6 @@ def runtime_observation(
                 ).astype(np.float32)
         paired_previous = paired_rgb_current_xy_from_images(
             previous, goal_image, goal_pose[:2],
-            current_angle_override=runtime_previous_angle,
-            target_angle_override=runtime_goal_angle,
         )
         raw_previous, _raw_previous_angle = rgb_geometry_xy_angle_from_image(previous, "block")
         calibrated_previous = None
@@ -5070,7 +5103,14 @@ def runtime_observation(
             <= float(current_xy_disagreement_threshold)
         ):
             previous_reference = np.asarray(calibrated_previous, dtype=np.float32)
-        if (
+        if current_xy_policy == "paired_rgb_calibrated":
+            # Mirror the current-frame rule.  Comparing the paired previous
+            # estimate to the raw centroid would reintroduce a mixed-gauge
+            # finite difference exactly at the moment contact occlusion is
+            # most likely.
+            if paired_previous is None and previous_reference is not None:
+                paired_previous = np.asarray(previous_reference, dtype=np.float32)
+        elif (
             paired_previous is not None
             and previous_reference is not None
             and float(np.linalg.norm(np.asarray(paired_previous) - np.asarray(previous_reference)))
@@ -7559,6 +7599,9 @@ def choose_adapter_action(
     local_calibrated = False
     local_sample_count = 0
     local_angle_prediction: np.ndarray | None = None
+    local_angle_gate_passed = False
+    local_angle_fit_rmse = float("nan")
+    local_angle_design_condition = float("inf")
     if local_history:
         local_sample_count = len(local_history)
         action_history = np.asarray([item[0] for item in local_history], dtype=np.float64)
@@ -7589,11 +7632,20 @@ def choose_adapter_action(
             local_calibrated = blend > 0.0
             angle_blend = float(np.clip(getattr(args, "online_local_angle_weight", 0.0), 0.0, 1.0))
             if angle_blend > 0.0:
-                predicted[:, 5] = (
-                    (1.0 - angle_blend) * predicted[:, 5]
-                    + angle_blend * local_effect[:, 2]
+                local_angle_gate_passed = bool(
+                    np.isfinite(local_angle_design_condition)
+                    and local_angle_design_condition
+                    <= float(getattr(args, "online_local_angle_condition_max", 100.0))
+                    and np.isfinite(local_angle_fit_rmse)
+                    and local_angle_fit_rmse
+                    <= float(getattr(args, "online_local_angle_residual_max", 0.25))
                 )
-                local_calibrated = True
+                if local_angle_gate_passed:
+                    predicted[:, 5] = (
+                        (1.0 - angle_blend) * predicted[:, 5]
+                        + angle_blend * local_effect[:, 2]
+                    )
+                    local_calibrated = True
             local_angle_prediction = np.asarray(local_effect[:, 2], dtype=np.float32)
     if not predicted_effect_in_world:
         predicted = contact_effect_to_world(predicted, agent, block)
@@ -8887,6 +8939,9 @@ def choose_adapter_action(
         "terminal_torque_prior_used": float(terminal_torque_prior_used),
         "terminal_local_angle_used": float(terminal_local_angle_used),
         "terminal_local_angle_weight": float(terminal_local_angle_weight),
+        "local_angle_gate_passed": float(local_angle_gate_passed),
+        "local_angle_fit_rmse": float(local_angle_fit_rmse),
+        "local_angle_design_condition": float(local_angle_design_condition),
         "zero_action_guard_used": float(zero_action_guard_used),
         "zero_action_guard_after_reacquisition": float(zero_guard_after_reacquisition),
         "learned_progress_guard_used": float(progress_guard_used),
@@ -9392,7 +9447,30 @@ def run_planning(
             else:
                 reacquisition_phase_steps = 0
             image = env.render().copy()
-            if previous_action is not None and previous_phase != "approach":
+            collect_local_history = previous_action is not None and previous_phase != "approach"
+            if bool(getattr(args, "online_local_contact_only", True)):
+                # A local action-effect fit is only meaningful on one contact
+                # manifold. Translation, recovery, and the first frame after
+                # a lost lease mix approach displacement with torque effect
+                # and make the apparent Jacobian non-identifiable.
+                collect_local_history = bool(
+                    collect_local_history
+                    and previous_phase in {"torque", "hold"}
+                    and phase in {"torque", "hold"}
+                )
+                support_agent, _ = rgb_geometry_xy_angle_from_image(image, "agent")
+                support_block, _ = rgb_geometry_xy_angle_from_image(image, "block")
+                if support_agent is None or support_block is None:
+                    collect_local_history = False
+                else:
+                    support_distance = float(np.linalg.norm(support_block - support_agent))
+                    support_limit = float(args.contact_distance) + 0.5 * float(args.contact_tolerance)
+                    collect_local_history = bool(
+                        collect_local_history and support_distance <= support_limit
+                    )
+                if not collect_local_history:
+                    local_history.clear()
+            if collect_local_history:
                 measured_effect = observed_local_effect(
                     model, normalizer, image, previous, args.image_size, args.device,
                     orientation_decoder, orientation_decoder_training,
@@ -12718,7 +12796,10 @@ def main() -> None:
                 else "legacy_single_block_decoder_or_declared_fallback"
             ),
             "goal_observation": args.goal_observation,
-            "online_local_identification": "RGB block centroid/orientation finite differences; fixed ridge blend after minimum non-collinear history",
+            "online_local_identification": (
+                "support-conditioned RGB block centroid/orientation finite differences; "
+                "consecutive torque/hold-only ridge with residual/condition fail-closed gate"
+            ),
             "effect_frame": args.effect_frame,
             "offline_label_role": "matched simulator zero/action interventions only",
             "physical_steps_per_action": int(args.action_repeat),

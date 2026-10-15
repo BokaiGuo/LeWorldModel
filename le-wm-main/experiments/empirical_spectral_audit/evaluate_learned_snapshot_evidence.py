@@ -62,6 +62,11 @@ def _model_from_payload(payload: dict[str, Any], device: str) -> tuple[VisualCau
         bool(saved.get("previous_action_dynamics", False)),
         bool(saved.get("explicit_angle_effect", False)),
         bool(saved.get("explicit_angle_readout", False)),
+        bool(saved.get("explicit_goal_angle_readout", False)),
+        bool(saved.get("rich_temporal_dynamics", False)),
+        invariant_angle_readout=bool(saved.get("invariant_angle_readout", False)),
+        contact_interface_dynamics=bool(saved.get("contact_interface_dynamics", False)),
+        angle_readout_current_only=bool(saved.get("angle_readout_current_only", False)),
     ).to(device)
     model.load_state_dict(payload["model"])
     model.eval()

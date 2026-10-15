@@ -69,6 +69,9 @@ result is a positive but pre-gate cross-environment point estimate; universal
 alignment prediction, stable pose closure, pure RGB online planning, and a
 universal commutator certificate remain unestablished.
 
+The unified paper spine and its fresh P0/P1 baseline manifest are specified in
+[docs/UNIFIED_DECISION_TRANSFER_PAPER_PLAN_20261014.md](docs/UNIFIED_DECISION_TRANSFER_PAPER_PLAN_20261014.md).
+
 ## Reproduce the lightweight checks
 
 ```bash
@@ -91,7 +94,9 @@ listed in `REPRODUCIBILITY.md`; they are not committed to this repository.
 - `docs/REVIEW_CRITIQUE_AND_EXECUTION_CRITERIA_20261014.md` — canonical strict-review
   criteria, required theory, experiments, and claim boundaries.
 - `docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md` — proposed GDD-WM
-  workstream, gates, and failure boundaries.
+workstream, gates, and failure boundaries. D1 stability auditing is implemented,
+but the current candidate bank is explicitly rejected because it lacks repeated
+candidate-set contexts, realized successor references, and an independent teacher.
 - `docs/GDD_WM_PROTOCOL_TEMPLATE_V0_1.yaml` — proposed D0–D2 protocol schema.
 - `docs/RESEARCH_PROGRESS_20261014.md` — latest evidence-bounded progress and
   claim status.

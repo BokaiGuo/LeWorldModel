@@ -26,6 +26,7 @@ try:
         checkpoint_utility_mode,
     )
     from .run_causal_visual_pusht_world_model import (
+        MaskMomentGeometryEncoder,
         Normalization,
         PUSHT_RENDER_SIZE,
         task_space_action_cost,
@@ -41,6 +42,7 @@ except ImportError:
         checkpoint_utility_mode,
     )
     from run_causal_visual_pusht_world_model import (  # type: ignore
+        MaskMomentGeometryEncoder,
         Normalization,
         PUSHT_RENDER_SIZE,
         task_space_action_cost,
@@ -69,11 +71,23 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--terminal-xy", type=float, default=35.0)
     p.add_argument("--learned-torque", action="store_true",
                    help="rank a fixed RGB-derived contact-frame torque fan with the learned successor")
+    p.add_argument("--analytic-pose-calibration", default=None,
+                   help="calibration-only frozen RGB moment readout (.pt); overrides learned angle readout")
+    p.add_argument("--analytic-goal-pose-calibration", default=None,
+                   help="separate calibration-only RGB moment readout for goal renders")
     p.add_argument("--device", default="cpu")
     return p.parse_args()
 
 
-def load(path: Path, device: str):
+class RGBMomentObserver(torch.nn.Module):
+    """Minimal frozen RGB observer used when only geometry is evaluated."""
+
+    def __init__(self, latent_dim: int):
+        super().__init__()
+        self.encoder = MaskMomentGeometryEncoder(latent_dim)
+
+
+def load(path: Path, device: str, analytic_only: bool = False):
     payload = torch.load(path, map_location=device, weights_only=False)
     args = payload["args"]
     model = VisualCausalWorldModel(
@@ -91,17 +105,74 @@ def load(path: Path, device: str):
         bool(args.get("previous_action_dynamics", False)),
         bool(args.get("explicit_angle_effect", False)),
         bool(args.get("explicit_angle_readout", False)),
+        bool(args.get("explicit_goal_angle_readout", False)),
+        bool(args.get("rich_temporal_dynamics", False)),
+        invariant_angle_readout=bool(args.get("invariant_angle_readout", False)),
+        contact_interface_dynamics=bool(args.get("contact_interface_dynamics", False)),
+        angle_readout_current_only=bool(args.get("angle_readout_current_only", False)),
     ).to(device)
-    model.load_state_dict(payload["model"])
+    try:
+        model.load_state_dict(payload["model"])
+    except RuntimeError:
+        if not analytic_only:
+            raise
+        # The analytic-pose experiment does not use checkpoint dynamics or
+        # learned angle heads.  Older checkpoints can therefore be used as a
+        # deterministic RGB geometry provider even if later dynamics flags
+        # changed the adapter input width.
+        model = RGBMomentObserver(int(args["latent_dim"])).to(device)
     model.eval()
     normalizer = Normalization(**payload["normalization"])
     mean, std = normalizer.tensors(device)
-    model.set_state_normalization(mean, std)
+    if hasattr(model, "set_state_normalization"):
+        model.set_state_normalization(mean, std)
     return model, normalizer
 
 
 def wrap(angle: float) -> float:
     return float((angle + math.pi) % (2.0 * math.pi) - math.pi)
+
+
+def load_analytic_pose_calibration(path: Path, device: str) -> dict[str, torch.Tensor]:
+    payload = torch.load(path, map_location=device, weights_only=False)
+    required = ("feature_mean", "feature_scale", "weight")
+    if any(key not in payload for key in required):
+        raise ValueError(f"analytic pose artifact is missing one of {required}: {path}")
+    return {key: payload[key].to(device) for key in required}
+
+
+@torch.inference_mode()
+def analytic_pose_angle(
+    image: np.ndarray, calibration: dict[str, torch.Tensor], image_size: int, device: str,
+) -> float:
+    """Decode directed T angle from RGB mask moments only."""
+    tensor = tensor_images(resize_image(image, image_size)[None], device)
+    _agent, block, _target = MaskMomentGeometryEncoder._masks(tensor)
+    raw = MaskMomentGeometryEncoder._moments(block)
+    _, _, height, width = block.shape
+    mass = block.sum(dim=(1, 2, 3))
+    mu20, mu11, mu02 = raw[:, 3], raw[:, 4], raw[:, 5]
+    mu30, mu21, mu12, mu03 = raw[:, 6], raw[:, 7], raw[:, 8], raw[:, 9]
+    covariance_angle = 0.5 * torch.atan2(2.0 * mu11, mu20 - mu02)
+    axis_x, axis_y = torch.cos(covariance_angle), torch.sin(covariance_angle)
+    projected_third = (
+        mu30 * axis_x.pow(3)
+        + 3.0 * mu21 * axis_x.pow(2) * axis_y
+        + 3.0 * mu12 * axis_x * axis_y.pow(2)
+        + mu03 * axis_y.pow(3)
+    )
+    anisotropy = torch.sqrt((mu20 - mu02).square() + (2.0 * mu11).square()) / (mu20 + mu02).clamp_min(1.0e-8)
+    base = torch.cat([
+        mass[:, None], raw[:, 3:10], anisotropy[:, None], projected_third[:, None],
+    ], dim=1)
+    z = (base - calibration["feature_mean"]) / calibration["feature_scale"]
+    pieces = [torch.ones((len(z), 1), dtype=z.dtype, device=device), z]
+    for i in range(z.shape[1]):
+        for j in range(i, z.shape[1]):
+            pieces.append(z[:, i:i + 1] * z[:, j:j + 1])
+    design = torch.cat(pieces, dim=1)
+    projected = design @ calibration["weight"]
+    return float(torch.atan2(projected[0, 1], projected[0, 0]).item())
 
 
 @torch.inference_mode()
@@ -113,36 +184,66 @@ def geometry_and_orientation(
     goal_image: np.ndarray,
     image_size: int,
     device: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    analytic_calibration: dict[str, torch.Tensor] | None = None,
+    analytic_goal_calibration: dict[str, torch.Tensor] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     current = tensor_images(resize_image(image, image_size)[None], device)
     previous_t = tensor_images(resize_image(previous, image_size)[None], device)
     goal = tensor_images(resize_image(goal_image, image_size)[None], device)
     current_features = model.encoder.features(current)
     goal_features = model.encoder.features(goal)
     mean, std = normalizer.tensors(device)
-    current_state = model.encode_state(current, previous_t)
-    goal_pose = model.encode_goal_pose(goal)
-    current_raw = raw_from_normalized(current_state, mean, std)[0].cpu().numpy()
-    goal_raw = (goal_pose * std[2:6] + mean[2:6])[0].cpu().numpy()
+    current_raw = None
+    goal_raw = None
+    if analytic_calibration is None:
+        current_state = model.encode_state(current, previous_t)
+        goal_pose = model.encode_goal_pose(goal)
+        current_raw = raw_from_normalized(current_state, mean, std)[0].cpu().numpy()
+        goal_raw = (goal_pose * std[2:6] + mean[2:6])[0].cpu().numpy()
     # Feature chart: each RGB object contributes mass, mean-x, mean-y, ...
     # The chart coordinates are in [-1, 1]; use the actual RGB render scale.
     agent = current_features[0, 1:3].cpu().numpy()
     block = current_features[0, 11:13].cpu().numpy()
     goal_block = goal_features[0, 11:13].cpu().numpy()
-    return agent, block, goal_block, np.asarray([current_raw[4:6], goal_raw[2:4]], dtype=np.float32)
+    # The nearest visible block pixel is the runtime contact boundary.  A T's
+    # centroid is not a valid contact point: using it caused torque phase to
+    # trigger while the pusher was still separated from the actual support.
+    interface = model.encoder.contact_interface_features(current)
+    support = block + interface[0, 3:5].cpu().numpy()
+    if analytic_calibration is None:
+        assert current_raw is not None and goal_raw is not None
+        angles = np.asarray([current_raw[4:6], goal_raw[2:4]], dtype=np.float32)
+    else:
+        current_angle = analytic_pose_angle(image, analytic_calibration, image_size, device)
+        goal_angle = analytic_pose_angle(
+            goal_image,
+            analytic_goal_calibration if analytic_goal_calibration is not None else analytic_calibration,
+            image_size,
+            device,
+        )
+        angles = np.asarray([
+            [math.sin(current_angle), math.cos(current_angle)],
+            [math.sin(goal_angle), math.cos(goal_angle)],
+        ], dtype=np.float32)
+    return agent, block, goal_block, angles, support
 
 
 def choose_action(
     agent: np.ndarray,
     block: np.ndarray,
     goal_block: np.ndarray,
+    support: np.ndarray,
     angles: np.ndarray,
     phase: str,
     args: argparse.Namespace,
 ) -> tuple[np.ndarray, str, float, float]:
     direction = goal_block - block
     direction = direction / max(float(np.linalg.norm(direction)), 1e-6)
-    desired_agent = block - (float(args.contact_distance) / PUSHT_RENDER_SIZE) * direction
+    support_from_block = support - block
+    support_normal = support_from_block / max(float(np.linalg.norm(support_from_block)), 1e-6)
+    agent_to_support = support - agent
+    approach_normal = agent_to_support / max(float(np.linalg.norm(agent_to_support)), 1e-6)
+    desired_agent = support - (float(args.contact_distance) / PUSHT_RENDER_SIZE) * approach_normal
     approach = desired_agent - agent
     approach_distance = float(np.linalg.norm(approach) * PUSHT_RENDER_SIZE)
     if phase == "approach" and approach_distance > float(args.contact_tolerance):
@@ -153,15 +254,16 @@ def choose_action(
     current_angle = math.atan2(float(angles[0, 0]), float(angles[0, 1]))
     goal_angle = math.atan2(float(angles[1, 0]), float(angles[1, 1]))
     angle_error = wrap(goal_angle - current_angle)
-    tangent = np.asarray([-direction[1], direction[0]], dtype=np.float32)
+    tangent = np.asarray([-support_normal[1], support_normal[0]], dtype=np.float32)
     correction = desired_agent - agent
     correction_norm = float(np.linalg.norm(correction))
     correction_direction = correction / max(correction_norm, 1e-6)
     if phase == "torque" or abs(angle_error) > float(args.orientation_threshold):
-        push = direction + math.copysign(float(args.torque_gain), angle_error) * tangent
+        inward = -support_normal
+        push = inward + math.copysign(float(args.torque_gain), angle_error) * tangent
         phase = "torque"
     else:
-        push = direction
+        push = -support_normal
         phase = "translate"
     if correction_norm > float(args.contact_tolerance) / PUSHT_RENDER_SIZE:
         push = push + 0.35 * correction_direction
@@ -218,7 +320,20 @@ def main() -> None:
     args = parse_args()
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
-    model, normalizer = load(Path(args.checkpoint).resolve(), args.device)
+    model, normalizer = load(
+        Path(args.checkpoint).resolve(), args.device,
+        analytic_only=args.analytic_pose_calibration is not None,
+    )
+    analytic_calibration = None
+    analytic_goal_calibration = None
+    if args.analytic_pose_calibration is not None:
+        analytic_calibration = load_analytic_pose_calibration(
+            Path(args.analytic_pose_calibration).resolve(), args.device,
+        )
+        if args.analytic_goal_pose_calibration is not None:
+            analytic_goal_calibration = load_analytic_pose_calibration(
+                Path(args.analytic_goal_pose_calibration).resolve(), args.device,
+            )
     env = gym.make("swm/PushT-v1", render_mode="rgb_array", max_episode_steps=args.steps)
     rows = []
     try:
@@ -231,11 +346,12 @@ def main() -> None:
             trace = []
             for step in range(args.steps):
                 image = env.render().copy()
-                agent, block, goal_block, angles = geometry_and_orientation(
+                agent, block, goal_block, angles, support = geometry_and_orientation(
                     model, normalizer, image, previous, goal_image, args.image_size, args.device,
+                    analytic_calibration, analytic_goal_calibration,
                 )
                 action, phase, phase_value, xy_error = choose_action(
-                    agent, block, goal_block, angles, phase, args,
+                    agent, block, goal_block, support, angles, phase, args,
                 )
                 if args.learned_torque and phase == "torque":
                     direction = goal_block - block
@@ -273,6 +389,9 @@ def main() -> None:
             "runtime_state_access": False,
             "runtime_successor_verification": False,
             "controller": "RGB geometry servo with checkpoint orientation readout",
+            "orientation_readout": "calibrated RGB moment ridge" if analytic_calibration is not None else "checkpoint learned readout",
+            "analytic_pose_calibration": str(Path(args.analytic_pose_calibration).resolve()) if args.analytic_pose_calibration else None,
+            "analytic_goal_pose_calibration": str(Path(args.analytic_goal_pose_calibration).resolve()) if args.analytic_goal_pose_calibration else None,
             "args": vars(args),
         },
         "planning": {
