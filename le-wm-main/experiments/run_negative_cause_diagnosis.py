@@ -117,6 +117,11 @@ def load_checkpoint(path: Path, device: str) -> tuple[VisualCausalWorldModel, No
         bool(saved_args.get("previous_action_dynamics", False)),
         bool(saved_args.get("explicit_angle_effect", False)),
         bool(saved_args.get("explicit_angle_readout", False)),
+        bool(saved_args.get("explicit_goal_angle_readout", False)),
+        bool(saved_args.get("rich_temporal_dynamics", False)),
+        invariant_angle_readout=bool(saved_args.get("invariant_angle_readout", False)),
+        contact_interface_dynamics=bool(saved_args.get("contact_interface_dynamics", False)),
+        angle_readout_current_only=bool(saved_args.get("angle_readout_current_only", False)),
     ).to(device)
     model.load_state_dict(payload["model"])
     model.eval()

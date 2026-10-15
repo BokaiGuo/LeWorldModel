@@ -93,8 +93,16 @@ def parse_args() -> argparse.Namespace:
         help="when temporal context is enabled, decode absolute pose from the current frame only",
     )
     parser.add_argument(
+        "--angle-readout-current-only", action="store_true",
+        help="when explicit angle readout is enabled, exclude previous-frame differences from that angle head",
+    )
+    parser.add_argument(
         "--temporal-dynamics", action="store_true",
         help="supply RGB frame-to-frame centroid motion to action dynamics while keeping absolute pose readout current-frame-only",
+    )
+    parser.add_argument(
+        "--rich-temporal-dynamics", action="store_true",
+        help="also supply frame-to-frame block silhouette moment changes to action dynamics",
     )
     parser.add_argument(
         "--previous-action-dynamics", action="store_true",
@@ -108,6 +116,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--explicit-angle-readout", action="store_true",
         help="use a dedicated RGB block-angle readout and unit-circle supervision for current pose estimation",
+    )
+    parser.add_argument(
+        "--invariant-angle-readout", action="store_true",
+        help="feed the current angle head block-only central moments, removing position/agent nuisance coordinates",
+    )
+    parser.add_argument(
+        "--contact-interface-dynamics", action="store_true",
+        help="append an RGB-only pusher-to-block-boundary interface chart to action-effect dynamics",
+    )
+    parser.add_argument(
+        "--contact-angle-readout-weight", type=float, default=1.0,
+        help="extra unit-circle weight for source roots collected on the RGB contact manifold",
+    )
+    parser.add_argument(
+        "--angle-readout-warmup-steps", type=int, default=0,
+        help="pretrain the explicit RGB angle head before joint dynamics training",
+    )
+    parser.add_argument(
+        "--freeze-angle-readout", action="store_true",
+        help="freeze the explicit RGB angle head after its optional warmup",
     )
     parser.add_argument(
         "--explicit-goal-angle-readout", action="store_true",
@@ -224,6 +252,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--utility-loss-weight", type=float, default=1.0)
     parser.add_argument("--rank-loss-weight", type=float, default=1.0)
     parser.add_argument("--successor-rank-loss-weight", type=float, default=0.0)
+    parser.add_argument(
+        "--contact-successor-rank-only", action="store_true",
+        help="apply successor action-ranking loss only to source roots collected on the contact manifold",
+    )
+    parser.add_argument(
+        "--angle-rank-loss-weight", type=float, default=0.0,
+        help="directly rank contact-root actions by the explicit wrapped-angle effect head",
+    )
+    parser.add_argument(
+        "--contact-angle-rank-only", action="store_true",
+        help="restrict the direct angle-ranking loss to source roots collected on the contact manifold",
+    )
     parser.add_argument("--uncertainty-loss-weight", type=float, default=1.0)
     parser.add_argument("--mode-loss-weight", type=float, default=0.5)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -606,6 +646,10 @@ def bootstrap_closed_loop_source_cases(
         bool(saved.get("explicit_angle_effect", False)),
         bool(saved.get("explicit_angle_readout", False)),
         bool(saved.get("explicit_goal_angle_readout", False)),
+        bool(saved.get("rich_temporal_dynamics", False)),
+        bool(saved.get("invariant_angle_readout", False)),
+        bool(saved.get("contact_interface_dynamics", False)),
+        bool(saved.get("angle_readout_current_only", False)),
     ).to(device)
     model.load_state_dict(payload["model"])
     model.eval()
@@ -762,6 +806,10 @@ class VisualCausalWorldModel(nn.Module):
         explicit_angle_effect: bool = False,
         explicit_angle_readout: bool = False,
         explicit_goal_angle_readout: bool = False,
+        rich_temporal_dynamics: bool = False,
+        invariant_angle_readout: bool = False,
+        contact_interface_dynamics: bool = False,
+        angle_readout_current_only: bool = False,
     ):
         super().__init__()
         if utility_mode not in {"scalar", "phase"}:
@@ -778,20 +826,36 @@ class VisualCausalWorldModel(nn.Module):
         self.current_only_readout = bool(current_only_readout)
         self.torque_features = bool(torque_features)
         self.temporal_dynamics = bool(temporal_dynamics)
+        self.rich_temporal_dynamics = bool(rich_temporal_dynamics)
         self.previous_action_dynamics = bool(previous_action_dynamics)
         self.explicit_angle_effect = bool(explicit_angle_effect)
         self.explicit_angle_readout = bool(explicit_angle_readout)
         self.explicit_goal_angle_readout = bool(explicit_goal_angle_readout)
+        self.invariant_angle_readout = bool(invariant_angle_readout)
+        self.contact_interface_dynamics = bool(contact_interface_dynamics)
+        self.contact_interface_dim = MaskMomentGeometryEncoder.interface_feature_dim if self.contact_interface_dynamics else 0
+        self.contact_interface_action_dim = 3 if self.contact_interface_dynamics else 0
+        self.angle_readout_current_only = bool(angle_readout_current_only)
         self._state_mean: torch.Tensor | None = None
         self._state_std: torch.Tensor | None = None
         if self.structured_readout and vision_encoder != "mask_moments":
             raise ValueError("structured_readout requires the mask_moments RGB geometry encoder")
         if self.explicit_angle_readout and not self.uses_mask_moments:
             raise ValueError("explicit_angle_readout requires the mask_moments RGB geometry encoder")
+        if self.invariant_angle_readout and not self.explicit_angle_readout:
+            raise ValueError("invariant_angle_readout requires explicit_angle_readout")
         if self.temporal_context and not self.uses_mask_moments:
             raise ValueError("temporal_context is currently implemented for mask_moments only")
+        if self.contact_interface_dynamics and not self.uses_mask_moments:
+            raise ValueError("contact_interface_dynamics requires the mask_moments RGB encoder")
         if self.temporal_dynamics and not self.temporal_context:
             raise ValueError("temporal_dynamics requires temporal_context")
+        if self.contact_interface_dynamics and not self.temporal_dynamics:
+            raise ValueError("contact_interface_dynamics requires temporal_dynamics")
+        if self.contact_interface_dynamics and not self.contact_frame_dynamics:
+            raise ValueError("contact_interface_dynamics requires contact_frame_dynamics")
+        if self.rich_temporal_dynamics and not self.temporal_dynamics:
+            raise ValueError("rich_temporal_dynamics requires temporal_dynamics")
         if vision_encoder == "mask_moments":
             self.encoder = MaskMomentGeometryEncoder(latent_dim)
         elif vision_encoder == "color_geometry":
@@ -827,8 +891,14 @@ class VisualCausalWorldModel(nn.Module):
         else:
             self.state_head = nn.Sequential(nn.Linear(state_feature_dim, latent_dim), nn.SiLU(), nn.Linear(latent_dim, 6))
         if self.explicit_angle_readout:
+            angle_feature_dim = MaskMomentGeometryEncoder.object_feature_dim if self.invariant_angle_readout else feature_dim
             self.angle_readout_head = nn.Sequential(
-                nn.Linear(2 * feature_dim if self.temporal_context else feature_dim, 128),
+                nn.Linear(
+                    (2 * angle_feature_dim if self.temporal_context and not self.angle_readout_current_only else angle_feature_dim)
+                    if self.invariant_angle_readout else
+                    (2 * feature_dim if self.temporal_context and not self.angle_readout_current_only else feature_dim),
+                    128,
+                ),
                 nn.SiLU(), nn.Linear(128, 2),
             )
         if self.explicit_goal_angle_readout:
@@ -847,13 +917,17 @@ class VisualCausalWorldModel(nn.Module):
             )
         )
         dynamics_core_dim = (16 if self.torque_features else 15) if self.contact_frame_dynamics else 6 + 2
-        dynamics_input_dim = dynamics_core_dim + (4 if self.temporal_dynamics else 0) + (2 if self.previous_action_dynamics else 0)
+        temporal_base_dim = 11 if self.rich_temporal_dynamics else 4
+        temporal_dim = temporal_base_dim + self.contact_interface_dim
+        dynamics_temporal_dim = (4 if self.rich_temporal_dynamics else temporal_base_dim) + self.contact_interface_dim
+        dynamics_input_dim = dynamics_core_dim + (dynamics_temporal_dim if self.temporal_dynamics else 0) + self.contact_interface_action_dim + (2 if self.previous_action_dynamics else 0)
+        angle_dynamics_input_dim = dynamics_core_dim + (temporal_dim if self.temporal_dynamics else 0) + self.contact_interface_action_dim + (2 if self.previous_action_dynamics else 0)
         self.dynamics = nn.Sequential(
             nn.Linear(dynamics_input_dim, 192), nn.SiLU(), nn.Linear(192, 192), nn.SiLU(), nn.Linear(192, 6),
         )
         if self.explicit_angle_effect:
             self.angle_effect_head = nn.Sequential(
-                nn.Linear(dynamics_input_dim, 128), nn.SiLU(),
+                nn.Linear(angle_dynamics_input_dim, 128), nn.SiLU(),
                 nn.Linear(128, 128), nn.SiLU(), nn.Linear(128, 1),
             )
         if adapter_architecture == "mode_uncertain":
@@ -873,7 +947,7 @@ class VisualCausalWorldModel(nn.Module):
                 ) for _ in range(4)
             ])
         self.utility_head = nn.Sequential(
-            nn.Linear(6 + 4 + 2 + (4 if self.temporal_dynamics else 0) + (2 if self.previous_action_dynamics else 0), 128), nn.SiLU(), nn.Linear(128, 128), nn.SiLU(),
+            nn.Linear(6 + 4 + 2 + (temporal_dim if self.temporal_dynamics else 0) + (2 if self.previous_action_dynamics else 0), 128), nn.SiLU(), nn.Linear(128, 128), nn.SiLU(),
             nn.Linear(128, 1 if utility_mode == "scalar" else 2),
         )
 
@@ -893,11 +967,11 @@ class VisualCausalWorldModel(nn.Module):
             # The angle head predicts a unit-circle chart directly from the
             # current RGB geometry.  Convert it into the normalized state
             # chart only at the interface consumed by dynamics.
-            current_features = self.encoder.features(image)
-            if self.temporal_context:
+            current_features = self._angle_readout_features(image)
+            if self.temporal_context and not self.angle_readout_current_only:
                 if previous_image is None:
                     previous_image = image
-                previous_features = self.encoder.features(previous_image)
+                previous_features = self._angle_readout_features(previous_image)
                 angle_features = torch.cat([current_features, current_features - previous_features], dim=-1)
             else:
                 angle_features = current_features
@@ -906,6 +980,16 @@ class VisualCausalWorldModel(nn.Module):
             state = state.clone()
             state[:, 4:6] = normalized_angle
         return state
+
+    def _angle_readout_features(self, image: torch.Tensor) -> torch.Tensor:
+        features = self.encoder.features(image)
+        if self.invariant_angle_readout:
+            # MaskMomentGeometryEncoder concatenates agent, block, and target
+            # ten-dimensional moment charts.  The block chart is translation
+            # invariant in its central moments and avoids letting the angle
+            # head memorize contact position or pusher location.
+            features = features[:, MaskMomentGeometryEncoder.feature_dim // 3: 2 * MaskMomentGeometryEncoder.feature_dim // 3]
+        return features
 
     def set_state_normalization(self, mean: torch.Tensor, std: torch.Tensor) -> None:
         """Attach the raw pose chart used by the contact-frame feature map.
@@ -935,18 +1019,33 @@ class VisualCausalWorldModel(nn.Module):
             previous_image = image
         current = self.encoder.features(image)
         previous = self.encoder.features(previous_image)
-        return (current - previous)[:, (1, 2, 11, 12)]
+        delta = current - previous
+        if self.rich_temporal_dynamics:
+            # Pusher centroid motion plus block silhouette changes.  These
+            # features are causal RGB observations and avoid injecting an
+            # offline angle label into the runtime dynamics interface.
+            context = torch.cat([delta[:, 1:3], delta[:, 11:20]], dim=-1)
+        else:
+            context = delta[:, (1, 2, 11, 12)]
+        if self.contact_interface_dynamics:
+            # This chart is computed from the current RGB masks, not from
+            # simulator state.  It gives the effect head the observed local
+            # boundary/interface geometry that moments alone do not retain.
+            context = torch.cat([context, self.encoder.contact_interface_features(image)], dim=-1)
+        return context
 
     def _dynamics_input(
         self, state: torch.Tensor, action: torch.Tensor, temporal_context: torch.Tensor | None = None,
-        previous_action: torch.Tensor | None = None,
+        previous_action: torch.Tensor | None = None, rich_context: bool = False,
     ) -> torch.Tensor:
         base = torch.cat([state, action], dim=-1)
         if not self.contact_frame_dynamics:
             values = [base]
             if self.temporal_dynamics:
                 if temporal_context is None:
-                    temporal_context = torch.zeros(state.shape[0], 4, dtype=state.dtype, device=state.device)
+                    temporal_context = torch.zeros(state.shape[0], (11 if self.rich_temporal_dynamics else 4) + self.contact_interface_dim, dtype=state.dtype, device=state.device)
+                elif self.rich_temporal_dynamics and not rich_context:
+                    temporal_context = temporal_context[:, :4 + self.contact_interface_dim]
                 values.append(temporal_context)
             if self.previous_action_dynamics:
                 if previous_action is None:
@@ -978,12 +1077,27 @@ class VisualCausalWorldModel(nn.Module):
             values.append(signed_torque)
         if self.temporal_dynamics:
             if temporal_context is None:
-                temporal_context = torch.zeros(state.shape[0], 4, dtype=state.dtype, device=state.device)
+                temporal_context = torch.zeros(state.shape[0], (11 if self.rich_temporal_dynamics else 4) + self.contact_interface_dim, dtype=state.dtype, device=state.device)
+            elif self.rich_temporal_dynamics and not rich_context:
+                temporal_context = temporal_context[:, :4 + self.contact_interface_dim]
             values.append(temporal_context)
         if self.previous_action_dynamics:
             if previous_action is None:
                 previous_action = torch.zeros_like(action)
             values.append(previous_action)
+        if self.contact_interface_dynamics:
+            if temporal_context is None:
+                raise RuntimeError("contact interface dynamics requires an RGB interface context")
+            interface = temporal_context[:, -self.contact_interface_dim:]
+            lever = interface[:, 3:5]
+            lever = F.normalize(lever, dim=-1)
+            tangent = torch.stack([-lever[:, 1], lever[:, 0]], dim=-1)
+            interface_action = torch.stack([
+                (action * lever).sum(dim=-1),
+                (action * tangent).sum(dim=-1),
+                lever[:, 0] * action[:, 1] - lever[:, 1] * action[:, 0],
+            ], dim=-1)
+            values.append(interface_action)
         return torch.cat(values, dim=-1)
 
     def predict_next(
@@ -1009,7 +1123,11 @@ class VisualCausalWorldModel(nn.Module):
                 raise RuntimeError("explicit_angle_effect requires set_state_normalization before prediction")
             raw = state * self._state_std + self._state_mean
             current_angle = torch.atan2(raw[:, 4], raw[:, 5])
-            next_angle = current_angle + self.angle_effect_head(features).squeeze(-1)
+            angle_features = self._dynamics_input(
+                state, action, temporal_context, previous_action,
+                rich_context=self.rich_temporal_dynamics,
+            )
+            next_angle = current_angle + self.angle_effect_head(angle_features).squeeze(-1)
             raw_predicted = predicted * self._state_std + self._state_mean
             raw_predicted = raw_predicted.clone()
             raw_predicted[:, 4] = torch.sin(next_angle)
@@ -1025,7 +1143,10 @@ class VisualCausalWorldModel(nn.Module):
         if not self.explicit_angle_effect:
             return torch.zeros(state.shape[0], device=state.device, dtype=state.dtype)
         return self.angle_effect_head(
-            self._dynamics_input(state, action, temporal_context, previous_action)
+            self._dynamics_input(
+                state, action, temporal_context, previous_action,
+                rich_context=self.rich_temporal_dynamics,
+            )
         ).squeeze(-1)
 
     def predict_distribution(
@@ -1076,7 +1197,7 @@ class VisualCausalWorldModel(nn.Module):
         values = [state, goal_pose, action]
         if self.temporal_dynamics:
             if temporal_context is None:
-                temporal_context = torch.zeros(state.shape[0], 4, dtype=state.dtype, device=state.device)
+                temporal_context = torch.zeros(state.shape[0], (11 if self.rich_temporal_dynamics else 4) + self.contact_interface_dim, dtype=state.dtype, device=state.device)
             values.append(temporal_context)
         if self.previous_action_dynamics:
             if previous_action is None:
@@ -1134,7 +1255,12 @@ class MaskMomentGeometryEncoder(nn.Module):
     generic vision backbone.
     """
 
-    feature_dim = 30
+    object_feature_dim = 10
+    interface_feature_dim = 11
+    # Keep the learned pose chart exactly backward compatible.  The interface
+    # chart is exposed through ``contact_interface_features`` and is only
+    # concatenated into dynamics context when explicitly enabled.
+    feature_dim = 3 * object_feature_dim
 
     def __init__(self, latent_dim: int):
         super().__init__()
@@ -1176,6 +1302,64 @@ class MaskMomentGeometryEncoder(nn.Module):
     def features(self, image: torch.Tensor) -> torch.Tensor:
         return torch.cat([self._moments(mask) for mask in self._masks(image)], dim=-1)
 
+    @staticmethod
+    def _interface_features(agent: torch.Tensor, block: torch.Tensor) -> torch.Tensor:
+        """Return a causal RGB chart for the pusher/block interface.
+
+        Central moments identify the objects but do not retain which boundary
+        part is nearest the pusher.  This chart uses only thresholded RGB
+        masks: relative centroid, nearest block-pixel direction/gap, object
+        mass/radius, and a validity bit.  It is deliberately a geometric
+        interface descriptor, not a simulator contact label.
+        """
+        batch, _, height, width = agent.shape
+        ys = torch.linspace(-1.0, 1.0, height, device=agent.device, dtype=agent.dtype)
+        xs = torch.linspace(-1.0, 1.0, width, device=agent.device, dtype=agent.dtype)
+        yy, xx = torch.meshgrid(ys, xs, indexing="ij")
+        # All other RGB moment charts use [x, y].  The previous implementation
+        # stacked [y, x], silently rotating the support vector before it was
+        # consumed by runtime contact geometry and by contact-interface
+        # dynamics.  Keep the chart convention explicit here.
+        grid = torch.stack((xx, yy), dim=-1).reshape(1, height * width, 2)
+        agent_flat = agent[:, 0].reshape(batch, -1)
+        block_flat = block[:, 0].reshape(batch, -1)
+        agent_mass = agent_flat.sum(dim=-1)
+        block_mass = block_flat.sum(dim=-1)
+        valid = (agent_mass > 0.5) & (block_mass > 0.5)
+        safe_agent_mass = agent_mass.clamp_min(1.0)
+        safe_block_mass = block_mass.clamp_min(1.0)
+        agent_center = (agent_flat.unsqueeze(-1) * grid).sum(dim=1) / safe_agent_mass.unsqueeze(-1)
+        block_center = (block_flat.unsqueeze(-1) * grid).sum(dim=1) / safe_block_mass.unsqueeze(-1)
+        relative = agent_center - block_center
+        distance = torch.linalg.vector_norm(relative, dim=-1, keepdim=True)
+        agent_radius = torch.sqrt(
+            ((agent_flat.unsqueeze(-1) * (grid - agent_center.unsqueeze(1)).square()).sum(dim=(1, 2))
+             / safe_agent_mass).clamp_min(0.0)
+        ).unsqueeze(-1)
+        block_radius = torch.sqrt(
+            ((block_flat.unsqueeze(-1) * (grid - block_center.unsqueeze(1)).square()).sum(dim=(1, 2))
+             / safe_block_mass).clamp_min(0.0)
+        ).unsqueeze(-1)
+        distances = torch.linalg.vector_norm(grid - agent_center.unsqueeze(1), dim=-1)
+        distances = distances.masked_fill(~block_flat.bool(), float("inf"))
+        nearest_index = distances.argmin(dim=-1)
+        nearest = grid.expand(batch, -1, -1).gather(
+            1, nearest_index[:, None, None].expand(-1, 1, 2)
+        ).squeeze(1)
+        nearest_gap = distances.gather(1, nearest_index[:, None]).clamp_max(2.0)
+        contact_vector = nearest - block_center
+        values = torch.cat([
+            relative, distance, contact_vector, nearest_gap,
+            (agent_mass / float(height * width)).unsqueeze(-1),
+            (block_mass / float(height * width)).unsqueeze(-1),
+            agent_radius, block_radius, valid.to(agent.dtype).unsqueeze(-1),
+        ], dim=-1)
+        return torch.nan_to_num(values, nan=0.0, posinf=2.0, neginf=-2.0)
+
+    def contact_interface_features(self, image: torch.Tensor) -> torch.Tensor:
+        agent, block, _target = self._masks(image)
+        return self._interface_features(agent, block)
+
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         return self.project(self.features(image))
 
@@ -1213,6 +1397,9 @@ def model_loss(
     loss_weights: dict[str, float] | None = None,
     raw_mean: torch.Tensor | None = None, raw_std: torch.Tensor | None = None,
     soft_mode_training: bool = False,
+    contact_root: torch.Tensor | None = None,
+    contact_successor_rank_only: bool = False,
+    contact_angle_rank_only: bool = False,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     weights = {
         "readout": 1.0, "transition": 1.0, "effect": 0.5, "goal": 1.0,
@@ -1220,6 +1407,8 @@ def model_loss(
         "orientation_transition": 0.0, "orientation_effect": 0.0,
         "angle_effect": 0.0,
         "angle_readout": 0.0,
+        "contact_angle_readout": 1.0,
+        "angle_rank": 0.0,
         "goal_angle": 0.0,
         "utility": 1.0, "rank": 1.0, "successor_rank": 0.0,
         "uncertainty": 1.0, "mode": 0.5,
@@ -1269,6 +1458,7 @@ def model_loss(
         contact_supported,
     )
     angle_effect = predicted.new_zeros(())
+    angle_rank = predicted.new_zeros(())
     if model.explicit_angle_effect:
         predicted_angle_delta = model.predict_angle_delta(decoded, action, temporal_context, previous_action)
         current_angle = torch.atan2(state_raw[:, 4], state_raw[:, 5])
@@ -1280,6 +1470,23 @@ def model_loss(
             F.smooth_l1_loss(predicted_angle_delta, target_angle_delta, reduction="none"),
             contact_supported,
         )
+        if root_id is not None and weights["angle_rank"] > 0.0:
+            angle_rank_terms = []
+            current_angle_all = torch.atan2(state_raw[:, 4], state_raw[:, 5])
+            goal_angle_all = torch.atan2(goal_pose_raw[:, 2], goal_pose_raw[:, 3])
+            predicted_angle_cost = 1.0 - torch.cos(current_angle_all + predicted_angle_delta - goal_angle_all)
+            true_angle = torch.atan2(next_state_raw[:, 4], next_state_raw[:, 5])
+            true_angle_cost = 1.0 - torch.cos(true_angle - goal_angle_all)
+            for current_root in torch.unique(root_id):
+                idx = torch.nonzero(root_id == current_root, as_tuple=False).flatten()
+                if idx.numel() < 2:
+                    continue
+                if contact_angle_rank_only and contact_root is not None and not bool(contact_root[idx].any().item()):
+                    continue
+                label = torch.argmin(true_angle_cost[idx]).reshape(1)
+                angle_rank_terms.append(F.cross_entropy((-predicted_angle_cost[idx]).reshape(1, -1), label))
+            if angle_rank_terms:
+                angle_rank = torch.stack(angle_rank_terms).mean()
     angle_readout = predicted.new_zeros(())
     if model.explicit_angle_readout:
         if raw_mean is None or raw_std is None:
@@ -1287,7 +1494,19 @@ def model_loss(
         decoded_raw = decoded * raw_std + raw_mean
         decoded_angle = torch.atan2(decoded_raw[:, 4], decoded_raw[:, 5])
         target_angle = torch.atan2(state_raw[:, 4], state_raw[:, 5])
-        angle_readout = (1.0 - torch.cos(decoded_angle - target_angle)).mean()
+        per_row_angle_readout = 1.0 - torch.cos(decoded_angle - target_angle)
+        if contact_root is not None:
+            if contact_root.shape != per_row_angle_readout.shape:
+                raise ValueError("contact_root must have shape [batch]")
+            contact_weight = float(weights["contact_angle_readout"])
+            row_weights = torch.where(
+                contact_root.bool(),
+                torch.as_tensor(contact_weight, dtype=per_row_angle_readout.dtype, device=per_row_angle_readout.device),
+                torch.ones_like(per_row_angle_readout),
+            )
+            angle_readout = (per_row_angle_readout * row_weights).sum() / row_weights.sum().clamp_min(1.0)
+        else:
+            angle_readout = per_row_angle_readout.mean()
     uncertainty = predicted.new_zeros(())
     mode_loss = predicted.new_zeros(())
     if model.adapter_architecture == "mode_uncertain":
@@ -1352,6 +1571,8 @@ def model_loss(
         for current_root in torch.unique(root_id):
             idx = torch.nonzero(root_id == current_root, as_tuple=False).flatten()
             if idx.numel() >= 2:
+                if contact_successor_rank_only and contact_root is not None and not bool(contact_root[idx].any().item()):
+                    continue
                 pred_orientation = F.normalize(predicted_raw[idx, 4:6], dim=-1)
                 goal_orientation = F.normalize(goal_pose_raw[idx, 2:4], dim=-1)
                 pred_cost = torch.linalg.vector_norm(
@@ -1374,6 +1595,7 @@ def model_loss(
         + weights["orientation_transition"] * orientation_transition
         + weights["orientation_effect"] * orientation_effect
         + weights["angle_effect"] * angle_effect
+        + weights["angle_rank"] * angle_rank
         + weights["angle_readout"] * angle_readout
         + weights["goal"] * goal
         + weights["goal_angle"] * goal_angle
@@ -1389,6 +1611,7 @@ def model_loss(
         "orientation_transition": orientation_transition.detach(),
         "orientation_effect": orientation_effect.detach(),
         "angle_effect": angle_effect.detach(),
+        "angle_rank": angle_rank.detach(),
         "angle_readout": angle_readout.detach(),
         "goal_angle": goal_angle.detach(),
         "successor_rank": successor_rank.detach(),
@@ -1410,11 +1633,14 @@ def train_model(
         args.explicit_angle_effect,
         args.explicit_angle_readout,
         args.explicit_goal_angle_readout,
+        args.rich_temporal_dynamics,
+        args.invariant_angle_readout,
+        args.contact_interface_dynamics,
+        args.angle_readout_current_only,
     ).to(device)
     normalizer = Normalization.fit(np.concatenate([train["state"], train["next_state"]], axis=0))
     mean, std = normalizer.tensors(device)
     model.set_state_normalization(mean, std)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     rng = np.random.default_rng(args.seed + 1)
     history: list[dict[str, float]] = []
 
@@ -1457,6 +1683,47 @@ def train_model(
             torch.as_tensor(data["contact_mode"][index], device=device),
             torch.as_tensor(data["previous_action"][index], dtype=torch.float32, device=device),
         )
+
+    if args.freeze_angle_readout and not args.explicit_angle_readout:
+        raise ValueError("freeze_angle_readout requires explicit_angle_readout")
+    if args.angle_readout_warmup_steps < 0:
+        raise ValueError("angle_readout_warmup_steps must be nonnegative")
+    if args.angle_readout_warmup_steps and not args.explicit_angle_readout:
+        raise ValueError("angle_readout_warmup_steps requires explicit_angle_readout")
+    if args.angle_readout_warmup_steps:
+        # The explicit angle head consumes fixed RGB mask moments.  Warm it up
+        # against the current-frame angle before the multi-task objective is
+        # introduced, so translation/utility gradients cannot erase the rare
+        # contact-manifold pose signal.
+        warmup_optimizer = torch.optim.AdamW(
+            model.angle_readout_head.parameters(), lr=args.lr, weight_decay=1e-4,
+        )
+        warmup_batches = root_batches(train, np.unique(train["root_id"]))
+        for step in range(args.angle_readout_warmup_steps):
+            index = warmup_batches[step % len(warmup_batches)]
+            image, _action, _state, _next_state, _goal_image, _goal_pose, _next_raw, _goal_raw, state_raw, _root_id, _informative, previous, _mode, _previous_action = device_batch(train, index)
+            decoded = model.encode_state(image, previous)
+            decoded_raw = decoded * std + mean
+            decoded_angle = torch.atan2(decoded_raw[:, 4], decoded_raw[:, 5])
+            target_angle = torch.atan2(state_raw[:, 4], state_raw[:, 5])
+            per_row = 1.0 - torch.cos(decoded_angle - target_angle)
+            root_mask = torch.as_tensor(train["contact_root"][index], device=device).bool()
+            row_weights = torch.where(
+                root_mask,
+                torch.full_like(per_row, float(args.contact_angle_readout_weight)),
+                torch.ones_like(per_row),
+            )
+            warmup_loss = (per_row * row_weights).sum() / row_weights.sum().clamp_min(1.0)
+            warmup_optimizer.zero_grad(set_to_none=True)
+            warmup_loss.backward()
+            warmup_optimizer.step()
+    if args.freeze_angle_readout:
+        for parameter in model.angle_readout_head.parameters():
+            parameter.requires_grad_(False)
+    optimizer = torch.optim.AdamW(
+        [parameter for parameter in model.parameters() if parameter.requires_grad],
+        lr=args.lr, weight_decay=1e-4,
+    )
     best_state: dict[str, torch.Tensor] | None = None
     best_val = float("inf")
     snapshot_epochs = sorted(set(int(epoch) for epoch in args.snapshot_epochs))
@@ -1472,6 +1739,8 @@ def train_model(
         "orientation_effect": args.orientation_effect_loss_weight,
         "angle_effect": args.angle_effect_loss_weight,
         "angle_readout": args.angle_readout_loss_weight,
+        "contact_angle_readout": args.contact_angle_readout_weight,
+        "angle_rank": args.angle_rank_loss_weight,
         "goal_angle": args.goal_angle_loss_weight,
         "goal": args.goal_loss_weight,
         "utility": args.utility_loss_weight,
@@ -1490,6 +1759,9 @@ def train_model(
                 model, *batch,
                 loss_weights, raw_mean=mean, raw_std=std,
                 soft_mode_training=args.soft_mode_training,
+                contact_root=torch.as_tensor(train["contact_root"][index], device=device),
+                contact_successor_rank_only=args.contact_successor_rank_only,
+                contact_angle_rank_only=args.contact_angle_rank_only,
             )
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -1503,6 +1775,9 @@ def train_model(
                 val_loss, terms = model_loss(
                     model, *device_batch(val, index), loss_weights, raw_mean=mean, raw_std=std,
                     soft_mode_training=args.soft_mode_training,
+                    contact_root=torch.as_tensor(val["contact_root"][index], device=device),
+                    contact_successor_rank_only=args.contact_successor_rank_only,
+                    contact_angle_rank_only=args.contact_angle_rank_only,
                 )
                 validation.append((len(index), float(val_loss.cpu()), {key: float(item.cpu()) for key, item in terms.items()}))
         total = sum(item[0] for item in validation)

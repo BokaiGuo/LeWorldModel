@@ -96,6 +96,11 @@ def _load_model(checkpoint: Path, device: torch.device) -> tuple[VisualCausalWor
         previous_action_dynamics=bool(saved.get("previous_action_dynamics", False)),
         explicit_angle_effect=bool(saved.get("explicit_angle_effect", False)),
         explicit_angle_readout=bool(saved.get("explicit_angle_readout", False)),
+        explicit_goal_angle_readout=bool(saved.get("explicit_goal_angle_readout", False)),
+        rich_temporal_dynamics=bool(saved.get("rich_temporal_dynamics", False)),
+        invariant_angle_readout=bool(saved.get("invariant_angle_readout", False)),
+        contact_interface_dynamics=bool(saved.get("contact_interface_dynamics", False)),
+        angle_readout_current_only=bool(saved.get("angle_readout_current_only", False)),
     ).to(device)
     model.load_state_dict(payload["model"])
     model.eval()

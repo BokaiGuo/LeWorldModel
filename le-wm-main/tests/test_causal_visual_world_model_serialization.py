@@ -80,3 +80,17 @@ def test_goal_angle_readout_is_decoupled_from_current_state_readout():
 def test_goal_pose_vector_uses_rendered_goal_pose_not_reset_goal_state():
     target = goal_pose_vector(np.asarray([256.0, 256.0, np.pi / 4], dtype=np.float32))
     assert np.allclose(target, [256.0, 256.0, np.sqrt(0.5), np.sqrt(0.5)], atol=1e-6)
+
+
+def test_rich_temporal_dynamics_exposes_rgb_silhouette_delta():
+    model = VisualCausalWorldModel(
+        8, "mask_moments", True, temporal_dynamics=True,
+        rich_temporal_dynamics=True,
+    )
+    image = torch.zeros(2, 3, 64, 64)
+    previous = image.clone()
+    image[0, 1, 20:30, 20:35] = 1.0
+    previous[0, 1, 22:32, 20:35] = 1.0
+    context = model.encode_dynamics_context(image, previous)
+    assert context is not None and context.shape == (2, 11)
+    assert torch.isfinite(context).all()

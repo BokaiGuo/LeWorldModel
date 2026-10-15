@@ -12,6 +12,13 @@ host NVIDIA user/kernel library mismatch, but a host-permission CUDA probe and
 loader test now pass. A fresh capped rich CUDA protocol is running; no GPU
 experiment was rerouted to CPU or promoted from a partial artifact.
 
+The 2026-10-15 continuation is recorded in
+`docs/EXECUTION_REPORT_20261015.md`. It adds support-conditioned local-effect
+identification and a fail-closed residual/conditioning gate. The continuation
+improves contact retention in a support-root intervention but does not open a
+strict pose-closure or visual-planning claim; the remaining bottleneck is
+within-contact action-to-angle identifiability.
+
 ## PushT contact-supported orientation repair (latest continuation)
 
 The RGB-only visual world-model runner now applies orientation/action-effect
@@ -855,3 +862,359 @@ episodes, but action-motion top-1 was `0.125`; the latter reached goal-angle
 RMSE `0.059`, contact action-motion top-1 `0.500`, but contact orientation
 top-1 remained `0.0` and strict success remained `0/2`. These are matched
 mechanism results, not a positive planning claim.
+
+### Contact-pose support and runtime-interface continuation (2026-10-14)
+
+The next GPU-first continuation tested the remaining within-contact diagnosis
+without changing the corrected goal-pose protocol. A rich temporal pilot that
+routed block silhouette differences only to the angle-effect head reached
+contact action-motion/orientation top-1 `0.25/0.25`, but angle-delta
+correlation was `-0.589` and strict planning was `0/2`.
+
+An RGB-only identifiability control separated representation information from
+joint-training interference: a small angle head trained directly on the fixed
+RGB block-moment chart achieved held-out contact-angle RMSE `0.184 rad` and
+`81.25%` within `15` degrees. This means the contact pose signal is present in
+the rendered input, but is not reliably transferred by the shared model under
+the small root split. The runner therefore adds predeclared
+`--contact-angle-readout-weight`, optional angle-head warmup/freeze, and
+`--invariant-angle-readout` (block-only central moments). All checkpoint
+loading paths preserve the new architecture fields.
+
+The matched contact-angle-weighted pilot still failed (`contact angle RMSE
+2.87`, orientation top-1 `0`, strict success `0/2`). Increasing support to
+`256/128` roots improved contact action-motion top-1 to `0.3125` and angle
+delta RMSE to `0.130`, but orientation top-1 was `0.125` and strict success
+was `0/4`. The formal `1600/240` GPU run improved contact action-motion
+top-1 to `0.375`, while contact orientation top-1 remained `0.0417` and
+strict planning remained `0/8`.
+
+The same formal checkpoint was evaluated with a frozen RGB geometry state
+readout and visual contact gate. It obtained `1/8` on the original evaluation
+seed but `0/8` on an independent held-out evaluation seed; therefore this is
+an interface diagnostic, not stable planning evidence. Replacing scalar
+utility with task-space ranking produced the same `1/8`, and a separately
+trained phase-utility checkpoint remained at `0/8`.
+
+Current boundary: the repaired label protocol and larger contact support
+improve offline translation/effect metrics, but no stable within-contact
+orientation transfer or frozen RGB online-planning claim is open. The next
+scientifically admissible intervention must change the action-effect support or
+contact observation protocol, not merely add more Fourier/history features or
+utility weights. Artifacts are under
+`results/causal_visual_pusht_gpu_goalposefix_*_20261014/`.
+
+### RGB contact-interface and angle-readout continuation (2026-10-15)
+
+The next action-effect intervention added an RGB-only pusher-to-block interface
+chart: relative centroid, nearest block-pixel direction/gap, object scale, and
+validity. It was first supplied as context and then with explicit
+lever/action projections and a cross-product interaction. The learned model
+never receives simulator contact labels or successor state at runtime.
+
+The CUDA artifacts are:
+
+- `results/causal_visual_pusht_gpu_contactinterface_pilot_20261015/`;
+- `results/causal_visual_pusht_gpu_contactinterface_full_20261015/`;
+- `results/causal_visual_pusht_gpu_contactinterface_interaction_pilot_20261015/`.
+
+The `1600/240` interface-context run reduced paired effect error to `6.54`,
+but contact action-motion/orientation top-1 were only `0.275/0.0583`,
+angle-delta correlation was `0.0402`, and RGB planning was `0/8`. The
+explicit lever/action interaction pilot was worse (`0.1875/0.03125` contact
+action-motion/orientation top-1). Therefore contact geometry is not sufficient
+unless its action-effect mapping is identifiable; adding an uncalibrated
+interaction feature is not promoted as a repair.
+
+The code audit also found that the existing `current-only-readout` option did
+not apply to the explicit angle head. A backward-compatible
+`--angle-readout-current-only` architecture flag now excludes previous-frame
+difference features from that head. Its isolated CUDA pilot remains negative:
+contact action-motion/orientation top-1 `0.09375/0.0` and angle-delta
+correlation `-0.266`. Old checkpoints remain loadable (`21` compatibility
+tests pass), so this is an implementation repair plus negative boundary
+evidence, not a positive planning result.
+
+The current root cause is consequently sharper: RGB contains pose information,
+but the deployment candidate action-effect map is not stable across contact
+interfaces. The next admissible positive route is an observed-effect,
+short-pulse runtime protocol with explicit support and fail-closed release;
+further static feature or loss stacking is not justified by these runs.
+
+### Frozen RGB pose chart, goal-domain audit, and short-pulse continuation (2026-10-15)
+
+The GPU-first analytic audit tested whether the negative learned pose result
+was caused by a missing visual pose interface. On 2,048 root-disjoint RGB
+roots, a calibration-only quadratic harmonic ridge over block mask moments
+reached 83.0% within 15 degrees on held-out current-scene roots and 85.1% on
+held-out contact roots (directed MAE 0.157 rad). This establishes a usable
+frozen RGB pose measurement, but not learned causal dynamics or pose closure.
+
+Applying that current-scene calibration directly to goal renders failed
+(`4.9%` within 15 degrees, directed MAE `1.536` rad). A separate goal-image
+calibration repaired this PushT protocol because the goal angle is fixed in
+this benchmark (`100%` within 15 degrees on the held-out goal roots). The
+calibration artifacts and audit are under
+`results/rgb_analytic_pose_separate_goal_full_20261015/`.
+
+Replacing the learned angle readout with the two frozen RGB readouts did not
+produce closed-loop success: geometry servo remained `0/8`. A code audit then
+found and fixed an actual interface bug: the nearest-boundary chart stacked
+`[y,x]` while all runtime charts consumed `[x,y]`. The corrected support-aware
+servo still remained `0/8` and often pushed the block away from the goal. This
+shows that visual pose and visible support are not sufficient to identify the
+within-contact torque effect.
+
+The next short-pulse audit used 256 contact roots, an 8-action fan, and
+RGB-successor re-observation. The observed angle effect was measurable
+(`88.1%` within 15 degrees), but direct re-observed task ranking was only
+`23.0%` top-1 (random fan baseline `12.5%`); a held-out global observed-effect
+adapter was worse at `18.75%`. The current positive result is therefore a
+verification signal, not a planning result. The admissible methodology is
+short-pulse effect verification with support-aware fail-closed release, rather
+than a global action-effect predictor.
+
+### Mode-aware verification gate continuation (2026-10-15)
+
+The privileged PushT controller was rerun with the complete predeclared
+boundary-contact protocol: 64 train roots, 32 root-disjoint held-out roots,
+eight shared candidates, 128 trees, one-step lookahead, paired effect probes,
+observed-sign feedback, contact-geometry sign feedback, uncertainty gate, and
+terminal handoff. CUDA preflight passed before the run (`RTX 5060 Ti`, real
+`cuda:0` allocation). The final artifact is
+`le-wm-main/results/negative_cause_diagnosis_20261015/mode_aware_verification_gate_64x32_seed20261015_final/`.
+
+Candidate predictions and training effect-gate statistics were batched by
+action bank/root without changing the ExtraTrees estimator, seed, labels,
+splits, scoring gates, or controller rules. The held-out result is still a
+mechanism boundary: successor-mode accuracy is `0.9698`; mode-aware pose
+success is `3/32 = 0.09375` (bootstrap CI `[0, 0.21875]`); mode-aware ranking
+regret is `0.09645`, versus `0.09510` for the global one-step baseline and
+`0.09521` for the contact-chart variant.
+
+Adaptive online effect correction reaches `4/32 = 0.125` pose success and
+reduces predicted/observed effect error to `0.08597`, but contact loss is
+`0.71875`. Uncertainty gating lowers contact loss to `0.59375`, but pose
+success remains `3/32`, root fallback is `0.8125`, and effect error is
+`0.14932`; the safe fallback has pose success `2/32` and contact loss `0.5`.
+The matched 8-root CUDA pilot has the same direction (`mode accuracy 0.9576`,
+mode-aware pose success `0/8`, adaptive online `1/8` with contact loss
+`0.875`) and is retained separately rather than pooled.
+
+High mode accuracy with low pose success rules out successor-mode
+observability as the dominant cause. The remaining bottleneck is joint
+within-contact action-effect identifiability and contact preservation. The
+observed-effect correction is a local verification signal, not a stable pose
+closure repair; the admissible protocol remains short-pulse RGB re-observation
+with support-aware fail-closed release.
+
+### Distance-aware online support control (2026-10-15)
+
+The 32-root trace showed that a local observed-effect entry could be reused
+after the pusher had materially separated from the polygon boundary. The
+online effect key and neighborhood descriptor were therefore extended with
+the measured pusher-to-boundary distance; cache reuse now requires both the
+same local action chart and a nearby contact distance. This is a support
+restriction only and does not use successor labels.
+
+The CUDA 8-root pilot
+`results/negative_cause_diagnosis_20261015/mode_aware_distance_support_64x8_seed20261015_pilot/`
+did not improve the downstream gate: mode-aware pose success stayed `0/8`,
+adaptive online stayed `1/8` with contact loss `0.875`, and uncertainty-gated
+pose success stayed `0/8`. Ranking values were unchanged. The stale-distance
+alias was a real implementation risk, but removing it is not sufficient;
+the remaining negative result is consistent with nonstationary within-contact
+action effects and inadequate candidate support.
+
+## Cross-seed orientation permission and fail-closed control (2026-10-18)
+
+The three independent edge-boundary orientation audits were aggregated without
+reading pose or planning outcomes. The CUDA artifact is
+`le-wm-main/results/negative_cause_diagnosis_20261015/orientation_gate_cross_seed_20261018/`.
+The authorized-stratum union contains 10 edge/fraction strata, but the
+three-seed intersection contains only 4 (`0:0__bin1`, `0:2__bin3`,
+`1:1__bin1`, `1:3__bin2`), or 40% of the union. Released evaluation coverage
+is 24.5%--31.9% per seed. Released sign consistency is 0.972 and successor
+mode agreement is 1.0. This supports a local calibrated permission, not a
+universal orientation certificate.
+
+That four-stratum intersection was wired into the shared-candidate closed-loop
+runner as a fail-closed gate. The CUDA smoke artifact is
+`le-wm-main/results/negative_cause_diagnosis_20261015/orientation_gated_control_smoke_20261018/`.
+All baselines use the same 8 held-out roots and candidate bank. The gate
+blocked 89.1% of contact steps and every root triggered fallback; boundary
+contact loss was 0, but pose success remained `0/8` and final angle error was
+1.671 rad. Mode-aware and contact-chart comparisons also remained at `0/8`.
+The gate exposes insufficient support, but abstention cannot itself recover
+within-contact action-effect transfer.
+
+The diagnosis is now narrower: successor-mode observability and local
+opposite-moment response can be high on released strata, yet continuous
+mode-conditioned action-to-angle transfer is not identified on new contact
+interfaces. The next admissible repair must improve local action excitation or
+use explicit online paired effect identification.
+
+## Paired local-effect probe continuation (2026-10-18)
+
+The next repair was executed as a separate CUDA smoke artifact at
+`le-wm-main/results/negative_cause_diagnosis_20261015/paired_effect_probe_smoke_20261018/`.
+Within a contact chart, the controller alternated opposite-moment short pulses
+and used only re-observed transitions to update local effect ranking. The
+adaptive-online branch reduced predicted/observed effect error to `0.123` and
+wrong-sign events to `1.0`; pose success was `2/8` and contact loss remained
+`0.50`. This is an encouraging mechanism signal, not stable pose closure. The
+active repair direction is retained as paired local excitation plus fail-closed
+release, pending a larger root-disjoint multi-seed run.
+
+## Contact-retention metric repair and three-seed replication (2026-10-24)
+
+The paired-effect panel exposed a protocol bug in the contact-retention readout. Boundary-contact roots intentionally place the pusher on a polygon edge, so pusher-to-block-centre distance can exceed 80 px while contact is physically maintained. The previous `contact_loss_rate` therefore counted legal boundary contacts as losses. The runner now uses physical polygon boundary gap (`>70 px`) for boundary-contact roots and reports the old centre-distance predicate separately as `center_distance_loss_rate`. Existing artifacts were not overwritten.
+
+The corrected CUDA replication uses the frozen paired-probe protocol, three independent seeds, 24 train roots and 16 root-disjoint held-out roots per seed. The aggregate artifact is `le-wm-main/results/negative_cause_diagnosis_20261015/contact_metric_repair_panel_20261024/`. Across 48 held-out roots, protocol-correct contact loss is `0.000` for every variant with bootstrap CI `[0, 0]`; the centre-distance diagnostic remains `0.438--0.667`, confirming the original negative contact result was a measurement error rather than physical contact failure.
+
+The repair does not close pose transfer. Adaptive paired probing reaches pose success `0.0833` (CI `[0.0208, 0.1667]`), compared with `0.0417` for the global baseline (CI `[0, 0.1042]`), while final-angle difference is `+0.0321` rad with CI `[-0.0254, 0.0900]`. It produces a stable local mechanism improvement: predicted/observed effect error changes by `-0.0696` (CI `[-0.0884, -0.0541]`) and wrong-sign events by `-3.9583` (CI `[-5.5625, -2.4583]`). The corrected conclusion is narrower and stronger: paired probing identifies local effect and preserves boundary contact, but it still does not yield stable pose closure or online planning.
+
+## Terminal orientation handoff control and execution-order repair (2026-10-24)
+
+The first terminal-handoff artifact (`terminal_handoff_metric_repair_seed20261020`) was invalid as a control: the adaptive online reranker ran after terminal selection and overwrote the terminal action. The runner now gives terminal handoff priority and adds an explicit `--terminal-max-moment` ablation. The corrected artifact is `le-wm-main/results/negative_cause_diagnosis_20261015/terminal_max_moment_metric_repair_seed20261020_v2/`.
+
+The valid maximum-moment handoff preserves physical boundary contact (`0/16`) and reduces local effect error to `0.0433`, but pose success remains `2/16`, final angle is `1.748` rad, and final-angle improvement is not established. It also increases identification-probe rate to `0.694`, indicating that the stronger terminal pulse often fails the support gate and triggers fail-closed probing. Thus the execution bug is fixed, but the mechanism hypothesis that a stronger terminal pulse alone repairs sticking is rejected; no three-seed promotion is justified.
+
+## Contact-frame action-effect interface: three-seed CUDA replication (2026-10-15)
+
+To test the remaining hypothesis without changing the held-out selector or
+terminal threshold, the current boundary-contact controller was rerun with
+the frozen contact-frame chart, paired moment-sign probes, observed-sign
+calibration, uncertainty gate, online local-effect reuse, and terminal
+handoff. The three artifacts are:
+
+- `le-wm-main/results/negative_cause_diagnosis_20261015/contact_frame_boundary_panel_seed20261020/`;
+- `le-wm-main/results/negative_cause_diagnosis_20261015/contact_frame_boundary_panel_seed20261021/`;
+- `le-wm-main/results/negative_cause_diagnosis_20261015/contact_frame_boundary_panel_seed20261022/`.
+
+The CUDA aggregation is
+`le-wm-main/results/negative_cause_diagnosis_20261015/contact_frame_boundary_panel_20261015/`.
+It uses 24 train roots and 16 root-disjoint held-out roots per seed, the same
+shared candidate bank, and 10,000 CUDA bootstrap draws. Across 48 held-out
+roots, adaptive online local-effect reuse gives:
+
+- predicted/observed effect error `0.07597` versus `0.12094` for global
+  one-step; paired delta `-0.04497`, 95% CI `[-0.05848,-0.03224]`;
+- wrong-sign events `4.125` versus `7.1875`; paired delta `-3.0625`, 95% CI
+  `[-5.4167,-0.9375]`;
+- physical polygon-boundary contact loss `0/48` for both global and adaptive
+  arms;
+- pose success `4/48` for adaptive versus `2/48` for global; the paired
+  success delta is `+0.0417`, 95% CI `[0,0.1042]`;
+- final-angle delta `+0.0292` rad with 95% CI `[-0.0576,0.1158]`, so no
+  stable orientation improvement is established.
+
+This is a reproducible mechanism-level positive, not a pose-closure result:
+paired excitation makes local action-effect estimates and torque-sign errors
+better while preserving actual boundary contact, but the finite-horizon
+action sequence still fails to transfer that local information into reliable
+angle closure. The active diagnosis is now narrower: the bottleneck is not
+contact measurement, contact retention, or successor-mode classification; it
+is nonstationary within-contact action-to-angle transfer and insufficient
+multi-step support. The six strong claims, frozen RGB online planning, and
+universal commutator certificate remain closed.
+
+## Horizon-conditioned short-pulse visual MPC replication (2026-10-15)
+
+The next intervention tested whether the one-step-to-multi-step gap could be
+reduced by using a shorter declared prediction horizon rather than adding
+more static features. The frozen protocol used `prediction_horizon=4`,
+`action_block=1`, 64 staged candidates, stable-contact bootstrap, visual
+state source, block-pose cost, 96 train cases, 24 held-out cases, and 8
+held-out episodes per seed. Base and compositional-repaired predictors used
+identical candidate proposals and episode indices. All three runs used host
+CUDA on the RTX 5060 Ti.
+
+The source artifacts are:
+
+- `le-wm-main/results/pusht/lewm/h4_shortpulse_visual_mpc_20261015_seed20261101/`;
+- `le-wm-main/results/pusht/lewm/h4_shortpulse_visual_mpc_20261015_seed20261102/`;
+- `le-wm-main/results/pusht/lewm/h4_shortpulse_visual_mpc_20261015_seed20261103/`.
+
+The CUDA paired aggregation is
+`le-wm-main/results/pusht/lewm/h4_shortpulse_visual_mpc_panel_20261015/`.
+Across 24 paired episodes, both base and repaired visual MPC have task
+success `0/24` and contact reached `0.7917`. Repaired-minus-base deltas are
+`+16.26 px` block XY distance (95% CI `[-16.86,50.63]`) and `+383.68` final
+distance (95% CI `[100.84,738.25]`); the repaired arm is therefore not a
+downstream improvement. The intervention rejects the hypothesis that
+shortening the planning horizon alone repairs visual planning.
+
+The remaining actionable bottleneck is action-support/interface transfer:
+the predictor can reduce latent or selected-endpoint error under contact
+training, but its visual endpoint readout is not aligned with the actual
+candidate effect distribution. The next method must change the learned
+action-effect interface or add support-aware observed-effect verification;
+further horizon-only sweeps are not promoted.
+
+## Paired RGB finite-difference continuation (2026-10-15)
+
+The short-pulse audit was extended to a matched same-root protocol. For every
+candidate action, the environment is reset to the same offline root twice: one
+run executes a zero-action pulse and the other executes the candidate pulse.
+The RGB effect is then measured as
+
+`RGB(action successor) - RGB(zero-action successor)`
+
+instead of `RGB(action successor) - RGB(source)`. This removes passive motion
+and contact-release drift from the effect label while keeping runtime inputs
+RGB-only. Simulator state is used only for offline reset and reference scoring.
+
+The fixed mechanism protocol used an 8-action fan, magnitude `0.35`, four
+repeated physical steps, 64 contact roots per seed, and three independent CUDA
+seeds (`20261035/36/37`). The aggregate is
+`le-wm-main/results/negative_cause_diagnosis_20261015/paired_reobserve_grid_r4_m035_panel_20261015/`.
+All three seeds improved paired effect MAE relative to the source-difference
+control: the mean delta was `-0.08749 rad`, with the seed-bootstrap 95% CI
+`[-0.17248,-0.03662]`. RGB successor top-1 was `0.3438`, `0.2813`, and
+`0.3281` (mean `0.3177`) versus the 8-way random baseline `0.125`.
+
+This is the first stable positive result for the new interface, but its claim
+is deliberately narrow: it establishes local RGB action-effect observability,
+not a learned global action-effect predictor or closed-loop planning.
+
+The first held-out adapter used a 105-dimensional quadratic expansion and
+collapsed on unseen roots (`test_top1=0.15625` in the three repeat-4 runs).
+Replacing it with a 25-dimensional linear ridge that explicitly conditions on
+the observed zero-successor reduced same-seed effect MAE from `1.106` to
+`0.582 rad`, but held-out top-1 remained at chance (`0.125`). This identifies
+two distinct failure modes: small-sample overfitting and, after that repair,
+nonstationary cross-root action-effect transfer. The runtime controller must
+therefore use observed short-pulse verification with support-aware fail-closed
+release, or reject the action interface; it must not promote the adapter as a
+global predictor.
+
+The paired audit and its aggregate are mechanism artifacts. Frozen RGB online
+planning, stable pose closure, reliable physical causality, a universal world
+model, and a universal commutator certificate remain closed.
+
+## Active paired-probe support repair (2026-10-15)
+
+The next implementation targeted a concrete runtime cause rather than adding
+another memory family.  A one-sample, zero-angle online cache entry was
+previously reusable, so the controller could repeat a stale action while the
+pusher drifted across the contact interface.  The repair adds informative
+support counts, a matched opposite-moment requirement, fail-closed alternating
+probes, mirror-aware local-chart matching, and an optional maximum declared
+moment with a short identification pulse.
+
+The CUDA panel at
+`results/negative_cause_diagnosis_20261015/active_paired_probe_panel_20261015/`
+contains three independent seeds and 48 root-disjoint held-out roots.  The
+adaptive paired arm reduces predicted/observed effect error from `0.1492` to
+`0.1014`, paired delta `-0.04775` with 95% CI `[-0.07267,-0.02157]`, while
+physical boundary contact loss remains `0/48` in both arms.  However, pose
+success is unchanged at `4/48`, and final angle worsens by `+0.0883` rad with
+95% CI `[+0.0576,+0.1212]`.
+
+This resolves the stale-cache and insufficient-excitation implementation
+causes and establishes a reproducible local effect-transfer improvement.  It
+also rules out the stronger claim that local paired identification alone
+repairs multi-step orientation transfer.  The active bottleneck is now the
+task-level composition/readout of several local effects, not local action
+effect observability.
