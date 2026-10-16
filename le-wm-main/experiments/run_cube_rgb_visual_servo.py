@@ -104,7 +104,7 @@ def _image_xy(
 
 def _fit_rgb_action_map(
     initials: list[dict[str, Any]], probe_steps: int, descent_steps: int,
-    device: str, chart_ridge: float,
+    device: str, chart_ridge: float, approach_feature_family: str = "linear",
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Fit the RGB action map at the same height used by the runtime policy."""
     deltas: list[np.ndarray] = []
@@ -142,6 +142,7 @@ def _fit_rgb_action_map(
             target_features.append(base_target_xy.copy())
             approach_features.append(_relative_approach_features(
                 base_xy, base_target_xy, base_goal_xy,
+                family=approach_feature_family,
             ))
             push_features.append(_relative_push_features(base_target_xy, base_goal_xy))
             effector_world.append(base_effector_world)
@@ -175,6 +176,7 @@ def _fit_rgb_action_map(
                     target_features.append(after_target_xy.copy())
                     approach_features.append(_relative_approach_features(
                         after_xy, after_target_xy, after_goal_xy,
+                        family=approach_feature_family,
                     ))
                     push_features.append(_relative_push_features(after_target_xy, after_goal_xy))
                     after_effector_world = _vec(info, "proprio/effector_pos", 3)[:2].copy()
@@ -244,6 +246,7 @@ def _fit_rgb_action_map(
         "effector_chart": effector_chart.detach().cpu().numpy().astype(np.float32),
         "target_chart": target_chart.detach().cpu().numpy().astype(np.float32),
         "relative_approach_chart": approach_chart,
+        "approach_feature_family": approach_feature_family,
         "relative_push_chart": push_chart,
         "world_action_mapping_per_step": (
             world_action.detach().cpu().numpy().astype(np.float32) / max(probe_steps, 1)
@@ -284,14 +287,22 @@ def _fit_rgb_action_map(
 
 def _relative_approach_features(
     effector_xy: np.ndarray, block_xy: np.ndarray, goal_xy: np.ndarray,
+    *, family: str = "linear",
 ) -> np.ndarray:
     effector_xy = np.asarray(effector_xy, dtype=np.float32)[:2]
     block_xy = np.asarray(block_xy, dtype=np.float32)[:2]
     goal_xy = np.asarray(goal_xy, dtype=np.float32)[:2]
+    if family not in {"linear", "bilinear"}:
+        raise ValueError(f"unknown approach feature family: {family}")
     # Only relative quantities are retained.  This avoids fitting a nearly
     # collinear high-dimensional affine chart that extrapolates catastrophically
     # when a held-out root lies outside a small calibration panel.
-    return np.concatenate([block_xy - effector_xy, goal_xy - block_xy]).astype(np.float32)
+    block_effector = block_xy - effector_xy
+    goal_block = goal_xy - block_xy
+    features = [block_effector, goal_block]
+    if family == "bilinear":
+        features.append(np.outer(block_effector, goal_block).reshape(-1))
+    return np.concatenate(features).astype(np.float32)
 
 
 def _relative_push_features(block_xy: np.ndarray, goal_xy: np.ndarray) -> np.ndarray:
@@ -379,11 +390,14 @@ def _run_servo(
     pixel_approach_gain: float, world_action_gain: float, approach_controller: str,
     push_controller: str, push_pixel_gain: float,
     approach_standoff_m: float,
+    approach_feature_family: str = "linear",
     descend_steps: int,
     close_steps: int, push_steps: int, max_observation_dropout: int,
 ) -> dict[str, Any]:
     if approach_controller not in {"pixel", "world"}:
         raise ValueError(f"unknown approach controller: {approach_controller}")
+    if approach_feature_family not in {"linear", "bilinear"}:
+        raise ValueError(f"unknown approach feature family: {approach_feature_family}")
     if push_controller not in {"pixel", "pixel_adaptive", "world"}:
         raise ValueError(f"unknown push controller: {push_controller}")
     if approach_standoff_m < 0.0 or not np.isfinite(approach_standoff_m):
@@ -467,7 +481,10 @@ def _run_servo(
                                     )
                             else:
                                 world_error = _predict_linear(
-                                    _relative_approach_features(effector_xy, block_xy, goal_xy),
+                                    _relative_approach_features(
+                                        effector_xy, block_xy, goal_xy,
+                                        family=approach_feature_family,
+                                    ),
                                     calibration_model["relative_approach_chart"],
                                 )
                                 goal_delta_world = _predict_linear(
@@ -657,6 +674,10 @@ def main() -> None:
                         help="frozen proportional gain applied after the calibration action inverse")
     parser.add_argument("--approach-controller", choices=("pixel", "world"), default="world",
                         help="fixed RGB approach law: pixel inverse or calibration-only relative world chart")
+    parser.add_argument(
+        "--approach-feature-family", choices=("linear", "bilinear"), default="linear",
+        help="calibration-only relative approach chart: linear or block/goal bilinear interaction",
+    )
     parser.add_argument("--approach-standoff-m", type=float, default=0.0,
                         help="calibration-frozen distance to stop on the side opposite the goal motion")
     parser.add_argument(
@@ -689,6 +710,7 @@ def main() -> None:
     ]
     calibration_model, calibration_report = _fit_rgb_action_map(
         calibration, args.probe_steps, args.descend_steps, args.device, args.chart_ridge,
+        args.approach_feature_family,
     )
     servo = _run_servo(
         test, calibration_model, max_steps=args.max_steps,
@@ -697,6 +719,7 @@ def main() -> None:
         pixel_approach_gain=args.pixel_approach_gain,
         world_action_gain=args.world_action_gain,
         approach_controller=args.approach_controller,
+        approach_feature_family=args.approach_feature_family,
         approach_standoff_m=args.approach_standoff_m,
         push_controller=args.push_controller,
         push_pixel_gain=args.push_pixel_gain,
@@ -731,6 +754,7 @@ def main() -> None:
             "pixel_approach_gain": args.pixel_approach_gain,
             "world_action_gain": args.world_action_gain,
             "approach_controller": args.approach_controller,
+            "approach_feature_family": args.approach_feature_family,
             "approach_standoff_m": args.approach_standoff_m,
             "push_controller": args.push_controller,
             "push_pixel_gain": args.push_pixel_gain,

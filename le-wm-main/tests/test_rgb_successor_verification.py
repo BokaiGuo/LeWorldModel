@@ -1,6 +1,7 @@
 import numpy as np
 
 from experiments.decision_benchmark.verify_rgb_successor import (
+    _future_projection_sequence,
     _render_dataset_matched,
     _static_scene_and_marker,
     _temporal_contract,
@@ -55,3 +56,13 @@ def test_temporal_contract_fails_closed_when_history_is_unavailable():
         assert "insufficient causal RGB context" in str(error)
     else:
         raise AssertionError("missing causal context must fail closed")
+
+
+def test_future_projection_sequence_contains_terminal_token_in_order():
+    encoded = np.arange(5 * 4, dtype=np.float64).reshape(5, 4)
+    pca_mean = np.zeros(4, dtype=np.float64)
+    pca_basis = np.eye(2, 4, dtype=np.float64)
+    future = _future_projection_sequence(encoded, pca_mean, pca_basis, 2, 3)
+    assert future.shape == (3, 2)
+    np.testing.assert_array_equal(future[0], encoded[2, :2])
+    np.testing.assert_array_equal(future[-1], encoded[4, :2])

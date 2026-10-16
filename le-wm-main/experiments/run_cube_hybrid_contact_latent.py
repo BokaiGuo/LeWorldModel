@@ -64,6 +64,7 @@ from experiments.audit_cube_temporal_action_ranking import (  # noqa: E402
 from experiments.checkpoint_compat import load_compatible_pretrained  # noqa: E402
 from experiments.run_cube_rgb_visual_servo import (  # noqa: E402
     GRIPPER_CLOSE_ACTION,
+    XY_ACTIONS,
     _action_from_pixel_error,
     _capture_initial,
     _fit_rgb_action_map,
@@ -135,6 +136,93 @@ def _pixel_guard_should_fallback(
     return bool(current_error > last_error + threshold)
 
 
+def _fit_online_pixel_action_mapping(
+    prior_mapping: np.ndarray,
+    action_samples: list[np.ndarray],
+    pixel_delta_samples: list[np.ndarray],
+    ridge: float,
+) -> np.ndarray:
+    """Update an RGB action Jacobian from deployment-visible transitions.
+
+    The update uses only action commands and successive effector centroids.
+    The calibration map is a ridge prior, so the controller remains stable
+    before both action directions have been observed.  No simulator state or
+    task outcome enters this update.
+    """
+    prior = np.asarray(prior_mapping, dtype=np.float64)
+    if prior.shape != (2, 2):
+        raise ValueError("prior pixel action mapping must have shape [2, 2]")
+    if ridge <= 0.0 or not np.isfinite(ridge):
+        raise ValueError("online pixel mapping ridge must be finite and positive")
+    if len(action_samples) != len(pixel_delta_samples):
+        raise ValueError("action and pixel-delta samples must have equal length")
+    if len(action_samples) < 2:
+        return prior.astype(np.float32)
+    actions = np.asarray(action_samples, dtype=np.float64).reshape(-1, 2)
+    deltas = np.asarray(pixel_delta_samples, dtype=np.float64).reshape(-1, 2)
+    finite = np.isfinite(actions).all(axis=1) & np.isfinite(deltas).all(axis=1)
+    actions = actions[finite]
+    deltas = deltas[finite]
+    if len(actions) < 2 or np.linalg.matrix_rank(actions) < 2:
+        return prior.astype(np.float32)
+    lhs = actions.T @ actions + float(ridge) * np.eye(2, dtype=np.float64)
+    rhs = actions.T @ deltas + float(ridge) * prior
+    mapping = np.linalg.solve(lhs, rhs)
+    if not np.isfinite(mapping).all():
+        return prior.astype(np.float32)
+    return mapping.astype(np.float32)
+
+
+def _run_local_pixel_probes(
+    env: Any,
+    obs: np.ndarray,
+    info: dict[str, Any],
+    previous: np.ndarray,
+    previous_action: np.ndarray,
+    prior_mapping: np.ndarray,
+    probe_steps: int,
+    probe_magnitude: float,
+    ridge: float,
+) -> tuple[
+    np.ndarray, dict[str, Any], np.ndarray, np.ndarray, np.ndarray,
+    list[np.ndarray], list[np.ndarray], list[list[float]],
+]:
+    """Estimate a local RGB action map with short observable probes."""
+    if probe_steps < 1 or probe_magnitude <= 0.0:
+        raise ValueError("local pixel probe steps and magnitude must be positive")
+    action_samples: list[np.ndarray] = []
+    delta_samples: list[np.ndarray] = []
+    trace: list[list[float]] = []
+    current_obs = np.asarray(obs, dtype=np.uint8).copy()
+    current_info = info
+    current_previous = np.asarray(previous, dtype=np.uint8).copy()
+    current_previous_action = np.asarray(previous_action, dtype=np.float32).copy()
+    for direction in XY_ACTIONS:
+        before_xy, before_valid = _image_xy(current_obs, effector=True)
+        action = np.zeros(5, dtype=np.float32)
+        action[:2] = float(probe_magnitude) * np.asarray(direction, dtype=np.float32)
+        for _ in range(int(probe_steps)):
+            next_obs, _, terminated, truncated, next_info = env.step(action)
+            if terminated or truncated:
+                raise RuntimeError("local RGB pixel probe terminated the episode")
+            current_previous = current_obs
+            current_obs = np.asarray(next_obs, dtype=np.uint8).copy()
+            current_previous_action = action.copy()
+            current_info = next_info
+        after_xy, after_valid = _image_xy(current_obs, effector=True)
+        if before_valid and after_valid:
+            action_samples.append(action[:2].copy())
+            delta_samples.append((after_xy - before_xy) / float(probe_steps))
+            trace.append((after_xy - before_xy).astype(np.float32).tolist())
+    mapping = _fit_online_pixel_action_mapping(
+        prior_mapping, action_samples, delta_samples, ridge,
+    )
+    return (
+        current_obs, current_info, current_previous, current_previous_action,
+        mapping, action_samples, delta_samples, trace,
+    )
+
+
 def _teleport_pinch_xy_to_block(raw: Any, block_world: np.ndarray) -> dict[str, Any]:
     """Construct a clean post-contact state with simulator-side IK.
 
@@ -189,7 +277,12 @@ def _capture_contact_branch(
     initial: dict[str, Any], rgb_model: dict[str, np.ndarray], *,
     descend_steps: int, close_steps: int, approach_threshold: float,
     world_action_gain: float, approach_standoff_m: float, max_steps: int,
-    branch_controller: str = "rgb",
+    branch_controller: str = "rgb", approach_controller: str = "world",
+    approach_pixel_threshold: float = 0.05, pixel_approach_gain: float = 0.20,
+    online_pixel_ridge: float = 0.01, online_pixel_probe_steps: int = 1,
+    online_pixel_probe_magnitude: float = 0.25,
+    approach_fallback_patience: int = 5,
+    approach_feature_family: str = "linear",
 ) -> dict[str, Any]:
     """Run the shared RGB contact protocol once and freeze its branch state.
 
@@ -201,6 +294,16 @@ def _capture_contact_branch(
     """
     if branch_controller not in {"rgb", "privileged_world", "privileged_ik_contact"}:
         raise ValueError(f"unknown branch controller: {branch_controller}")
+    if approach_controller not in {
+        "world", "pixel", "pixel_adaptive", "world_pixel_fallback",
+    }:
+        raise ValueError(f"unknown approach controller: {approach_controller}")
+    if approach_pixel_threshold <= 0.0 or pixel_approach_gain <= 0.0:
+        raise ValueError("pixel approach threshold and gain must be positive")
+    if approach_fallback_patience < 1:
+        raise ValueError("approach fallback patience must be positive")
+    if approach_feature_family not in {"linear", "bilinear"}:
+        raise ValueError(f"unknown approach feature family: {approach_feature_family}")
     env = _make_env()
     try:
         obs, info, goal_image = _reset(env, initial)
@@ -208,7 +311,23 @@ def _capture_contact_branch(
         previous_action = np.zeros(5, dtype=np.float32)
         phase, phase_steps = "descend", 0
         approach_errors: list[float] = []
+        approach_pixel_errors: list[float] = []
         ik_contact_report: dict[str, Any] | None = None
+        local_pixel_mapping = np.asarray(
+            rgb_model["pixel_action_mapping"], dtype=np.float32,
+        ).copy()
+        online_pixel_actions: list[np.ndarray] = []
+        online_pixel_deltas: list[np.ndarray] = []
+        online_pixel_mapping_trace: list[list[list[float]]] = []
+        previous_effector_xy: np.ndarray | None = None
+        local_pixel_probes_done = False
+        active_approach_controller = (
+            "world" if approach_controller == "world_pixel_fallback"
+            else approach_controller
+        )
+        last_approach_pixel_error: float | None = None
+        approach_pixel_stall = 0
+        approach_fallback_trace: list[str] = []
         for _ in range(max_steps):
             goal_xy, goal_valid = _image_xy(goal_image, effector=False)
             block_xy, block_valid = _image_xy(
@@ -216,6 +335,46 @@ def _capture_contact_branch(
                 target_reference_y=float(goal_xy[1]) if goal_valid else None,
             )
             effector_xy, effector_valid = _image_xy(obs, effector=True)
+            if (
+                approach_controller == "pixel_adaptive"
+                and previous_effector_xy is not None
+                and effector_valid
+                and float(np.linalg.norm(previous_action[:2])) > 1.0e-8
+            ):
+                online_pixel_actions.append(previous_action[:2].copy())
+                online_pixel_deltas.append(effector_xy - previous_effector_xy)
+                local_pixel_mapping = _fit_online_pixel_action_mapping(
+                    rgb_model["pixel_action_mapping"],
+                    online_pixel_actions,
+                    online_pixel_deltas,
+                    online_pixel_ridge,
+                )
+                online_pixel_mapping_trace.append(local_pixel_mapping.tolist())
+            if effector_valid:
+                previous_effector_xy = effector_xy.copy()
+            if (
+                phase == "approach"
+                and approach_controller == "world_pixel_fallback"
+                and goal_valid
+                and block_valid
+                and effector_valid
+            ):
+                current_pixel_error = float(np.linalg.norm(block_xy - effector_xy))
+                if (
+                    last_approach_pixel_error is not None
+                    and current_pixel_error >= last_approach_pixel_error - 1.0e-4
+                ):
+                    approach_pixel_stall += 1
+                else:
+                    approach_pixel_stall = 0
+                if (
+                    active_approach_controller == "world"
+                    and approach_pixel_stall >= int(approach_fallback_patience)
+                ):
+                    active_approach_controller = "pixel"
+                    approach_fallback_trace.append("world_to_pixel")
+                    approach_pixel_stall = 0
+                last_approach_pixel_error = current_pixel_error
             action = np.zeros(5, dtype=np.float32)
             if phase == "descend":
                 action[2] = -1.0
@@ -223,6 +382,23 @@ def _capture_contact_branch(
                 if phase_steps >= descend_steps:
                     phase, phase_steps = "approach", 0
             elif phase == "approach":
+                if active_approach_controller == "pixel_adaptive" and not local_pixel_probes_done:
+                    (
+                        obs, info, previous, previous_action, local_pixel_mapping,
+                        probe_actions, probe_deltas, probe_trace,
+                    ) = _run_local_pixel_probes(
+                        env, obs, info, previous, previous_action,
+                        local_pixel_mapping, online_pixel_probe_steps,
+                        online_pixel_probe_magnitude, online_pixel_ridge,
+                    )
+                    online_pixel_actions.extend(probe_actions)
+                    online_pixel_deltas.extend(probe_deltas)
+                    online_pixel_mapping_trace.append(local_pixel_mapping.tolist())
+                    local_pixel_probes_done = True
+                    # The probe samples have already been incorporated; do
+                    # not add a duplicate zero-displacement sample on the
+                    # next control iteration.
+                    previous_effector_xy = None
                 if branch_controller == "privileged_ik_contact":
                     # This is a branch-construction-only intervention.  It
                     # deliberately removes the previously diagnosed RGB
@@ -237,6 +413,23 @@ def _capture_contact_branch(
                     phase = "close"
                     phase_steps = 1
                     approach_errors.append(float(ik_contact_report["xy_error_after_m"]))
+                elif active_approach_controller in {"pixel", "pixel_adaptive"}:
+                    if not (goal_valid and block_valid and effector_valid):
+                        raise RuntimeError("shared RGB contact branch lost a required landmark")
+                    pixel_error = np.asarray(block_xy - effector_xy, dtype=np.float32)
+                    pixel_error_norm = float(np.linalg.norm(pixel_error))
+                    approach_pixel_errors.append(pixel_error_norm)
+                    if pixel_error_norm <= approach_pixel_threshold:
+                        phase, phase_steps = "close", 0
+                    else:
+                        mapping = (
+                            local_pixel_mapping
+                            if active_approach_controller == "pixel_adaptive"
+                            else rgb_model["pixel_action_mapping"]
+                        )
+                        action[:2] = _action_from_pixel_error(
+                            pixel_error, mapping, pixel_approach_gain,
+                        )
                 else:
                     if branch_controller == "privileged_world":
                         # This branch-isolation mode deliberately uses
@@ -252,7 +445,10 @@ def _capture_contact_branch(
                         if not (goal_valid and block_valid and effector_valid):
                             raise RuntimeError("shared RGB contact branch lost a required landmark")
                         world_error = _predict_linear(
-                            _relative_approach_features(effector_xy, block_xy, goal_xy),
+                            _relative_approach_features(
+                                effector_xy, block_xy, goal_xy,
+                                family=approach_feature_family,
+                            ),
                             rgb_model["relative_approach_chart"],
                         )
                         goal_delta = _predict_linear(
@@ -307,6 +503,16 @@ def _capture_contact_branch(
                     "previous_action": previous_action.copy(),
                     "shared_prelude_steps": int(len(approach_errors) + descend_steps + close_steps),
                     "approach_error_trace": approach_errors,
+                    "approach_pixel_error_trace": approach_pixel_errors,
+                    "approach_controller": approach_controller,
+                    "approach_feature_family": approach_feature_family,
+                    "approach_controller_runtime": active_approach_controller,
+                    "approach_fallback_trace": approach_fallback_trace,
+                    "approach_pixel_threshold": float(approach_pixel_threshold),
+                    "pixel_approach_gain": float(pixel_approach_gain),
+                    "online_pixel_mapping_trace": online_pixel_mapping_trace,
+                    "online_pixel_probe_steps": int(online_pixel_probe_steps),
+                    "online_pixel_probe_magnitude": float(online_pixel_probe_magnitude),
                     "branch_controller": branch_controller,
                     "ik_contact_report": copy.deepcopy(ik_contact_report),
                 }
@@ -319,7 +525,8 @@ def _capture_contact_branch(
             f"for seed={initial['seed']} task={initial['task_id']} "
             f"after {max_steps} steps; phase={phase} "
             f"approach_trace_len={len(approach_errors)} "
-            f"last_error_m={approach_errors[-1] if approach_errors else None}"
+            f"last_error_m={approach_errors[-1] if approach_errors else None} "
+            f"last_pixel_error={approach_pixel_errors[-1] if approach_pixel_errors else None}"
         )
     finally:
         env.close()
@@ -943,6 +1150,26 @@ def main() -> None:
     parser.add_argument("--approach-threshold", type=float, default=0.015)
     parser.add_argument("--world-action-gain", type=float, default=0.20)
     parser.add_argument("--approach-standoff-m", type=float, default=0.0)
+    parser.add_argument(
+        "--approach-controller",
+        choices=("world", "pixel", "pixel_adaptive", "world_pixel_fallback"),
+        default="world",
+        help=(
+            "RGB contact approach law; pixel_adaptive updates the calibration "
+            "Jacobian from observed RGB effector transitions only; "
+            "world_pixel_fallback switches after RGB error stagnation"
+        ),
+    )
+    parser.add_argument("--approach-pixel-threshold", type=float, default=0.05)
+    parser.add_argument("--pixel-approach-gain", type=float, default=0.20)
+    parser.add_argument("--online-pixel-ridge", type=float, default=0.01)
+    parser.add_argument("--online-pixel-probe-steps", type=int, default=1)
+    parser.add_argument("--online-pixel-probe-magnitude", type=float, default=0.25)
+    parser.add_argument("--approach-fallback-patience", type=int, default=5)
+    parser.add_argument(
+        "--approach-feature-family", choices=("linear", "bilinear"), default="linear",
+        help="calibration-only relative approach chart family",
+    )
     parser.add_argument("--push-pixel-gain", type=float, default=0.20)
     parser.add_argument(
         "--pixel-guard-threshold", type=float, default=0.5,
@@ -1002,6 +1229,7 @@ def main() -> None:
         args.descend_steps,
         args.device,
         args.chart_ridge,
+        args.approach_feature_family,
     )
     candidates = _candidate_bank(args.candidate_bank)
     calibration_branches = [
@@ -1015,6 +1243,14 @@ def main() -> None:
             approach_standoff_m=args.approach_standoff_m,
             max_steps=args.max_steps,
             branch_controller=args.branch_controller,
+            approach_controller=args.approach_controller,
+            approach_pixel_threshold=args.approach_pixel_threshold,
+            pixel_approach_gain=args.pixel_approach_gain,
+            online_pixel_ridge=args.online_pixel_ridge,
+            online_pixel_probe_steps=args.online_pixel_probe_steps,
+            online_pixel_probe_magnitude=args.online_pixel_probe_magnitude,
+            approach_fallback_patience=args.approach_fallback_patience,
+            approach_feature_family=args.approach_feature_family,
         )
         for initial in calibration_initials
     ]
@@ -1029,6 +1265,14 @@ def main() -> None:
             approach_standoff_m=args.approach_standoff_m,
             max_steps=args.max_steps,
             branch_controller=args.branch_controller,
+            approach_controller=args.approach_controller,
+            approach_pixel_threshold=args.approach_pixel_threshold,
+            pixel_approach_gain=args.pixel_approach_gain,
+            online_pixel_ridge=args.online_pixel_ridge,
+            online_pixel_probe_steps=args.online_pixel_probe_steps,
+            online_pixel_probe_magnitude=args.online_pixel_probe_magnitude,
+            approach_fallback_patience=args.approach_fallback_patience,
+            approach_feature_family=args.approach_feature_family,
         )
         for initial in test_initials
     ]
@@ -1094,6 +1338,14 @@ def main() -> None:
             "approach_threshold_m": args.approach_threshold,
             "world_action_gain": args.world_action_gain,
             "approach_standoff_m": args.approach_standoff_m,
+            "approach_controller": args.approach_controller,
+            "approach_pixel_threshold": args.approach_pixel_threshold,
+            "pixel_approach_gain": args.pixel_approach_gain,
+            "online_pixel_ridge": args.online_pixel_ridge,
+            "online_pixel_probe_steps": args.online_pixel_probe_steps,
+            "online_pixel_probe_magnitude": args.online_pixel_probe_magnitude,
+            "approach_fallback_patience": args.approach_fallback_patience,
+            "approach_feature_family": args.approach_feature_family,
             "push_pixel_gain": args.push_pixel_gain,
             "pixel_guard_threshold": args.pixel_guard_threshold,
             "readout_fit": "calibration roots only; no test outcomes",

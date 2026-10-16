@@ -106,6 +106,64 @@ visual successor probe），而不是继续增加 Fourier 阶数或 readout 容�
 
 下一步应在未参与 bank 设计的 Reacher / Cube / PointMaze 上复用同一 support-aware 协议，并保持 action bank、CEM 预算、seed pairing 和 train/calibration/outcome 分离。如果 candidate bank 的收益不能跨环境复现，就把它定位为 TwoRoom-specific support repair，而不是普适控制理论。
 
+## WA-JEPA-inspired action-conditioned future/task intervention — 2026-10-16
+
+为检验 WA-JEPA 的可迁移启发，新增
+`experiments/decision_benchmark/train_joint_rgb_future_task_adapter.py`。
+它在同一候选动作序列上使用 causal source context，同时预测：
+
+1. realized RGB successor residual；
+2. physical terminal XY effect；
+3. 可选的直接 terminal task cost。
+
+共享 trunk 的拟合、归一化和固定 epoch 全部只使用 train roots；8 个
+calibration roots 和 8 个 outcome roots 不参与拟合或选择。该实验的物理
+terminal state 只作为 intervention-supervised label，runtime 输入没有
+simulator state，也没有把 outcome 结果用于调权重。
+
+### 正向机制结果：history-conditioned support panel
+
+在 `jepa_history4_conditioned_source` 的同一 24/8/8 root split 上，
+`task-only` 与 `joint future + task-effect` 的 outcome 对照为：
+
+| context / objective | task-effect RMSE | candidate spread ratio | paired regret gain |
+| --- | ---: | ---: | ---: |
+| frozen history, task-only | 0.32546 | 0.93720 | 0.00674 |
+| frozen history, joint RGB-future/task | 0.31021 | 0.95749 | 0.02286 |
+
+joint 目标同时降低 effect RMSE、保持候选变化幅度接近真实幅度，并提高
+held-out paired regret gain。这是一个有限的 action-conditioned
+future/task 机制证据，不是闭环规划证据。完整 artifact 为：
+
+`results/decision_benchmark_candidate_bank_20261016/joint_latent_future_task_history4_cuda.json`
+
+### 失败复核：support 不足的 checkpoint panel
+
+在另一个 frozen checkpoint/readout panel 上，RGB projection 与 latent
+projection 实际来自同一 export，且 source context 无法稳定辨识 root-specific
+action geometry。结果为：
+
+| objective | task-effect RMSE | candidate spread ratio | paired regret gain |
+| --- | ---: | ---: | ---: |
+| task-only | 0.63241 | 1.68250 | -0.07519 |
+| joint RGB-future/task | 0.49800 | 1.70414 | -0.11883 |
+| joint + direct cost head | 0.43439 | 1.68377 | -0.06734 |
+| cost-only | — | 0.22488 | -0.07588 |
+
+因此“平均 prediction error 下降”仍不能推出 action ranking 改善；pairwise
+ranking loss 也没有改变被选 candidate。该失败将原因进一步定位为
+representation/action-support insufficiency，而不是单纯的 loss、memory
+length 或 cost-readout 形式错误。
+
+### 当前方法决策
+
+正式方法不把 joint adapter 自动发布为 controller。只有同时通过
+candidate variation、calibration contrast bound、action-inverse risk 和
+real/predicted successor consistency 时，才允许使用 learned candidate；否则
+回退到冻结的 support-aware baseline。该 intervention 当前状态是
+`implemented + partial mechanism evidence`，仍不是 frozen-LeWM causal
+dynamics、跨环境闭环规划或 universal world-model 证据。
+
 ## Cube RGB visual-servo follow-up — 2026-10-16
 
 The next controlled intervention isolated two implementation/mechanism failures
@@ -684,3 +742,465 @@ Artifacts:
 - `results/gdd_wm_cross_environment_20261016/cube_hybrid_contact_latent_gated_residual_smoke_cuda/`;
 - `experiments/run_cube_hybrid_contact_latent.py`;
 - `experiments/audit_cube_temporal_action_effect.py`.
+
+## WA-JEPA-inspired RGB contact coverage audit — 2026-10-16 continuation
+
+The WA-JEPA reading suggests an action-conditioned future interface, but the
+first prerequisite remains observable contact coverage.  The next intervention
+therefore added a deployment-visible local RGB Jacobian to
+`run_cube_hybrid_contact_latent.py`: after descent, the controller may issue
+short `+x/-x/+y/-y` RGB probes, fit a ridge-regularized local action-to-effector
+map from successive RGB centroids, and then run the approach controller.  No
+simulator state, contact label, or held-out outcome is used by the update.
+
+The smoke results locate another boundary rather than closing the task:
+
+- RGB world approach with `max_steps=90` failed before push on test seed
+  `20262221`, task 2, at `0.04431 m` approach error.
+- Increasing the fixed budget to `180` did not solve it; the same protocol
+  failed on seed `20262221`, task 2, at `0.02689 m`.  Thus this is not only a
+  step-budget problem.
+- A global RGB pixel approach reached push on task 2 but remained in approach
+  on tasks 3 and 4 under the fixed gain-0.20 smoke.  Gain `0.50` reached push
+  on tasks 1, 2, and 4 but still failed task 3, so gain tuning alone is not a
+  stable repair.
+- Passive online Jacobian updates were insufficient because early actions did
+  not excite both action directions.  Explicit four-direction probes reduced
+  the task-3 initial pixel error from about `0.288` to `0.153`, but the
+  calibration root still failed to reach push after `180` steps.
+
+The complementary world-frame control smoke reached push on all four held-out
+test roots (`20262220–20262223`), while a separate calibration-seed panel
+reached push on only `3/4` roots.  This root dependence is why the hybrid
+runner remains fail-closed: a post-contact comparison cannot be released as a
+visual-planning result when the contact branch itself is not complete.
+
+The local-Jacobian implementation has five focused tests and the full Cube
+regression suite passes (`28 passed`).  The current scientific conclusion is:
+
+> WA-JEPA's action-conditioned future idea is relevant, but LeWM first needs a
+> root-stable RGB action interface.  Until contact coverage is independently
+> passed, a positive post-contact temporal or pixel-guard result remains a
+> conditional mechanism result, not frozen visual online planning evidence.
+
+## World-to-pixel fallback sensitivity and independent-panel boundary
+
+To test whether the complementary world/pixel coverage could be repaired
+without privileged state, the branch constructor added a fixed
+`world_pixel_fallback` law: start with the calibration-fitted world chart and
+switch to RGB pixel feedback after five consecutive RGB error non-improvements.
+With a predeclared pixel close threshold of `0.06`, the 8-calibration/4-test
+smoke reached the complete comparison protocol.  Its
+`latent_temporal_pixel_guarded` arm improved final distance relative to
+`latent_temporal` on average by `-0.08750 m` (`1/1/2` wins/losses/ties) and
+relative to `latent_static` by `-0.06584 m` (`2/0/2`); it remained slightly
+worse than pure RGB pixel-adaptive feedback (`+0.00910 m`, `0/2/2`).
+
+This is only a mechanism smoke.  The independent 40-calibration/32-test panel
+did not reach the comparison stage: calibration seed `20261238`, task 4,
+stalled after 180 steps at RGB pixel error `0.26020` even after the fallback.
+Consequently the smoke gain is not released as a cross-root planning result.
+The correct interpretation is that the fallback repairs a subset of local
+world/pixel chart failures, while the current RGB/action interface still has
+out-of-support roots.  A complete visual-planning claim therefore requires a
+separate contact-coverage gate or a new observation/action interface; it
+cannot be obtained by tuning latent memory or guard thresholds.
+
+The implementation remains covered by the Cube regression suite (`28 passed`)
+and records the controller, fallback trace, probe settings, and threshold in
+the artifact protocol.  Runtime inputs remain RGB-only; privileged IK is not
+used in this branch.
+
+## WA-JEPA-inspired future/action intervention on PointMaze — 2026-10-16
+
+The first implementation exposed an evaluation confound before adding a new
+model. The joint adapter returned a `cost_prediction` tensor for every
+objective, and the per-seed report used that tensor for ranking even for
+`task_only` and ordinary `joint` objectives that never trained the cost head.
+The ensemble path already disabled that head for those objectives. This
+created inconsistent seed-level evidence. `_split_report` now has an explicit
+`allow_cost_head` flag, and only `joint_cost`, `cost_only`, and the explicitly
+declared preference objective can use it. The regression test
+`test_non_cost_objective_does_not_use_cost_head_for_ranking` guards this
+invariant.
+
+The code then added two asymmetric future/action objectives to
+`train_joint_rgb_future_task_adapter.py`:
+
+- `asym_joint`: future loss sees a detached action representation, while the
+  task branch sees the live action representation and the future hidden state;
+- `asym_rank`: the same architecture with the existing terminal-effect
+  ranking loss;
+- `asym_preference`: a direct action-preference score trained on within-root
+  pairwise cost orderings rather than deriving ranking only from predicted XY.
+
+These are mechanism interventions inspired by WA-JEPA's asymmetric
+future/action coupling, not a claim that the small PointMaze adapter is a flow
+matching world-action model.
+
+On the history-4 support-sufficient panel (24 train / 8 calibration / 8
+outcome roots, five seeds, CUDA), the corrected v3 artifact gave:
+
+| objective | task-effect RMSE | paired regret gain | selected success | candidate spread ratio |
+| --- | ---: | ---: | ---: | ---: |
+| task-only | 0.32545 | 0.00674 | 0.125 | 0.93721 |
+| shared joint | 0.31023 | 0.01720 | 0.125 | 0.95757 |
+| asymmetric joint | 0.28842 | 0.02761 | 0.250 | 0.96775 |
+| asymmetric rank | 0.28682 | 0.02438 | 0.250 | 0.96655 |
+
+All five `asym_joint` seed-level paired gains were positive on this panel.
+However, the root-level improvement was concentrated mainly in one outcome
+root; this is mechanism evidence, not stable cross-root closure.
+
+The same code was then run on the earlier single-frame negative panel. The
+asymmetric architecture reduced the negative ranking consequence but did not
+turn it positive:
+
+- shared joint: paired regret gain `-0.11883`, selected regret `0.13569`;
+- asymmetric joint: paired regret gain `-0.00471`, selected regret `0.02157`;
+- asymmetric rank: paired regret gain `-0.00406`, selected regret `0.02092`;
+- direct preference: paired regret gain `-0.07336`.
+
+This separates two causes. Symmetric multi-task interference is real and can
+be repaired in a history-sufficient regime, but the single-frame panel still
+lacks enough root-specific action-effect information. A direct preference
+head does not solve missing observability by itself. The earlier standalone
+adapter gain (`+0.07477`) is not promoted: its random baseline varied with
+seed, whereas the corrected paired protocol uses the same root-level random
+draw for every method.
+
+Artifacts:
+
+- `results/decision_benchmark_candidate_bank_20261016/joint_rgb_future_task_history4_v3_cuda.json`;
+- `results/decision_benchmark_candidate_bank_20261016/joint_rgb_future_task_singleframe_v3_cuda.json`;
+- `results/decision_benchmark_candidate_bank_20261016/joint_rgb_future_task_singleframe_v4_preference_cuda.json`;
+- `experiments/decision_benchmark/train_joint_rgb_future_task_adapter.py`;
+- `tests/test_train_joint_rgb_future_task_adapter.py` (`4 passed`).
+
+Current conclusion: WA-JEPA's asymmetric coupling is a valid partial repair,
+but it does not remove the representation/support boundary. The next required
+intervention is causal intermediate-future supervision plus a calibration-only
+support/uncertainty gate; no universal planning claim is released from these
+offline terminal panels.
+
+## Temporal-amplitude and action-effect residual follow-up — 2026-10-16
+
+The next CUDA rerun tested two distinct causes rather than treating every
+negative result as a memory-length problem. First, the sequence objective was
+augmented with an explicit first-difference loss (`asym_sequence_temporal`).
+Second, an action-effect residual decomposition was added: a context-only
+root-shared baseline plus a context/action-conditioned residual
+(`asym_relative`), with a within-root vector difference loss in
+`asym_relative_pair`.
+
+The final comparable artifact is
+`results/decision_benchmark_candidate_bank_20261016/joint_rgb_future_task_history4_final_v7_cuda.json`.
+It uses the same 24/8/8 root split, five seeds, fixed 250 epochs, and CUDA.
+The non-relative model's module registration order was restored before this
+run so seed comparisons remain comparable to the original architecture.
+
+| objective | mean seed paired-regret gain | mean task-effect RMSE | future change ratio |
+| --- | ---: | ---: | ---: |
+| `asym_joint` | `+0.01843` | `0.298` | n/a |
+| `asym_relative` | `+0.01362` | `0.306` | n/a |
+| `asym_relative_pair` | `+0.01465` | `0.306` | n/a |
+| `asym_sequence` | `+0.00736` | `0.300` | `0.624` |
+| `asym_sequence_temporal` | `+0.00839` | `0.297` | `0.736` |
+
+The temporal derivative loss therefore repairs temporal amplitude: the
+predicted/realized change-magnitude ratio rises from about `0.62` to `0.74`.
+It does not improve the downstream ranking consequence over `asym_joint`, and
+one of five seed-level gains remains negative. The residual decomposition and
+the vector difference loss likewise do not exceed `asym_joint`. They prevent
+candidate-spread collapse after the implementation fix, but do not recover
+the missing goal-directed action sign.
+
+An additional data-level audit explains this boundary. On outcome roots, the
+realized RGB sequence change correlates strongly with displacement magnitude
+(Spearman about `0.78`) but is nearly unrelated to goal cost (about `-0.14`).
+Thus the current RGB successor preserves that an action caused motion, but not
+which action moves toward the goal. Temporal memory is not sufficient when the
+future observation chart lacks directional action identifiability.
+
+During this follow-up two implementation issues were caught and repaired
+before interpreting the final artifact: the first residual prototype omitted
+the task loss for `asym_relative`, and adding the new branch changed module
+registration order and therefore seed initialization. The invalid intermediate
+artifacts are not promoted as scientific evidence. The regression suite now
+passes `13` tests.
+
+The updated claim is consequently narrower and more useful: asymmetric
+future/action coupling is a reproducible partial repair; temporal derivative
+supervision reduces future-amplitude shrinkage; neither resolves RGB goal-
+directed action identifiability. The next valid intervention must change the
+observation/action interface or add an independently calibrated directional
+effect probe, followed by held-out planning—not another generic memory loss.
+
+## Realized-future oracle upper bound — 2026-10-16
+
+To distinguish successor-prediction error from representation insufficiency,
+the same adapter was rerun with the *realized* future RGB projection sequence
+as its context (`context_family=realized_future_projection`). This is an
+offline oracle diagnostic only: future observations are unavailable at runtime
+and no planning claim is attached to this arm.
+
+Artifact:
+`results/decision_benchmark_candidate_bank_20261016/joint_rgb_future_task_history4_realized_future_oracle_v8_cuda.json`.
+
+The `asym_joint` seed-level paired regret gains were
+`[-0.0311, -0.0535, -0.0120, -0.0707, -0.0190]`; all five were negative.
+The ensemble gain was `-0.0560`, despite RGB successor RMSE improving to about
+`0.122`. The direct preference head had a positive ensemble point estimate
+(`+0.0303`) but mixed seed-level signs and is not promoted as a repair.
+
+This rules out the narrow explanation that the remaining failure is only
+caused by the learned successor predictor. The current projected RGB future
+interface does not expose a stable directional action-effect coordinate under
+the available root/action support; feeding the high-dimensional oracle also
+raises variance. The next intervention must add a low-dimensional directional
+effect probe or a richer action/observation chart, and must be validated on an
+independent held-out planning consequence.
+
+## Direct future-direction readout ablation — 2026-10-16
+
+As a final architecture-side check, `asym_sequence_direct` explicitly feeds
+the predicted sequence endpoint and endpoint-minus-start displacement into the
+task head. This tests whether the failure was caused by the task head
+discarding directional information already present in the predicted sequence.
+
+Artifact:
+`results/decision_benchmark_candidate_bank_20261016/joint_rgb_future_task_history4_direct_sequence_v9_cuda.json`.
+
+The direct readout produced seed-level paired gains
+`[+0.0310, -0.0047, +0.0052, +0.0170, -0.0070]`, while the original
+`asym_joint` remained positive on all five seeds. Its future change ratios were
+only `0.58–0.68`. Thus explicitly exposing the predicted temporal direction
+does not turn the negative cases into a stable gain. The remaining failure is
+not merely hidden inside the task-head pooling operation.
+
+The negative-result diagnosis is therefore closed for this family of
+interventions: asymmetric coupling repairs shared-objective interference;
+derivative supervision repairs part of temporal amplitude shrinkage; residual
+and direct directional readouts do not restore goal-directed action
+identifiability. Further progress requires changing the measured interface
+(for example, an independently calibrated short-pulse directional effect
+probe or a richer RGB chart), followed by a fresh held-out planning panel.
+
+## Root-bootstrap and uncertainty-gated follow-up — 2026-10-16
+
+The active reference-probe result was audited with the root, rather than the
+seed-root row, as the resampling unit. The five seed gains were averaged within
+each root before bootstrap. For the `v17` `asym_joint` arm, the root mean gain
+was `+0.01495`, but the root-bootstrap 95% interval was
+`[-0.00920,+0.05593]`; removing one root produced a minimum mean of
+`-0.00366`. The apparent positive point estimate is therefore dominated by
+root heterogeneity and is retained as mechanism pilot evidence only.
+
+Artifact:
+`results/decision_benchmark_candidate_bank_20261016/adapter_root_bootstrap_audit_v17_vs_v15.json`.
+The reusable implementation is
+`experiments/decision_benchmark/audit_adapter_bootstrap.py`.
+
+To test whether the remaining failure was a missing risk gate, a new
+calibration-only ensemble gate was implemented. It fits five seeds on train
+roots, estimates context support and seed disagreement, chooses a fixed gate
+from calibration roots, and evaluates outcome roots once. On the passive RGB
+history-4 hybrid panel:
+
+| arm | outcome paired-regret gain | root-bootstrap 95% CI |
+| --- | ---: | ---: |
+| asymmetric joint, no gate | `-0.00153` | — |
+| support gate | `+0.00153` | `[-0.01597,+0.01797]` |
+| support + rank-instability gate | `-0.00005` | `[-0.01773,+0.01684]` |
+| latent-history support/rank gate | `-0.00092` | `[-0.01862,+0.01603]` |
+
+The calibration-selected uncertainty penalty was zero in both RGB runs. Thus
+the gate can identify and slightly suppress risky roots, but it does not
+create a stable action effect. Replacing RGB history with LeWM latent history
+also does not recover the ranking consequence. The diagnosis is now narrower:
+
+> The missing object is a root-stable, goal-directed action-effect coordinate;
+> neither lower successor RMSE, longer history, latent substitution, nor
+> generic uncertainty penalization supplies it.
+
+The gate implementation is
+`experiments/decision_benchmark/run_uncertainty_gated_selection.py`, with
+regression coverage in `tests/test_uncertainty_gated_selection.py`. All runs
+used the host CUDA interpreter and `device=cuda`; no CPU fallback was used.
+These results remain diagnostic/negative and do not open claims of frozen RGB
+online planning, universal world-model transfer, or a universal commutator
+certificate.
+
+## Goal-relative task-effect chart: in-support repair and external boundary — 2026-10-16
+
+The previous hybrid action interface exposed both raw and goal-relative action
+coordinates, but it still trained the task-effect head in raw XY. This can
+create a chart mismatch: the input action semantics are goal-relative while
+the supervised effect is root-oriented. The new intervention trains the effect
+head in the goal-relative direct/perpendicular basis and maps its prediction
+back to physical XY before candidate ranking.
+
+On the original 16-root near-goal outcome, the goal-relative `asym_joint` arm
+had positive paired-regret gains for all five seeds:
+
+```text
++0.01873, +0.01040, +0.01837, +0.01556, +0.01727
+```
+
+Its ensemble gain was `+0.01642`, compared with `-0.00153` for the same
+architecture trained in raw XY. The root-bootstrap CI was still
+`[-0.00952,+0.05746]`; therefore this is a mechanism pilot, not stable
+cross-root planning evidence.
+
+To test the boundary without reusing the original outcome roots, a new
+canonical 100-root bank was generated with 48 train roots, 16 calibration
+roots, 20 previously unused outcome roots, and 16 old outcome roots excluded.
+The corrected explicit split contains 84 roots total. All 84 roots passed the
+dataset-matched RGB renderer/source gate and realized PCA successor extraction.
+
+On the 20 previously unused outcome roots, the same frozen protocol reversed:
+
+| task chart | ensemble paired-regret gain | root-bootstrap 95% CI | success support |
+| --- | ---: | ---: | ---: |
+| raw XY | `-0.01000` | `[-0.01649,-0.00440]` | `0/20` |
+| goal-relative | `-0.01034` | `[-0.01622,-0.00503]` | `0/20` |
+
+The new outcome roots had source-goal distance `2.19–2.79`, whereas the
+original near-goal outcome averaged `1.36` and contained `3/16` roots with at
+least one successful candidate. Thus the positive chart result is not a
+universal adapter repair. It identifies a more precise law:
+
+> Goal-relative task supervision repairs a chart mismatch only inside the
+> candidate/action support where goal-directed effects are observable; under
+> distant roots with no successful candidate support, it cannot recover
+> planning and may amplify the wrong geometric bias.
+
+The operational consequence is to make task-chart selection
+horizon/support-conditioned and fail-closed. A model must not be permitted to
+claim a planning gain on roots whose action support has no independently
+calibrated directional effect. The external artifact is
+`results/decision_benchmark_candidate_bank_20261016/task_frame_external_outcome20_hybrid_v1_cuda.json`;
+the RGB bridge is
+`results/decision_benchmark_candidate_bank_20261016/rgb_successor_history4_canonical_external_outcome20_v2_cuda/`.
+This closes the current positive result as a scoped mechanism plus a sharp
+failure boundary; it does not open frozen RGB online planning, universal
+world-model, or commutator-certificate claims.
+
+## Goal-directed action-support intervention — 2026-10-16
+
+To test whether the external failure was caused by the paired-order action
+bank rather than by the future/task adapter, a separate
+`goal_directed_mixture_v1` bank was generated. The source export, checkpoint,
+history window, 48/16/20 root split, 16 excluded roots, RGB renderer, frozen
+JEPA encoder, five adapter seeds, and task-frame protocol were held fixed. The
+new bank was not selected using terminal outcomes and does not overwrite the
+canonical bank.
+
+The bank passed the visual bridge on all 84 retained roots:
+
+- renderer/source consistency: `84/84`;
+- realized RGB latent extraction: complete;
+- PCA successor comparison: complete;
+- runtime device: CUDA on the host RTX 5060 Ti.
+
+The candidate support improved, but did not close the task:
+
+| outcome support statistic | canonical bank | goal-directed v1 |
+| --- | ---: | ---: |
+| mean best terminal distance | `2.1490` | `1.9513` |
+| roots with a candidate within `0.25` of goal | `0/20` | `0/20` |
+| raw/goal-relative `asym_joint` selected success | `0/20` | `0/20` |
+
+The task-frame adapter selected the best available candidate on all 20 outcome
+roots for the new bank, but this still yielded zero terminal successes. A
+calibration-only uncertainty/context-support gate selected no fallback roots;
+its outcome bootstrap interval was `[0.38665, 0.45595]` for the bank's paired
+regret statistic, but this does not constitute a success gain because the
+success support remained `0/20`. The gate's context support signal therefore
+does not measure action reachability.
+
+The remaining cause is now more specific than generic representation failure:
+the 20-step action horizon is physically insufficient for the distant roots.
+For example, a far root with source-goal distance about `2.79` moved only about
+`0.5` under a saturated 20-step pulse in the declared PointMaze dynamics.
+No latent readout can select a successful candidate when the fixed bank and
+horizon contain none. The positive v1 changes are therefore an
+action-support/reachable-horizon effect, not evidence that the frozen latent
+has acquired physical causal dynamics.
+
+Artifacts:
+
+- `results/decision_benchmark_candidate_bank_20261016/jepa_history4_goal_directed_external_outcome20_cuda/`;
+- `results/decision_benchmark_candidate_bank_20261016/rgb_successor_history4_goal_directed_external_outcome20_cuda/`;
+- `results/decision_benchmark_candidate_bank_20261016/task_frame_goal_directed_external_outcome20_hybrid_v1_cuda.json`;
+- `results/decision_benchmark_candidate_bank_20261016/uncertainty_gated_history4_goal_directed_external_outcome20_cuda.json`.
+
+The next repair must therefore be a predeclared reachable-horizon/receding-
+horizon protocol (or a separate longer-horizon adapter), evaluated on the
+same root split. It must report permission/rejection separately from planning
+success. Expanding the action bank alone must not be presented as a latent or
+world-model repair.
+
+## RGB-only receding-horizon repair — 2026-10-16
+
+The repository already contained an RGB-only PointMaze receding-horizon
+runner, but it originally accepted only contiguous episode ranges. That made
+it impossible to reuse the explicit 16-calibration/20-outcome root split
+without accidentally placing four outcome roots in the calibration range. The
+runner now accepts explicit `--calibration-episodes` and `--test-episodes`
+lists, rejects overlap and duplicate IDs, and records the split contract.
+
+On the exact 16/20 split, the original 12-block execution budget was still too
+short:
+
+| method | success | mean final distance |
+| --- | ---: | ---: |
+| `wm_rgb` | `2/20` | `1.6961` |
+| `wm_rgb_guarded` | `2/20` | `1.4424` |
+| `visual_dynamics` | `2/20` | `1.3961` |
+
+The guarded arm improved distance over unguarded WM (`-0.2537`, paired
+bootstrap CI `[-0.4348,-0.0581]`) but still did not improve success and was
+worse than the calibration-only visual-dynamics fallback. This confirms that
+the earlier positive 80-root result cannot be generalized to the harder
+external split at the shorter horizon.
+
+Keeping every other setting fixed and increasing the predeclared receding
+horizon to 24 blocks repaired the reachable-horizon failure:
+
+| panel | method | success | mean final distance |
+| --- | --- | ---: | ---: |
+| external outcome-20 | `wm_rgb` | `2/20` | `1.0773` |
+| external outcome-20 | `wm_rgb_guarded` | `13/20` | `0.3243` |
+| external outcome-20 | `visual_dynamics` | `12/20` | `0.3247` |
+| excluded-16 | `wm_rgb` | `2/16` | `0.9330` |
+| excluded-16 | `wm_rgb_guarded` | `13/16` | `0.2191` |
+| excluded-16 | `visual_dynamics` | `12/16` | `0.2678` |
+
+Across the two root-disjoint panels (`n=36`), guarded versus unguarded WM had
+`26/36` versus `4/36` successes and paired final-distance delta `-0.7356`
+with bootstrap CI `[-0.9027,-0.5782]`. Guarded versus visual dynamics had
+`26/36` versus `24/36` successes and delta `-0.0219`, CI
+`[-0.0780,+0.0275]`; the learned WM is therefore non-inferior to its
+calibration-only fallback on this protocol, but not decisively superior. The
+gate fell back on `564/703` decisions (`80.2%`).
+
+This is the first stable positive closed-loop consequence in the current
+PointMaze branch, but its causal interpretation is deliberately narrow:
+
+> the repair is a support-aware, fail-closed, long-horizon RGB controller;
+> most decisions are delegated to a calibration-only visual-dynamics policy,
+> so the result does not prove that the frozen learned dynamics alone caused
+> the gain.
+
+Artifacts:
+
+- `experiments/run_live_pointmaze_planning.py`;
+- `results/pointmaze_rgb_online_planning_v8_cuda_external20_split/report.json`;
+- `results/pointmaze_rgb_online_planning_v9_cuda_external20_longer24/report.json`;
+- `results/pointmaze_rgb_online_planning_v10_cuda_excluded16_longer24/report.json`.
+
+The protocol now has a real positive planning result for PointMaze, while the
+pure `wm_rgb` arm remains negative. The next required test is to reduce the
+fallback rate without losing the held-out non-degradation guarantee; any such
+change must be selected on calibration roots only.

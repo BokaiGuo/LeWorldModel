@@ -10,6 +10,7 @@ from experiments.run_live_pointmaze_planning import (
     action_bank,
     choose_action,
     green_center,
+    parse_episode_list,
 )
 
 
@@ -35,6 +36,17 @@ def test_action_bank_is_goal_relative_and_finite() -> None:
 def test_action_bank_rejects_too_few_directions() -> None:
     with pytest.raises(ValueError, match="at least four"):
         action_bank(np.zeros(2), GOAL_STATE, 3, [0.25])
+
+
+def test_parse_episode_list_accepts_explicit_root_lists() -> None:
+    assert parse_episode_list("1800, 1812,1899", "episodes") == [1800, 1812, 1899]
+    assert parse_episode_list("", "episodes") is None
+
+
+@pytest.mark.parametrize("value", ["1800,1800", "-1,1800", "abc,1800"])
+def test_parse_episode_list_rejects_unsafe_root_lists(value: str) -> None:
+    with pytest.raises(ValueError):
+        parse_episode_list(value, "episodes")
 
 
 def test_guarded_world_model_falls_back_when_dynamics_regret_exceeds_tolerance(monkeypatch) -> None:

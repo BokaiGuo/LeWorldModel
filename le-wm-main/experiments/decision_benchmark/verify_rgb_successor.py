@@ -257,6 +257,29 @@ def _temporal_contract(metadata: dict[str, Any], source_frame: int) -> tuple[lis
     return indices, context_length
 
 
+def _future_projection_sequence(
+    encoded_sequence: np.ndarray,
+    pca_mean: np.ndarray,
+    pca_basis: np.ndarray,
+    context_length: int,
+    predicted_horizon: int,
+) -> np.ndarray:
+    """Project every causal realized future token, not only the terminal one."""
+
+    encoded_sequence = np.asarray(encoded_sequence, dtype=np.float64)
+    if encoded_sequence.ndim != 2:
+        raise ValueError(f"expected [time, feature] encoded sequence, got {encoded_sequence.shape}")
+    if context_length < 1 or predicted_horizon < 1:
+        raise ValueError("context_length and predicted_horizon must be positive")
+    end = int(context_length) + int(predicted_horizon)
+    if end > encoded_sequence.shape[0]:
+        raise ValueError(
+            f"future sequence ends at {end}, outside encoded length {encoded_sequence.shape[0]}"
+        )
+    future_raw = encoded_sequence[int(context_length):end]
+    return (future_raw - np.asarray(pca_mean, dtype=np.float64)) @ np.asarray(pca_basis, dtype=np.float64).T
+
+
 def verify(
     candidate_dataset: Path,
     arrays_path: Path,
@@ -348,7 +371,11 @@ def verify(
                     f"{encoded.shape[1]} for context_length={context_length}"
                 )
             realized_raw = encoded[candidate_index, terminal_index]
-            realized_projection = (realized_raw - pca_mean) @ pca_basis.T
+            realized_future_projection = _future_projection_sequence(
+                encoded[candidate_index], pca_mean, pca_basis,
+                context_length, int(record["predicted_horizon"]),
+            )
+            realized_projection = realized_future_projection[-1]
             projection_error = realized_projection - predicted
             all_rows.append({
                 "instance_id": root,
@@ -359,6 +386,7 @@ def verify(
                 "source_latent_projection_l1": source_error,
                 "source_projection": source_projection.tolist(),
                 "source_history_projection": source_history_projection.tolist(),
+                "realized_future_projection": realized_future_projection.tolist(),
                 "predicted_terminal_projection": predicted.tolist(),
                 "realized_terminal_projection": realized_projection.tolist(),
                 "predicted_vs_realized_projection_l1": float(np.mean(np.abs(projection_error))),
@@ -422,6 +450,7 @@ def verify(
             "temporal_context_length": sorted({int(item["temporal_context_length"]) for item in root_reports}),
             "temporal_context_indices": "recorded per root in root_reports",
             "terminal_readout": "encoded temporal index context_length + predicted_horizon - 1; no single-frame successor encoding",
+            "future_sequence_readout": "all realized encoded tokens from context_length through terminal index, projected with the frozen adapter PCA",
             "simulator_state_role": "action execution and posthoc renderer construction only",
             "source_consistency_threshold_normalized_mean_l1": float(source_consistency_threshold),
             "max_roots": int(max_roots),
@@ -447,6 +476,7 @@ def verify(
         output / "realized_latents.npz",
         **{f"raw::{row['instance_id']}/{row['candidate_id']:03d}": np.asarray(row["realized_terminal_raw_latent"], dtype=np.float32) for row in all_rows},
         **{f"projection::{row['instance_id']}/{row['candidate_id']:03d}": np.asarray(row["realized_terminal_projection"], dtype=np.float32) for row in all_rows},
+        **{f"future_projection::{row['instance_id']}/{row['candidate_id']:03d}": np.asarray(row["realized_future_projection"], dtype=np.float32) for row in all_rows},
     )
     return report
 

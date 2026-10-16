@@ -13,6 +13,7 @@
 | `le-wm-main/experiments/decision_benchmark/` | action-effect、ATM/IAEI、task contrast、PDTC、candidate bank、RGB successor、RGB-to-task selective audit | active / gated |
 | `le-wm-main/experiments/decision_benchmark/audit_rgb_task_contrast.py` | candidate-collapse diagnostics、train-only joint action support、fail-closed release | active / gated |
 | `le-wm-main/experiments/decision_benchmark/train_rgb_candidate_successor_adapter.py` | train-root-only counterfactual RGB successor adapter control；--history-windows supports causal RGB context | intervention-only / not planning evidence |
+| `le-wm-main/experiments/decision_benchmark/train_joint_rgb_future_task_adapter.py` | WA-JEPA-inspired causal future/task-effect adapter；支持 asymmetric joint/ranking/preference、sequence temporal-derivative 与 root-relative pair-effect ablations | implemented / partial mechanism evidence / not planning evidence |
 | `le-wm-main/experiments/decision_benchmark/verify_rgb_successor.py` | dataset-matched realized RGB successor verification；legacy two-frame and history-conditioned temporal contracts | active / gated |
 | `le-wm-main/experiments/run_pusht_mode_aware_shared_candidate.py` | privileged PushT mode/action-effect controller；local observed-effect neighborhood and paired moment-sign probes | active / mechanism-only / pose gate failed |
 | `le-wm-main/experiments/run_live_tworoom_planning.py` | frozen RGB TwoRoom CEM versus paired random control | 4-panel, 32-episode CUDA aggregate completed; scoped positive consequence |
@@ -903,3 +904,120 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   `results/gdd_wm_cross_environment_20261016/cube_hybrid_contact_latent_sequence_calibrated_panel40cal32test_cuda/`,
   `.../cube_hybrid_contact_latent_sequence_calibrated_independent_seed20262020_cuda/`,
   and `.../cube_hybrid_contact_latent_gated_residual_smoke_cuda/`.
+
+- WA-JEPA-inspired PointMaze future/action intervention (2026-10-16): first
+  repaired an evaluation inconsistency where untrained cost heads contaminated
+  per-seed ranking for non-cost objectives. The corrected runner adds
+  asymmetric future/action objectives and a direct pairwise preference head.
+  On the history-4 panel, asymmetric joint improved task-effect RMSE to
+  `0.28842` and paired regret gain to `+0.02761` across five seeds, but the
+  root-level improvement was concentrated in one outcome root. On the earlier
+  single-frame negative panel, asymmetric joint reduced the negative gain from
+  `-0.11883` to `-0.00471` but did not make it positive; direct preference was
+  `-0.07336`. This identifies symmetric multi-task interference as one cause,
+  while missing root-specific action-effect observability/support remains.
+  The previous standalone `+0.07477` result is not promoted because its random
+  baseline varied by seed and was not the same paired control. Artifacts:
+  `results/decision_benchmark_candidate_bank_20261016/joint_rgb_future_task_history4_v3_cuda.json`,
+  `.../joint_rgb_future_task_singleframe_v3_cuda.json`, and
+  `.../joint_rgb_future_task_singleframe_v4_preference_cuda.json`;
+  implementation: `experiments/decision_benchmark/train_joint_rgb_future_task_adapter.py`;
+  regression: `tests/test_train_joint_rgb_future_task_adapter.py` (`13 passed`).
+  The follow-up artifact
+  `results/decision_benchmark_candidate_bank_20261016/joint_rgb_future_task_history4_final_v7_cuda.json`
+  adds temporal-derivative and root-relative pair-effect interventions. The
+  derivative term raises future change-magnitude ratio from `0.624` to `0.736`
+  but does not improve ranking; relative/pair-effect variants remain below
+  `asym_joint`. This is a representation/action-direction boundary, not a
+  released planning gain.
+  The offline realized-future oracle
+  `results/decision_benchmark_candidate_bank_20261016/joint_rgb_future_task_history4_realized_future_oracle_v8_cuda.json`
+  has all five `asym_joint` seed gains negative despite lower successor RMSE;
+  future reconstruction error alone is therefore not the remaining cause.
+  The direct sequence-direction readout in
+  `.../joint_rgb_future_task_history4_direct_sequence_v9_cuda.json` also has
+  mixed seed signs and is not promoted.
+  The offline realized-future oracle
+  `results/decision_benchmark_candidate_bank_20261016/joint_rgb_future_task_history4_realized_future_oracle_v8_cuda.json`
+  has all five `asym_joint` seed gains negative despite lower successor RMSE;
+  future reconstruction error alone is therefore not the remaining cause.
+
+- Root-bootstrap and uncertainty-gate audit (2026-10-16): the active
+  reference-probe artifact was re-audited with root as the bootstrap unit,
+  averaging the five seeds within each root before resampling. For `v17`,
+  `asym_joint` had root mean `+0.01495`, but the root-bootstrap 95% CI was
+  `[-0.00920,+0.05593]` and leave-one-root-out means reached `-0.00366`;
+  the apparent gain is therefore not stable. The reusable audit is
+  `experiments/decision_benchmark/audit_adapter_bootstrap.py`, with artifact
+  `results/decision_benchmark_candidate_bank_20261016/adapter_root_bootstrap_audit_v17_vs_v15.json`.
+  A calibration-only support gate on the passive RGB panel changed
+  `asym_joint` from `-0.00153` to `+0.00153`, but its root-bootstrap CI was
+  `[-0.01597,+0.01797]`; adding uncertainty penalty was rejected by
+  calibration. A rank-instability gate changed it to `-0.00005` with CI
+  `[-0.01773,+0.01684]`. The latent-history control was also negative
+  (`-0.00092`, CI `[-0.01862,+0.01603]`). These are diagnostic/negative
+  artifacts, not planning gains. Implementation:
+  `experiments/decision_benchmark/run_uncertainty_gated_selection.py`;
+  regression: `tests/test_uncertainty_gated_selection.py`.
+
+- Goal-relative task-effect chart intervention (2026-10-16): the previous
+  hybrid action frame changed only the input chart while the effect target
+  remained raw XY. `experiments/decision_benchmark/run_task_frame_intervention.py`
+  now compares raw-XY supervision against goal-relative effect supervision,
+  mapping predictions back to physical XY before ranking. On the original
+  16-root near-goal outcome, all five goal-relative `asym_joint` seeds were
+  positive (`+0.01873,+0.01040,+0.01837,+0.01556,+0.01727`) and the ensemble
+  gain was `+0.01642` versus `-0.00153` for raw-XY; the root-bootstrap CI
+  still crossed zero (`[-0.00952,+0.05746]`), so this is a mechanism pilot.
+  A frozen 20-root outcome made from previously unused roots then failed
+  reproducibly: goal-relative `asym_joint` was `-0.01034` with CI
+  `[-0.01622,-0.00503]`, while raw-XY was `-0.01000` with CI
+  `[-0.01649,-0.00440]`. The 20 new roots had source-goal distance
+  `2.19–2.79` and zero success candidates, versus `3/16` success-supported
+  roots in the near-goal panel. The positive result is therefore support/
+  geometry-conditioned, not universal. Artifacts:
+  `results/decision_benchmark_candidate_bank_20261016/task_frame_history4_neargoal_hybrid_v1_cuda.json`
+  and
+  `results/decision_benchmark_candidate_bank_20261016/task_frame_external_outcome20_hybrid_v1_cuda.json`.
+  The external panel passed `84/84` RGB renderer/source gates and complete
+  PCA successor extraction in
+  `.../rgb_successor_history4_canonical_external_outcome20_v2_cuda/`.
+  Regression: `tests/test_task_frame_intervention.py`.
+
+- Goal-directed action-support intervention (2026-10-16): a separate
+  `goal_directed_mixture_v1` bank was generated on CUDA and then assigned the
+  exact frozen 48/16/20 root split used by the canonical external panel. The
+  new RGB bridge passed renderer/source consistency and successor extraction
+  on all 84 retained roots. On the 20 held-out outcome roots, mean best
+  terminal distance improved from `2.1490` to `1.9513`, but successful support
+  remained `0/20`, and the task-frame adapter's selected success remained
+  `0/20`. A calibration-only uncertainty/context-support gate selected no
+  fallback roots, showing that context support is not a reachability signal.
+  The remaining cause is a fixed 20-step reachable-horizon boundary: a far
+  root at source-goal distance about `2.79` moved only about `0.5` under a
+  saturated pulse. This is action-support/reachable-horizon evidence, not a
+  latent repair or planning gain. Artifacts:
+  `results/decision_benchmark_candidate_bank_20261016/jepa_history4_goal_directed_external_outcome20_cuda/`,
+  `.../rgb_successor_history4_goal_directed_external_outcome20_cuda/`,
+  `.../task_frame_goal_directed_external_outcome20_hybrid_v1_cuda.json`, and
+  `.../uncertainty_gated_history4_goal_directed_external_outcome20_cuda.json`.
+
+- PointMaze explicit-split receding-horizon repair (2026-10-16):
+  `experiments/run_live_pointmaze_planning.py` now accepts explicit
+  calibration/test episode lists and rejects overlap, enabling exact reuse of
+  the frozen 16/20 root split. With the original 12-block budget, guarded
+  RGB planning improved final distance over unguarded `wm_rgb` but remained
+  `2/20` successful and was worse than the calibration-only visual-dynamics
+  fallback. With the same RGB-only protocol and a predeclared 24-block
+  receding horizon, guarded planning reached `13/20` on the external outcome
+  panel and `13/16` on the previously excluded panel, versus `2/20` and
+  `2/16` for unguarded WM. Across both panels (`n=36`), guarded versus WM had
+  paired distance delta `-0.7356`, bootstrap CI `[-0.9027,-0.5782]`, and
+  success `26/36` versus `4/36`. Guarded versus calibration-only
+  visual-dynamics was non-inferior (`26/36` versus `24/36`, delta `-0.0219`,
+  CI `[-0.0780,+0.0275]`). The gate fell back on `80.2%` of decisions. This
+  is a scoped support-aware RGB closed-loop repair, not evidence that pure
+  frozen WM dynamics or universal transfer is solved. Artifacts:
+  `results/pointmaze_rgb_online_planning_v8_cuda_external20_split/`,
+  `.../pointmaze_rgb_online_planning_v9_cuda_external20_longer24/`, and
+  `.../pointmaze_rgb_online_planning_v10_cuda_excluded16_longer24/`.

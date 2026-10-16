@@ -63,6 +63,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--calibration-end", type=int, default=1850)
     parser.add_argument("--test-start", type=int, default=1850)
     parser.add_argument("--test-end", type=int, default=1860)
+    parser.add_argument(
+        "--calibration-episodes",
+        default="",
+        help="optional comma-separated explicit calibration episode IDs; overrides the range",
+    )
+    parser.add_argument(
+        "--test-episodes",
+        default="",
+        help="optional comma-separated explicit test episode IDs; overrides the range",
+    )
     parser.add_argument("--max-test-episodes", type=int, default=None)
     parser.add_argument("--max-blocks", type=int, default=12)
     parser.add_argument("--directions", type=int, default=8)
@@ -83,6 +93,25 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=20261016)
     return parser.parse_args()
+
+
+def parse_episode_list(value: str, label: str) -> list[int] | None:
+    """Parse an explicit root list without silently accepting overlap or duplicates."""
+
+    if not str(value).strip():
+        return None
+    tokens = [item.strip() for item in str(value).split(",") if item.strip()]
+    if not tokens:
+        raise ValueError(f"{label} must contain at least one episode ID")
+    try:
+        episodes = [int(item) for item in tokens]
+    except ValueError as exc:
+        raise ValueError(f"{label} must be comma-separated integer episode IDs") from exc
+    if any(episode < 0 for episode in episodes):
+        raise ValueError(f"{label} cannot contain negative episode IDs")
+    if len(set(episodes)) != len(episodes):
+        raise ValueError(f"{label} cannot contain duplicate episode IDs")
+    return episodes
 
 
 def _episode_path(root: Path, episode: int) -> Path:
@@ -900,12 +929,19 @@ def main() -> None:
     args = parse_args()
     device = require_cuda()
     dataset_root = args.dataset_root.resolve()
-    calibration_episodes = list(range(args.calibration_start, args.calibration_end))
-    test_episodes = list(range(args.test_start, args.test_end))
+    calibration_episodes = parse_episode_list(args.calibration_episodes, "calibration episodes")
+    test_episodes = parse_episode_list(args.test_episodes, "test episodes")
+    if calibration_episodes is None:
+        calibration_episodes = list(range(args.calibration_start, args.calibration_end))
+    if test_episodes is None:
+        test_episodes = list(range(args.test_start, args.test_end))
     if args.max_test_episodes is not None:
         test_episodes = test_episodes[: args.max_test_episodes]
     if not calibration_episodes or not test_episodes:
         raise ValueError("calibration and test episode ranges must be non-empty")
+    overlap = set(calibration_episodes) & set(test_episodes)
+    if overlap:
+        raise ValueError(f"calibration/test episode overlap: {sorted(overlap)}")
     for episode in calibration_episodes + test_episodes:
         _episode_path(dataset_root, episode)
     print("[PointMaze live] fitting RGB->proprio calibration on calibration roots only")
@@ -948,6 +984,11 @@ def main() -> None:
             "device": str(device),
             "calibration_episodes": calibration_episodes,
             "test_episodes": test_episodes,
+            "episode_selection": (
+                "explicit_episode_lists"
+                if args.calibration_episodes or args.test_episodes
+                else "contiguous_ranges"
+            ),
             "episode_disjoint": not bool(set(calibration_episodes) & set(test_episodes)),
             "action_bank": {
                 "directions": args.directions,
