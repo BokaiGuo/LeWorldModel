@@ -483,3 +483,24 @@ decision repair 成立，但 exact-winner 和预声明 epsilon-regret certificat
 零放行。因此该结果不是 frozen LeWM dynamics、在线 planning 或 universal
 world-model 证据。汇总 artifact：
 `le-wm-main/results/htsc_checkpoint_provenance_20261016/summary.json`。
+
+### 2026-10-16：PointMaze 单次视觉预处理接口修复
+
+进一步定位到离线--在线断裂的实现根因：temporal exporter 先在 dataset 中执行
+视觉 transform，又把 tensor 交给拥有同一 preprocessing 的 `model.encode`，
+导致离线 latent 为双重 transform，而 RGB runtime 为单重 transform。现在 dataset
+保持 raw 0--255 observation，`model.encode` 成为唯一 preprocessing owner，并新增
+防回归测试；修复后的 exporter 与 runtime 编码逐元素等价。
+
+100-root、`54/14/32` split 的 CUDA 重跑表明，问题并未因此完全闭合。探索性
+deployment-aligned rank 8 同时通过 Bank-only、No-dynamics、shuffled、未见
+candidate 和 matched-order 增量门，但 bounded-regret calibration bound 为
+`0.30093`，在预声明 `epsilon=0.25` 下 `0/32` 放行。rank 16 将 bound 降到
+`0.08918` 并放行 `28/32`，但 Bank-only CI 跨零且未见-candidate gain 为负。
+旧 PCA 虽可放行 `24/32` 且 outcome 零 violation，但 PCA 来自错误双重预处理，
+只能保留为历史诊断。
+
+因此当前不按已查看的 outcome 选择 rank，正式状态仍为 deployment-aligned
+`Repair but Abstain`。下一次 confirmatory 运行必须先仅凭 train/calibration 冻结
+chart，再使用新的 locked outcome；只有完整 controls、useful release 与独立 RGB
+闭环 consequence 同时通过，才能升级 HTSC 或 learned-dynamics 主张。

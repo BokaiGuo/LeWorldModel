@@ -1204,3 +1204,21 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   and preregistered bounded-regret permissions release zero roots. Compact
   artifact: `results/htsc_checkpoint_provenance_20261016/summary.json`; code:
   `experiments/decision_benchmark/summarize_htsc_repairability.py`.
+
+- PointMaze single-pass preprocessing repair (2026-10-16):
+  `experiments/theory_spectral_transfer/run_jepa_wm_pointmaze_temporal_eval.py`
+  previously transformed dataset observations and then sent them through
+  `model.encode`, which repeated normalization/augmentation and made offline
+  latents incompatible with online RGB latents. The exporter now consumes raw
+  0--255 observations, records `model.encode` as the sole preprocessing owner,
+  and is protected by `tests/test_jepa_pointmaze_export.py`. A corrected
+  100-root CUDA export is runtime-equivalent, but the exploratory rank grid has
+  no legal winner: rank 8 passes all incremental counterfactual controls while
+  its full-bank bound is `0.30093` and releases `0/32` at `epsilon=0.25`; rank
+  16 lowers the bound to `0.08918` and releases `28/32`, but its Bank-only CI
+  crosses zero and its unseen-candidate gain is negative. The old-PCA chart's
+  `24/32` release is non-deployment evidence because the PCA came from the
+  invalid double-transform representation. Status: preprocessing bug closed,
+  deployment-aligned `Repair but Abstain`; no learned-dynamics or online-planning
+  claim. Detailed adjudication is in
+  `docs/FINAL_STAGE_RESIDUAL_NEGATIVE_DIAGNOSIS_20261016.md`.

@@ -1,4 +1,12 @@
-"""JEPA-WM PointMaze temporal/operator diagnostic on the public split."""
+"""JEPA-WM PointMaze temporal/operator diagnostic on the public split.
+
+The planning wrapper's ``model.encode`` method owns RGB preprocessing: it
+divides raw 0--255 tensors by 255 and applies the configured image transform.
+The observation dataset used here must therefore stay raw. Passing an
+already-transformed dataset tensor through ``model.encode`` applies image
+normalization twice and creates latents that an online RGB controller cannot
+reproduce.
+"""
 
 from __future__ import annotations
 
@@ -118,6 +126,21 @@ def canonical_pooled_latent(value: torch.Tensor, feature_dim: int = 384) -> torc
     return moved.mean(dim=0)
 
 
+def build_pointmaze_datasets(dataset_cls, dataset_root: Path):
+    """Build statistics plus raw observations for single-pass preprocessing."""
+
+    stats_dataset = dataset_cls(data_path=str(dataset_root), normalize_action=True)
+    observation_dataset = dataset_cls(
+        data_path=str(dataset_root), transform=None, normalize_action=False
+    )
+    if getattr(observation_dataset, "transform", None) is not None:
+        raise RuntimeError(
+            "PointMaze temporal export requires raw observations because "
+            "model.encode applies the image transform"
+        )
+    return stats_dataset, observation_dataset
+
+
 def main() -> None:
     args = parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -158,9 +181,8 @@ def main() -> None:
         auto_augment=False,
         motion_shift=False,
     )
-    stats_dataset = PointMazeDataset(data_path=str(args.dataset_root), normalize_action=True)
-    dataset = PointMazeDataset(
-        data_path=str(args.dataset_root), transform=transform, normalize_action=False
+    stats_dataset, dataset = build_pointmaze_datasets(
+        PointMazeDataset, args.dataset_root
     )
     preprocessor = Preprocessor(
         stats_dataset.action_mean,
@@ -349,6 +371,8 @@ def main() -> None:
             "episodes_used": episodes,
             "split_seed": args.split_seed if args.split_mode == "code_reconstructed" else None,
             "split_mode": args.split_mode,
+            "visual_preprocessing": "raw_0_255_then_single_model_encode_transform",
+            "preprocessing_owner": "model.encode",
             "checkpoint_epoch": int(checkpoint.get("epoch", -1)),
             "checkpoint_sha256": sha256_file(args.checkpoint),
             "dataset_archive_sha256": sha256_file(args.dataset_root.parent.parent / "point_maze.zip"),
