@@ -11,6 +11,7 @@ from experiments.run_live_pointmaze_planning import (
     choose_action,
     green_center,
     parse_episode_list,
+    select_gate_tolerance,
 )
 
 
@@ -47,6 +48,15 @@ def test_parse_episode_list_accepts_explicit_root_lists() -> None:
 def test_parse_episode_list_rejects_unsafe_root_lists(value: str) -> None:
     with pytest.raises(ValueError):
         parse_episode_list(value, "episodes")
+
+
+def test_select_gate_tolerance_uses_calibration_performance_before_fallback_rate() -> None:
+    candidates = [
+        {"tolerance": 0.50, "aggregate": {"success_rate": 1.0, "mean_final_distance": 0.20, "gate_fallback_rate": 0.10}},
+        {"tolerance": 0.10, "aggregate": {"success_rate": 1.0, "mean_final_distance": 0.20, "gate_fallback_rate": 0.40}},
+        {"tolerance": 0.05, "aggregate": {"success_rate": 0.0, "mean_final_distance": 0.01, "gate_fallback_rate": 0.00}},
+    ]
+    assert select_gate_tolerance(candidates) == 0.50
 
 
 def test_guarded_world_model_falls_back_when_dynamics_regret_exceeds_tolerance(monkeypatch) -> None:

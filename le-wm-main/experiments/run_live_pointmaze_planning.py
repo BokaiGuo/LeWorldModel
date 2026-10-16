@@ -35,6 +35,7 @@ GOAL_STATE = np.asarray([1.2, 1.2], dtype=np.float64)
 MARKER_RADIUS = 9
 FRAME_STRIDE = 5
 HORIZONS = (1, 2, 4)
+GATE_TOLERANCE_GRID = (0.05, 0.10, 0.20, 0.30, 0.50)
 
 
 def require_cuda() -> torch.device:
@@ -72,6 +73,11 @@ def parse_args() -> argparse.Namespace:
         "--test-episodes",
         default="",
         help="optional comma-separated explicit test episode IDs; overrides the range",
+    )
+    parser.add_argument(
+        "--gate-calibration-episodes",
+        default="",
+        help="optional disjoint comma-separated episodes used only to select gate tolerance",
     )
     parser.add_argument("--max-test-episodes", type=int, default=None)
     parser.add_argument("--max-blocks", type=int, default=12)
@@ -912,6 +918,13 @@ def run_episode(
 def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not rows:
         return {"episodes": 0}
+    gate_decisions = [
+        trace.get("action_transfer_gate", {})
+        for row in rows
+        for trace in row.get("trace", [])
+        if "action_transfer_gate" in trace
+    ]
+    fallback_count = sum(bool(item.get("fallback_used")) for item in gate_decisions)
     return {
         "episodes": len(rows),
         "success_rate": float(np.mean([row["success"] for row in rows])),
@@ -922,7 +935,29 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_blocks": float(np.mean([row["blocks_executed"] for row in rows])),
         "detector_failure_rate": float(np.mean([row["detector_failures"] > 0 for row in rows])),
         "renderer_initial_mean_abs_error": float(np.mean([row["renderer_initial_mean_abs_error"] for row in rows])),
+        "gate_decisions": len(gate_decisions),
+        "gate_fallback_rate": float(fallback_count / len(gate_decisions)) if gate_decisions else 0.0,
     }
+
+
+def select_gate_tolerance(candidates: list[dict[str, Any]]) -> float:
+    """Select a gate tolerance using calibration outcomes only.
+
+    Success is primary, continuous final distance is the first tie-break, and
+    fallback rate is the second tie-break.  The smallest tolerance is the final
+    deterministic tie-break, so merely using the WM more often cannot win when
+    calibration task performance is unchanged.
+    """
+
+    if not candidates:
+        raise ValueError("gate tolerance candidates cannot be empty")
+    ordered = sorted(candidates, key=lambda item: (
+        -float(item["aggregate"]["success_rate"]),
+        float(item["aggregate"]["mean_final_distance"]),
+        float(item["aggregate"]["gate_fallback_rate"]),
+        float(item["tolerance"]),
+    ))
+    return float(ordered[0]["tolerance"])
 
 
 def main() -> None:
@@ -931,6 +966,9 @@ def main() -> None:
     dataset_root = args.dataset_root.resolve()
     calibration_episodes = parse_episode_list(args.calibration_episodes, "calibration episodes")
     test_episodes = parse_episode_list(args.test_episodes, "test episodes")
+    gate_calibration_episodes = parse_episode_list(
+        args.gate_calibration_episodes, "gate calibration episodes",
+    )
     if calibration_episodes is None:
         calibration_episodes = list(range(args.calibration_start, args.calibration_end))
     if test_episodes is None:
@@ -942,7 +980,13 @@ def main() -> None:
     overlap = set(calibration_episodes) & set(test_episodes)
     if overlap:
         raise ValueError(f"calibration/test episode overlap: {sorted(overlap)}")
-    for episode in calibration_episodes + test_episodes:
+    if gate_calibration_episodes is not None:
+        gate_overlap = (
+            set(gate_calibration_episodes) & set(calibration_episodes)
+        ) | (set(gate_calibration_episodes) & set(test_episodes))
+        if gate_overlap:
+            raise ValueError(f"gate calibration overlaps another split: {sorted(gate_overlap)}")
+    for episode in calibration_episodes + test_episodes + (gate_calibration_episodes or []):
         _episode_path(dataset_root, episode)
     print("[PointMaze live] fitting RGB->proprio calibration on calibration roots only")
     calibration = fit_visual_calibration(dataset_root, calibration_episodes, args.calibration_frames)
@@ -962,6 +1006,35 @@ def main() -> None:
         model, calibration, dataset_root, calibration_episodes,
         args.calibration_frames, args.batch_size,
     )
+    selected_tolerance = float(args.wm_dynamics_tolerance)
+    gate_calibration_report: dict[str, Any] | None = None
+    if gate_calibration_episodes is not None:
+        print(
+            "[PointMaze live] selecting WM dynamics gate tolerance on "
+            f"{len(gate_calibration_episodes)} calibration-only roots"
+        )
+        tolerance_candidates: list[dict[str, Any]] = []
+        for tolerance in GATE_TOLERANCE_GRID:
+            calibration_rows = [run_episode(
+                "wm_rgb_guarded", episode, dataset_root, calibration, model, readout,
+                action_mean, action_std, dynamics, maze_map, args.planner_map,
+                args.directions, args.magnitudes, args.probe_blocks, args.kp, args.kv,
+                float(tolerance), args.max_blocks, args.success_radius,
+                args.seed + 100000 + index,
+            ) for index, episode in enumerate(gate_calibration_episodes)]
+            tolerance_candidates.append({
+                "tolerance": float(tolerance),
+                "aggregate": _aggregate(calibration_rows),
+            })
+        selected_tolerance = select_gate_tolerance(tolerance_candidates)
+        gate_calibration_report = {
+            "episodes": list(gate_calibration_episodes),
+            "tolerance_grid": list(GATE_TOLERANCE_GRID),
+            "selection_rule": "maximize success, then minimize final distance, then fallback rate, then tolerance",
+            "selected_tolerance": selected_tolerance,
+            "candidates": tolerance_candidates,
+        }
+        print(f"[PointMaze live] selected gate tolerance={selected_tolerance:.2f}")
     methods = tuple(args.methods)
     rows: list[dict[str, Any]] = []
     for method in methods:
@@ -971,7 +1044,7 @@ def main() -> None:
                 method, episode, dataset_root, calibration, model, readout,
                 action_mean, action_std, dynamics, maze_map, args.planner_map,
                 args.directions, args.magnitudes, args.probe_blocks, args.kp, args.kv,
-                args.wm_dynamics_tolerance, args.max_blocks, args.success_radius,
+                selected_tolerance, args.max_blocks, args.success_radius,
                 args.seed + index,
             ))
     aggregates = {method: _aggregate([row for row in rows if row["method"] == method]) for method in methods}
@@ -1000,10 +1073,12 @@ def main() -> None:
                 "kp": args.kp,
                 "kv": args.kv,
                 "wm_dynamics_tolerance": args.wm_dynamics_tolerance,
+                "selected_wm_dynamics_tolerance": selected_tolerance,
             },
             "methods": list(methods),
             "goal_state_for_environment_only": GOAL_STATE.tolist(),
             "success_radius": args.success_radius,
+            "gate_calibration": gate_calibration_report,
         },
         "calibration": {
             "episodes": list(calibration.calibration_episodes),
