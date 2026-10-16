@@ -271,9 +271,14 @@ def main() -> None:
                 if args.save_enriched_records:
                     for local_index, episode in enumerate(episode_batch):
                         sample_id = f"{episode}:{window_starts[local_index]}"
+                        # Compute this record's source frame on every horizon
+                        # iteration.  Reusing a batch-local ``source_index``
+                        # from the last newly created record silently wrote
+                        # duplicated h=2/h=4 targets when several windows
+                        # were processed together.
+                        source_index = window_starts[local_index] + (context_len - 1) * 5
                         existing = next((item for item in enriched_records if item["sample_id"] == sample_id), None)
                         if existing is None:
-                            source_index = window_starts[local_index] + (context_len - 1) * 5
                             source_frame_latent = canonical_pooled_latent(
                                 encoded["visual"][local_index, context_len - 1],
                                 feature_dim=384,

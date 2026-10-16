@@ -1,4 +1,7 @@
+import json
+
 from experiments.gdd_wm.audit_preference_stability import audit_records
+from experiments.gdd_wm.build_repeated_candidate_contexts import main as build_repeated_contexts_main
 
 
 def _row(root, set_id, candidate, score, cost, realized="real://x"):
@@ -50,3 +53,38 @@ def test_execution_derived_teacher_is_rejected_as_leakage():
     assert report["teacher_execution_leakage"]["exact_negative_cost_match"] is True
     assert report["teacher_execution_leakage"]["independent_execution_consistency_valid"] is False
     assert report["status"] == "rejected_fail_closed"
+
+
+def test_repeated_context_builder_matches_actions_not_candidate_indices(tmp_path, monkeypatch):
+    common = {
+        "instance_id": "r0",
+        "split": "outcome",
+        "environment": "toy",
+        "teacher_model_id": "external_teacher",
+        "teacher_score": 1.0,
+        "real_task_cost": 0.5,
+        "predicted_latent_ref": "pred://x",
+        "realized_latent_ref": "real://x",
+    }
+    first = dict(common, candidate_id=0, action_sequence=[[0.1, 0.2]])
+    second = dict(common, candidate_id=7, action_sequence=[[0.1, 0.2]])
+    left = tmp_path / "left.json"
+    right = tmp_path / "right.json"
+    output = tmp_path / "out.json"
+    left.write_text(json.dumps({"metadata": {"candidate_bank_hash": "left"}, "records": [first]}))
+    right.write_text(json.dumps({"metadata": {"candidate_bank_hash": "right"}, "records": [second]}))
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "build_repeated_candidate_contexts",
+            "--input", str(left),
+            "--input", str(right),
+            "--output", str(output),
+        ],
+    )
+    build_repeated_contexts_main()
+    payload = json.loads(output.read_text())
+    assert payload["metadata"]["matched_root_action_pairs"] == 1
+    assert payload["metadata"]["context_count"] == 2
+    assert len({row["candidate_id"] for row in payload["records"]}) == 1
+    assert len({row["teacher_set_id"] for row in payload["records"]}) == 2

@@ -143,6 +143,46 @@ Its result is diagnostic only: the current PointMaze bank reaches about
 `0.51` outcome pairwise consistency and does not establish D-JEPA preference
 stability or planning transfer.
 
+`experiments/gdd_wm/build_train_only_readout_teacher_package.py` is the stricter
+two-context infrastructure control. It joins exact root/action pairs from
+independent checkpoint stages, preserves RGB successor references, and writes
+fresh train-only readout scores instead of copying the offline cost oracle. The
+current control passes the package eligibility audit but remains a negative
+teacher-quality result (flip rate `0.3081`, held-out execution consistency
+`0.5800`); it is not D-JEPA evidence and cannot open D2.
+
+`experiments/gdd_wm/summarize_train_only_teacher_feature_panel.py` compares the
+predeclared latent/action feature families with root bootstrap. The action-only
+family is retained as a confounding baseline because it outperforms the latent
+families on the current PointMaze outcome roots; no family is selected for
+deployment from this panel.
+
+The same builder's `--residualize-action` mode performs the stronger
+`Delta Risk | action summary` check. The current PointMaze result is negative:
+the latent residual does not improve over action-only, so the control cannot
+authorize D2 or a decision-geometry claim.
+
+`experiments/gdd_wm/audit_train_only_teacher_capacity.py` is the fixed
+capacity follow-up. It keeps `source_delta_action` and the action-only
+baseline fixed, fits a train-only standardized linear residual and one fixed
+CUDA `[64,32]` SiLU MLP, and evaluates held-out outcome roots. The linear
+residual has regret delta `-0.1568` versus action-only (root-bootstrap 95% CI
+`[-0.2602,-0.0678]`); the MLP delta is `-0.0631` (CI crosses zero). This is a
+capacity diagnostic only and does not open D2. Run it from the project root
+as a module so package imports are resolved:
+
+```bash
+.venv/bin/python -m experiments.gdd_wm.audit_train_only_teacher_capacity \
+  --candidate-dataset <train-only-context.json> \
+  --arrays <context-arrays.npz> \
+  --output <capacity-audit-dir>
+```
+
+For candidate-coordinate and estimand controls, add
+`--action-frame goal_relative` and/or `--target-mode root_centered`. The
+canonical reruns did not retain the raw-action point estimate, so these flags
+are required before interpreting a latent residual as within-root transfer.
+
 The fixed feature-family panel
 `experiments/gdd_wm/audit_feature_family_panel.py` compares source, predicted
 terminal, predicted delta, action-summary, and combined features with one
@@ -1939,6 +1979,23 @@ The complete numeric table, stability frequency, fallback frequency, and
 paired held-out regret remain an append-only summary artifact; until that
 summary is frozen, this result is `partial` evidence rather than a validated
 planning gain.
+
+### Context-safe GDD-WM capacity audit
+
+`gdd_wm/audit_train_only_teacher_capacity.py` must be run from the project
+root as a module and requires CUDA; it refuses CPU fallback. When repeated
+candidate contexts are supplied, the audit keeps each `context x root` ranking
+cell separate and bootstraps unique outcome roots. Always report both
+`--action-frame` and `--target-mode`; `root_centered` removes root-level cost
+from the estimand, while `goal_relative` is required for the canonical
+confirmatory protocol. Corrected non-PushT examples are under
+`results/gdd_wm_cross_environment_20261016/*capacity_root_centered_context_safe/`.
+
+The optional `--goal-conditioning latent_relative` arm adds only frozen RGB
+goal-latent relations (`goal-source`, `predicted-goal`); it does not read
+privileged evaluator state and must be reported separately from the canonical
+`goal_relative`/`none` protocol. Its current cross-environment result is
+diagnostic and not a planning controller.
 
 The methodological interpretation is a horizon-dependent stability transition:
 short horizons may contain local event gains, intermediate horizons can have

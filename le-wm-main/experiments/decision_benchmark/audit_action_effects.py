@@ -123,6 +123,7 @@ def audit(
         raise ValueError("external export has fewer than four root-disjoint source roots")
 
     model, payload = _load_adapter(checkpoint, device)
+    action_feature_chart = str(payload.get("adapter_training", {}).get("action_feature_chart", "raw"))
     pca_mean = np.asarray(payload["pca_mean"], dtype=np.float64)
     pca_basis = np.asarray(payload["pca_basis"], dtype=np.float64)
     readouts = _fit_readouts(fit["enriched_records"])
@@ -137,7 +138,13 @@ def audit(
     predicted_by_action: list[dict[int, np.ndarray]] = []
     for action in axis_actions:
         blocks = _intervention_action_blocks(action)
-        x = _external_features(rows, pca_mean, pca_basis, np.repeat(blocks[None], len(rows), axis=0))
+        x = _external_features(
+            rows,
+            pca_mean,
+            pca_basis,
+            np.repeat(blocks[None], len(rows), axis=0),
+            action_feature_chart,
+        )
         prediction = _predict(model, x, int(pca_basis.shape[0]), device, payload["adapter_training"])
         decoded: dict[int, np.ndarray] = {}
         for horizon in HORIZONS:

@@ -173,20 +173,58 @@ def _external_gain_gate(results_root: Path) -> dict[str, Any]:
         if isinstance(gate, dict):
             candidates.append({"path": str(path), "gate": gate})
     valid = []
+    invalid_reasons: list[dict[str, Any]] = []
     for item in candidates:
         gate = item["gate"]
-        fields_ok = all(field in gate for field in EXTERNAL_GAIN_FIELDS)
+        schema_ok = gate.get("schema") == "external_independent_gain.v1"
+        metrics = gate.get("metrics", {})
+        field_reasons: list[str] = []
+        for field in EXTERNAL_GAIN_FIELDS:
+            value = metrics.get(field) if isinstance(metrics, dict) else None
+            if not isinstance(value, dict):
+                field_reasons.append(f"{field}:missing_metric_object")
+                continue
+            if value.get("status") != "available":
+                field_reasons.append(f"{field}:status={value.get('status', 'missing')}")
+                continue
+            if not _finite(value.get("estimate")):
+                field_reasons.append(f"{field}:nonfinite_estimate")
+            interval = value.get("ci95")
+            if (
+                not isinstance(interval, list)
+                or len(interval) != 2
+                or not all(_finite(bound) for bound in interval)
+            ):
+                field_reasons.append(f"{field}:invalid_ci95")
+        fields_ok = not field_reasons
         protocol = gate.get("protocol", {})
         no_privileged = protocol.get("privileged_state_used") is False
         no_test_selection = protocol.get("test_planning_used_for_selection") is False
-        if fields_ok and no_privileged and no_test_selection:
+        split_ok = protocol.get("train_calibration_test_root_disjoint") is True
+        heldout_ok = protocol.get("independent_heldout_consequence") is True
+        if schema_ok and fields_ok and no_privileged and no_test_selection and split_ok and heldout_ok:
             valid.append(item)
+        else:
+            invalid_reasons.append(
+                {
+                    "path": item["path"],
+                    "reasons": [
+                        *([] if schema_ok else ["schema_mismatch"]),
+                        *field_reasons,
+                        *([] if no_privileged else ["privileged_state_used_not_false"]),
+                        *([] if no_test_selection else ["test_planning_used_for_selection_not_false"]),
+                        *([] if split_ok else ["train_calibration_test_root_disjoint_not_true"]),
+                        *([] if heldout_ok else ["independent_heldout_consequence_not_true"]),
+                    ],
+                }
+            )
     return {
         "status": "available" if valid else "blocked_missing_independent_gain_schema",
         "candidate_artifact_count": len(candidates),
         "valid_artifact_count": len(valid),
         "required_fields": list(EXTERNAL_GAIN_FIELDS),
         "valid_artifacts": valid,
+        "invalid_artifacts": invalid_reasons,
         "claim_boundary": "episode-level planning logs and privileged-state runs are not accepted as the independent gain gate",
     }
 

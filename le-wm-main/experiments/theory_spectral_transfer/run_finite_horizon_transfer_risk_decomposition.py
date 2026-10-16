@@ -82,6 +82,7 @@ def run() -> dict[str, object]:
         remainder_budget=0.01,
     )
     return {
+        "schema": "finite_horizon_transfer_risk_decomposition.v1",
         "status": "synthetic_theory_audit_only",
         "tightness": transfer_bound_tightness_example(),
         "counterexample": spectrum_alignment_commutator_counterexample(),

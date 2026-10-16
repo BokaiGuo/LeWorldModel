@@ -15,7 +15,12 @@ from typing import Any
 
 import numpy as np
 
-from train_pointmaze_learned_adapter_panel import HORIZONS, _pca, _project, _task_direction
+try:
+    from experiments.empirical_spectral_audit.train_pointmaze_learned_adapter_panel import (
+        HORIZONS, _pca, _project, _task_direction,
+    )
+except ModuleNotFoundError:
+    from train_pointmaze_learned_adapter_panel import HORIZONS, _pca, _project, _task_direction
 
 
 def _ridge_fit(x: np.ndarray, y: np.ndarray, ridge: float = 1e-2) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -57,13 +62,27 @@ def _load(path: Path, max_rows: int) -> list[dict[str, Any]]:
     return rows[:max_rows]
 
 
-def diagnose(paths: dict[str, Path], *, max_rows: int = 32) -> dict[str, Any]:
+def diagnose(
+    paths: dict[str, Path], *, max_rows: int = 32, train_fraction: float = 0.65,
+    min_calibration_rows: int = 8,
+) -> dict[str, Any]:
     if max_rows < 24:
         raise ValueError("max_rows must leave at least 24 rows for train/calibration/outcome protocol")
+    if not 0.0 < train_fraction < 1.0:
+        raise ValueError("train_fraction must lie in (0, 1)")
+    if min_calibration_rows < 1:
+        raise ValueError("min_calibration_rows must be positive")
     reports = {}
     outcome_count = min(32, max(8, max_rows // 3))
     fit_count = max_rows - outcome_count
-    train_count = max(8, int(round(0.8 * fit_count)))
+    train_count = max(8, int(round(train_fraction * fit_count)))
+    train_count = min(train_count, fit_count - min_calibration_rows)
+    calibration_count = fit_count - train_count
+    if calibration_count < min_calibration_rows:
+        raise ValueError(
+            f"split leaves only {calibration_count} calibration rows; "
+            f"need at least {min_calibration_rows}"
+        )
     for base, path in sorted(paths.items()):
         rows = _load(path, max_rows)
         train = rows[:train_count]
@@ -138,6 +157,8 @@ def diagnose(paths: dict[str, Path], *, max_rows: int = 32) -> dict[str, Any]:
         "protocol": {
             "support_matching": True,
             "max_rows": max_rows,
+            "train_fraction": train_fraction,
+            "min_calibration_rows": min_calibration_rows,
             "action_input": "raw shared physical action blocks",
             "fit_split": "train rows only",
             "calibration_split": "calibration rows only",
@@ -160,9 +181,16 @@ def main() -> None:
     parser.add_argument("--jepa-export", type=Path, required=True)
     parser.add_argument("--dino-export", type=Path, required=True)
     parser.add_argument("--max-rows", type=int, default=32)
+    parser.add_argument("--train-fraction", type=float, default=0.65)
+    parser.add_argument("--min-calibration-rows", type=int, default=8)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    report = diagnose({"jepa": args.jepa_export, "dino": args.dino_export}, max_rows=args.max_rows)
+    report = diagnose(
+        {"jepa": args.jepa_export, "dino": args.dino_export},
+        max_rows=args.max_rows,
+        train_fraction=args.train_fraction,
+        min_calibration_rows=args.min_calibration_rows,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"schema": report["schema"], "representations": report["representations"]}, indent=2, sort_keys=True))

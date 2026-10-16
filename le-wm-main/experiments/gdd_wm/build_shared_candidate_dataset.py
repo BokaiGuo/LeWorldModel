@@ -193,6 +193,21 @@ def validate_records(
     if missing_runtime_refs:
         warnings.append(f"{missing_runtime_refs} outcome/test rows lack predicted or realized latent refs")
 
+    numeric_teacher_cost_pairs = [
+        (float(row["teacher_score"]), float(row["real_task_cost"]))
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("teacher_score") is not None
+        and row.get("real_task_cost") is not None
+    ]
+    exact_negative_cost_match = bool(numeric_teacher_cost_pairs) and all(
+        abs(score + cost) <= 1.0e-10 for score, cost in numeric_teacher_cost_pairs
+    )
+    if exact_negative_cost_match:
+        warnings.append(
+            "teacher_score is exactly negative real_task_cost; D1 execution agreement would be label leakage"
+        )
+
     schema_status = "passed" if not errors else "rejected_fail_closed"
     return {
         "schema": "gdd_wm_d0_candidate_dataset.v0.1",
@@ -210,11 +225,22 @@ def validate_records(
             "outcome_record_count": outcome_rows,
             "outcome_success_record_count": outcome_success_rows,
             "outcome_groups_with_success": outcome_groups_with_success,
+            "numeric_teacher_cost_pair_count": len(numeric_teacher_cost_pairs),
+            "teacher_score_exact_negative_real_task_cost": exact_negative_cost_match,
         },
         "decision": {
             "d0_schema_complete": not bool(errors),
-            "teacher_execution_validation": "pending",
-            "d1_ready": not bool(errors) and outcome_rows > 0 and missing_runtime_refs == 0,
+            "teacher_execution_validation": (
+                "rejected_exact_negative_cost_leakage"
+                if exact_negative_cost_match
+                else "pending"
+            ),
+            "d1_ready": (
+                not bool(errors)
+                and outcome_rows > 0
+                and missing_runtime_refs == 0
+                and not exact_negative_cost_match
+            ),
             "d2_ready": False,
             "scientific_readiness": "blocked_teacher_execution_validation",
         },
