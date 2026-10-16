@@ -15,6 +15,19 @@ from experiments.gdd_wm.audit_transfer_sufficient_feature_families import (
 )
 
 
+SHORTCUT_COMPARATORS = (
+    "bank_only",
+    "no_dynamics_source_bank",
+    "shuffled_prediction_full",
+    "source_plus_delta",
+)
+UNSEEN_COMPARATORS = (
+    "bank_only",
+    "no_dynamics_source_bank",
+    "source_plus_delta",
+)
+
+
 def _two_level(case_values: dict[str, np.ndarray], samples: int, seed: int) -> dict[str, Any]:
     names = list(case_values)
     rng = np.random.default_rng(seed)
@@ -35,9 +48,62 @@ def _two_level(case_values: dict[str, np.ndarray], samples: int, seed: int) -> d
     }
 
 
+def _paired_root_deltas(
+    full: dict[str, dict[str, float | int | None]],
+    control: dict[str, dict[str, float | int | None]],
+) -> dict[str, np.ndarray]:
+    roots = sorted(set(full) & set(control))
+    regret = np.asarray(
+        [float(control[root]["regret"]) - float(full[root]["regret"]) for root in roots],
+        dtype=np.float64,
+    )
+    consistency = np.asarray(
+        [
+            float(full[root]["execution_consistency"])
+            - float(control[root]["execution_consistency"])
+            for root in roots
+            if full[root]["execution_consistency"] is not None
+            and control[root]["execution_consistency"] is not None
+        ],
+        dtype=np.float64,
+    )
+    if regret.size == 0 or consistency.size == 0:
+        raise ValueError("paired shortcut control has no comparable outcome roots")
+    return {"regret_reduction": regret, "consistency_gain": consistency}
+
+
+def _aggregate_control_panel(
+    values: dict[str, dict[str, dict[str, np.ndarray]]],
+    samples: int,
+    seed: int,
+) -> dict[str, Any]:
+    output = {}
+    for control_index, (control, case_values) in enumerate(values.items()):
+        output[control] = {}
+        for metric_index, metric in enumerate(("regret_reduction", "consistency_gain")):
+            metric_values = {name: item[metric] for name, item in case_values.items()}
+            output[control][metric] = {
+                "two_level_case_and_root_bootstrap": _two_level(
+                    metric_values,
+                    samples,
+                    seed + 100 * control_index + metric_index,
+                ),
+                "all_case_points_positive": bool(
+                    all(float(np.mean(array)) > 0.0 for array in metric_values.values())
+                ),
+            }
+    return output
+
+
 def aggregate(cases: list[tuple[str, Path, Path]], output: Path, samples: int, seed: int) -> dict[str, Any]:
     reports = {}
     case_metrics: dict[str, dict[str, np.ndarray]] = {}
+    shortcut_metrics: dict[str, dict[str, dict[str, np.ndarray]]] = {
+        control: {} for control in SHORTCUT_COMPARATORS
+    }
+    unseen_metrics: dict[str, dict[str, dict[str, np.ndarray]]] = {
+        control: {} for control in UNSEEN_COMPARATORS
+    }
     case_summary = {}
     for name, dataset, arrays in cases:
         print(f"[indexed-canonical-panel] auditing {name}")
@@ -70,12 +136,43 @@ def aggregate(cases: list[tuple[str, Path, Path]], output: Path, samples: int, s
             "candidate_outcome_consistency": candidate["task_readout"]["execution_consistency"]["outcome"]["pairs"]["execution_consistency"],
             "baseline_outcome_consistency": baseline["feature_families"]["source_plus_delta"]["execution_consistency"]["outcome"]["pairs"]["execution_consistency"],
         }
+        full_control = candidate["shortcut_controls"]["full_source_delta_bank"]
+        case_summary[name]["shortcut_controls"] = {}
+        for control in SHORTCUT_COMPARATORS:
+            control_report = candidate["shortcut_controls"][control]
+            deltas = _paired_root_deltas(
+                full_control["root_metrics"]["outcome"],
+                control_report["root_metrics"]["outcome"],
+            )
+            shortcut_metrics[control][name] = deltas
+            case_summary[name]["shortcut_controls"][control] = {
+                "control_outcome_regret": control_report["candidate_regret"]["outcome"]["mean_regret"],
+                "control_outcome_consistency": control_report["execution_consistency"]["outcome"]["pairs"]["execution_consistency"],
+                "full_minus_control_regret_reduction": float(np.mean(deltas["regret_reduction"])),
+                "full_minus_control_consistency_gain": float(np.mean(deltas["consistency_gain"])),
+            }
+        unseen = candidate["unseen_candidate_audit"]["feature_families"]
+        unseen_full = unseen["full_source_delta_bank"]
+        case_summary[name]["unseen_candidate_controls"] = {}
+        for control in UNSEEN_COMPARATORS:
+            control_report = unseen[control]
+            deltas = _paired_root_deltas(
+                unseen_full["root_metrics"]["outcome"],
+                control_report["root_metrics"]["outcome"],
+            )
+            unseen_metrics[control][name] = deltas
+            case_summary[name]["unseen_candidate_controls"][control] = {
+                "control_outcome_regret": control_report["candidate_regret"]["outcome"]["mean_regret"],
+                "control_outcome_consistency": control_report["execution_consistency"]["outcome"]["pairs"]["execution_consistency"],
+                "full_minus_control_regret_reduction": float(np.mean(deltas["regret_reduction"])),
+                "full_minus_control_consistency_gain": float(np.mean(deltas["consistency_gain"])),
+            }
         reports[name] = {
             "candidate": candidate,
             "baseline": baseline["feature_families"]["source_plus_delta"],
         }
     result = {
-        "schema": "gdd_wm_indexed_canonical_action_panel.v0.1",
+        "schema": "gdd_wm_indexed_canonical_action_panel.v0.2",
         "status": "completed_diagnostic",
         "protocol": {
             "case_unit": "architecture_by_seed_checkpoint",
@@ -98,10 +195,18 @@ def aggregate(cases: list[tuple[str, Path, Path]], output: Path, samples: int, s
             }
             for index, metric in enumerate(("regret_reduction", "consistency_gain"))
         },
+        "full_increment_over_shortcut_controls": _aggregate_control_panel(
+            shortcut_metrics, samples, seed + 1000,
+        ),
+        "unseen_candidate_full_increment_over_controls": _aggregate_control_panel(
+            unseen_metrics, samples, seed + 2000,
+        ),
         "reports": reports,
         "claim_boundary": (
             "offline train-derived indexed canonical action geometry with simulator-labeled task readout; "
-            "not D-JEPA preference validation, physical causality, or closed-loop RGB planning"
+            "shortcut controls test whether predicted dynamics add information beyond the canonical bank. "
+            "The unseen-candidate audit holds out declared candidate IDs but is not adaptive CEM. "
+            "Not D-JEPA preference validation, physical causality, or closed-loop RGB planning"
         ),
     }
     output.parent.mkdir(parents=True, exist_ok=True)

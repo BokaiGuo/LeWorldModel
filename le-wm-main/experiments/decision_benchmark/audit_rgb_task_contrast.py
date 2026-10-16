@@ -28,6 +28,8 @@ if str(ROOT) not in sys.path:
 
 from experiments.decision_benchmark.task_contrast import (
     calibrate_contrast_bound,
+    certify_candidate_bank,
+    evaluate_contrast_bound,
     pairwise_task_contrast_audit,
 )
 from experiments.empirical_spectral_audit.enriched_record_schema import load_payload
@@ -301,34 +303,56 @@ def _selective_outcome(
     metrics: list[dict[str, Any]],
     supports: dict[str, dict[str, Any]],
     collapse: dict[str, dict[str, Any]],
-    bound: float,
+    bound: float | None,
 ) -> dict[str, Any]:
     released = []
     all_roots = []
     for root in sorted({row["instance_id"] for row in metrics}):
         group = [row for row in metrics if row["instance_id"] == root]
         group.sort(key=lambda row: row["predicted_cost"])
-        best, runner = group[:2]
+        best, *competitors = group
         support = supports[root]
-        margin = float(runner["predicted_cost"] - best["predicted_cost"])
+        margins = [float(row["predicted_cost"] - best["predicted_cost"]) for row in competitors]
+        margin = float(min(margins)) if margins else 0.0
         collapse_passed = bool(collapse[root]["candidate_collapse_gate"]["passed"])
-        permit = bool(support["passed"] and collapse_passed and margin > bound)
-        oracle = min(group, key=lambda row: row["real_task_cost"])
+        certificate = certify_candidate_bank(
+            np.asarray([row["predicted_cost"] for row in group], dtype=np.float64),
+            bound,
+            support_passed=bool(support["passed"] and collapse_passed),
+            candidate_ids=[int(row["candidate_id"]) for row in group],
+        )
+        permit = certificate["status"] == "permit"
+        physical_oracle = min(group, key=lambda row: row["real_task_cost"])
+        rgb_oracle = min(group, key=lambda row: row["realized_rgb_cost"])
         chosen = best
+        physical_regret = float(chosen["real_task_cost"] - physical_oracle["real_task_cost"])
+        rgb_regret = float(chosen["realized_rgb_cost"] - rgb_oracle["realized_rgb_cost"])
         record = {
             "instance_id": root,
             "support_passed": bool(support["passed"]),
             "candidate_collapse_passed": collapse_passed,
             "predicted_margin": margin,
-            "bound": float(bound),
-            "status": "permit" if permit else ("probe" if support["passed"] and collapse_passed else "abstain"),
+            "all_competitors_separated": bool(certificate["status"] == "permit"),
+            "competitor_count": len(competitors),
+            "bound": None if bound is None else float(bound),
+            "status": (
+                "permit" if permit else
+                ("insufficient_calibration" if bound is None else
+                 ("probe" if support["passed"] and collapse_passed else "abstain"))
+            ),
             "chosen_candidate": int(chosen["candidate_id"]),
-            "oracle_candidate": int(oracle["candidate_id"]),
+            "oracle_candidate": int(physical_oracle["candidate_id"]),
+            "physical_oracle_candidate": int(physical_oracle["candidate_id"]),
+            "rgb_oracle_candidate": int(rgb_oracle["candidate_id"]),
+            "physical_ranking_correct": bool(chosen["candidate_id"] == physical_oracle["candidate_id"]),
+            "rgb_ranking_correct": bool(chosen["candidate_id"] == rgb_oracle["candidate_id"]),
             "chosen_real_task_cost": float(chosen["real_task_cost"]),
-            "oracle_real_task_cost": float(oracle["real_task_cost"]),
-            "regret": float(chosen["real_task_cost"] - oracle["real_task_cost"]),
+            "oracle_real_task_cost": float(physical_oracle["real_task_cost"]),
+            "regret": physical_regret,
+            "physical_regret": physical_regret,
             "chosen_realized_rgb_cost": float(chosen["realized_rgb_cost"]),
-            "oracle_realized_rgb_cost": float(oracle["realized_rgb_cost"]),
+            "oracle_realized_rgb_cost": float(rgb_oracle["realized_rgb_cost"]),
+            "rgb_regret": rgb_regret,
         }
         all_roots.append(record)
         if permit:
@@ -338,11 +362,22 @@ def _selective_outcome(
         "root_count": len(all_roots),
         "released_root_count": len(released),
         "coverage": None if not all_roots else float(len(released) / len(all_roots)),
+        "release_rate": None if not all_roots else float(len(released) / len(all_roots)),
+        "useful_coverage": None if not all_roots else float(sum(
+            row["physical_ranking_correct"] for row in released
+        ) / len(all_roots)),
         "released_mean_regret": None if not released else float(np.mean([row["regret"] for row in released])),
         "all_root_mean_regret": None if not all_roots else float(np.mean([row["regret"] for row in all_roots])),
         "released_false_release_rate": None if not released else float(np.mean([
             row["chosen_candidate"] != row["oracle_candidate"] for row in released
         ])),
+        "released_physical_false_release_rate": None if not released else float(np.mean([
+            not row["physical_ranking_correct"] for row in released
+        ])),
+        "released_rgb_false_release_rate": None if not released else float(np.mean([
+            not row["rgb_ranking_correct"] for row in released
+        ])),
+        "coverage_field_note": "coverage is retained as a backward-compatible alias for release_rate; conformal outcome coverage is reported separately",
     }
 
 
@@ -404,8 +439,14 @@ def audit(
         outcome_groups,
         minimum_decision_margin=1.0e-3,
     )
+    outcome_coverage = evaluate_contrast_bound(
+        np.asarray([row["realized_rgb_cost"] for row in outcome]),
+        np.asarray([row["predicted_cost"] for row in outcome]),
+        outcome_groups,
+        calibration_bound["bound"],
+    )
     outcome_support = {root: supports[root] for root in sorted({row["instance_id"] for row in outcome})}
-    selective = _selective_outcome(outcome, outcome_support, collapse, float(calibration_bound["bound"]))
+    selective = _selective_outcome(outcome, outcome_support, collapse, calibration_bound["bound"])
     return {
         "schema": "rgb_task_transfer_sufficiency_audit.v1",
         "dataset": str(dataset.resolve()),
@@ -419,6 +460,7 @@ def audit(
         "outcome_root_count": len(set(outcome_groups.tolist())),
         "rgb_contrast_outcome": outcome_rgb,
         "physical_contrast_outcome": outcome_physical,
+        "conformal_outcome_coverage": outcome_coverage,
         "calibration": calibration_bound,
         "support": {
             "fit_row_count": len(fit_rows),
@@ -446,6 +488,8 @@ def audit(
             "prediction_source": "external_prediction_report" if prediction_report is not None else "candidate_bank_rgb_report",
             "support_gate_independent_of_outcome": True,
             "closed_loop_online_planning": False,
+            "candidate_bank_mode": "fixed_predeclared",
+            "adaptive_cem_coverage_certified": False,
         },
         "claim_boundary": "selective fixed-bank RGB/task transfer audit; not closed-loop online planning or universal transfer",
     }

@@ -1021,3 +1021,186 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   `results/pointmaze_rgb_online_planning_v8_cuda_external20_split/`,
   `.../pointmaze_rgb_online_planning_v9_cuda_external20_longer24/`, and
   `.../pointmaze_rgb_online_planning_v10_cuda_excluded16_longer24/`.
+
+- PointMaze WM action projection intervention (2026-10-16):
+  `experiments/run_live_pointmaze_planning.py` adds `wm_rgb_projected`, which
+  interpolates the frozen WM-selected action toward the calibration-only
+  visual-dynamics action until the declared support tolerance is met. On the
+  exact external-20 panel it reached `5/20` success with mean final distance
+  `0.5971`, versus pure WM `2/20`, `1.0773`, and guarded `13/20`, `0.3243`.
+  On the independent excluded-16 panel it reached `10/16`, `0.4421`, versus
+  pure WM `2/16`, `0.9330`, and guarded `13/16`, `0.2191`. Combined projection
+  versus pure WM improved distance by `-0.4850` (bootstrap CI
+  `[-0.6151,-0.3583]`) but remained worse than guarded by `+0.2507`
+  (`[+0.1508,+0.3559]`). Projection was active on `80.3%` of decisions and
+  is therefore a partial support repair, not a replacement for action
+  identifiability or a pure frozen-WM planning gain. Artifacts:
+  `results/pointmaze_rgb_online_planning_v14_cuda_external20_projected/` and
+  `.../pointmaze_rgb_online_planning_v15_cuda_excluded16_projected/`;
+  regression: `tests/test_live_pointmaze_planning.py` (`12 passed`).
+
+- PointMaze alpha-gated projected-guarded follow-up (2026-10-16):
+  `wm_rgb_projected_guarded` was evaluated on the independent excluded-16
+  panel with the same 24-block receding-horizon protocol and a predeclared
+  `projection-min-alpha=0.25`. The external-20 panel reached `5/20` with
+  mean final distance `0.5507` and gate fallback rate `13.0%`; the excluded-16
+  panel reached `9/16` with mean final distance `0.4310` and fallback rate
+  `17.1%`. On the matched 36-root comparison, alpha-gated projection was
+  `14/36` successful with mean final distance `0.4975`, versus `26/36` and
+  `0.2775` for the predeclared guarded controller. The paired alpha-gated
+  minus guarded distance delta was `+0.2200`, bootstrap CI
+  `[+0.1400,+0.3074]`; success lost on `12` roots and won on none. Against
+  pure `wm_rgb`, distance improved by `-0.5156`, CI
+  `[-0.6590,-0.3767]`, but this does not establish a pure-WM gain because
+  the guarded control uses fail-closed fallback. The intervention therefore
+  reduces fallback while losing the held-out safety/performance guarantee.
+  Artifact:
+  `results/pointmaze_rgb_online_planning_v17_cuda_excluded16_projected_guarded_alpha025/report.json`;
+  paired external artifact:
+  `results/pointmaze_rgb_online_planning_v16_cuda_external20_projected_guarded_alpha025/report.json`.
+
+- HTSC finite-sample calibration correction (2026-10-16):
+  `experiments/decision_benchmark/task_contrast.py` now uses the valid
+  split-conformal rank `ceil((n+1)(1-alpha))`. If that rank exceeds the
+  number of independent calibration roots, calibration returns
+  `status=insufficient_calibration` and `bound=null`; all certificate and
+  selective-release callers fail closed rather than silently using the
+  sample maximum. The task-contrast regression suite now has `5 passed` and
+  explicitly covers both insufficient and finite-rank calibration. This
+  repairs the implementation/theory mismatch, but does not establish online
+  coverage for adaptive CEM candidate selection.
+
+- PointMaze privileged fixed-bank candidate ceiling (2026-10-16):
+  `run_live_pointmaze_planning.py` now exposes
+  `ground_truth_candidate_oracle`, which evaluates each fixed action-bank
+  candidate with one exact simulator block and restores the runtime state.
+  It is a privileged counterfactual ceiling, not an RGB policy. On the
+  root-disjoint external-20 panel it achieved `11/20` with mean final
+  distance `0.3097`; on excluded-16 it achieved `13/16` with distance
+  `0.2416`. Combined, the ceiling was `24/36` and `0.2794`. The ceiling is
+  still below complete success on external roots, so fixed-bank reachability
+  and local greedy planning are independent bottlenecks. Artifacts:
+  `results/pointmaze_rgb_online_planning_v18_cuda_external20_oracle/report.json`
+  and
+  `results/pointmaze_rgb_online_planning_v19_cuda_excluded16_oracle/report.json`.
+
+- PointMaze exact-planner protocol audit and root-bank fix (2026-10-16):
+  the first `perfect_dynamics_mpc` implementation regenerated the root action
+  bank from privileged simulator coordinates, whereas the established
+  fixed-bank oracle generated it from the observed RGB-calibrated position.
+  This small angular discrepancy changes wall-contact outcomes. The runner now
+  keeps the observed root bank identical to the fixed-bank baselines and only
+  uses exact simulator positions for successor-bank expansion. A second audit
+  found that the earlier MPC runs used `max_blocks=12`, while the established
+  oracle used a 24-block budget; their final success rates were therefore not
+  comparable. With both fixes and a matched 24-block budget, depth-1/beam-32
+  exactly reproduced the established external-20 oracle: `11/20` success,
+  mean final distance `0.3097`, and `21.05` mean executed blocks. Regression
+  coverage is now `21 passed` for the live PointMaze and task-contrast tests.
+  Artifacts:
+  `results/pointmaze_rgb_online_planning_v24_cuda_external20_perfect_mpc_d1_b32_rootfixed_max24/report.json`;
+  implementation: `experiments/run_live_pointmaze_planning.py`;
+  regression: `tests/test_live_pointmaze_planning.py`.
+
+- PointMaze multi-step MPC smoke status (2026-10-16): the preliminary depth-4,
+  beam-8 runs used the shorter 12-block budget and remain diagnostic smoke
+  artifacts only: external-20 was `2/20`, mean final distance `1.4335`, and
+  excluded-16 was `5/16`, mean final distance `0.9847`. They are superseded by
+  the matched 24-block comparison recorded below and are not used for a
+  finite-horizon claim.
+
+- World-fixed action-bank repair and bilinear decision adapter (2026-10-16):
+  canonical Bank-only/No-dynamics/Shuffled controls showed that the old
+  `+0.1090` indexed-action gain was a goal-relative bank shortcut. A shared
+  world-frame bank removed that shortcut and exposed a missing
+  `source x action` term. On a fresh deterministic hash split over 100 roots
+  and two checkpoint contexts, the train-OOF/calibration gate selected the
+  No-dynamics bilinear adapter. Independent outcome regret fell from `0.1103`
+  to `0.0476`, paired CI `[-0.1196,-0.0130]`, and consistency rose from
+  `0.5594` to `0.6735`, delta CI `[+0.0315,+0.2080]`. Full predicted dynamics
+  did not beat No-dynamics and Shuffled-prediction was at least as good, so the
+  positive result is decision repair from frozen RGB source latent, not
+  learned dynamics or planning. A shared readout over four contexts from two
+  predictor architectures reproduced the same gate decision; however, all
+  contexts reuse the same already-inspected PointMaze roots, so this remains
+  exploratory architecture-repeated evidence rather than an untouched final
+  evaluation. Artifacts:
+  `results/decision_benchmark_candidate_bank_20261016/worldfixed100_hashsplit_decision_repair_v9_s20261016_cuda/capacity_audit.json`.
+  `results/decision_benchmark_candidate_bank_20261016/worldfixed100_hashsplit_2arch4context_decision_repair_s20261016_cuda/capacity_audit.json`.
+
+- Matched privileged depth ceiling (2026-10-16): corrected depth-4/beam-8,
+  24-block exact MPC reached `12/20`, distance `0.2967`, versus corrected
+  depth-1/beam-32 `11/20`, `0.3097`. Paired success delta `+0.05` had CI
+  `[-0.20,+0.30]`; distance improvement `+0.0130` had CI
+  `[-0.0886,+0.1094]`. Both reports now correctly mark
+  `perfect_dynamics_mpc` as privileged with runtime simulator-state access.
+  Artifacts:
+  `results/pointmaze_rgb_online_planning_v25_cuda_external20_perfect_mpc_d4_b8_rootfixed_max24/`
+  and
+  `results/pointmaze_rgb_online_planning_v26_cuda_external20_perfect_mpc_d1_b32_rootfixed_max24_privfixed/`.
+
+- Phase/horizon-conditioned transfer-sufficiency integration (2026-10-16):
+  `docs/PHASE_HORIZON_CONDITIONED_TRANSFER_SUFFICIENCY_20261016.md` turns the
+  H-JEPA insight into a proposed LeWorldModel protocol. Different horizons and
+  planning phases receive separate transfer, action-identifiability, support
+  and subgoal-reachability gates; slow prediction alone is explicitly rejected
+  as a certificate. This is a proposed method, not a validated H-JEPA result.
+- Reacher deployment-aligned 128-root capacity replication (2026-10-16): the
+  unchanged CUDA protocol used 64 train, 32 calibration and 32 untouched
+  outcome roots. Outcome regret was `0.5319` for action-only, `0.2226` for the
+  source-action MLP (paired delta `-0.3093`, 95% CI
+  `[-0.4311,-0.1930]`), `0.3116` for full predicted dynamics and `0.1919` for
+  shuffled prediction. The larger panel therefore replicates a phase-specific
+  source-action decision signal while rejecting independent value from the
+  current predicted dynamics. Artifact:
+  `results/gdd_wm_cross_environment_20261016/reacher_deployment_aligned_panel128_capacity_frozen/capacity_audit.json`.
+- Reacher proposal-relative decision repair and fresh replication
+  (2026-10-16): the old `4.30%/4.48%` proposal-support numbers used inactive
+  rows in their denominators and are invalid as conditional support estimates;
+  the empirical `98.44%` gate was also too strict for finite candidate clouds.
+  The repaired chart standardizes each action summary inside its own CEM cloud,
+  and the gate freezes the fifth percentile of one-sided 90% Wilson lower
+  bounds from calibration (`0.927105`). Offline action-only/source-action/full/
+  shuffled regrets are `0.47152/0.21495/0.25498/0.19389`: source-action is
+  useful, but predicted dynamics still fail no-dynamics/shuffled controls.
+  Two untouched 64-root online batches changed success `32->38` and `36->39`;
+  batch-stratified aggregation is `68/128 -> 77/128`, paired `+0.0703125`, CI
+  `[+0.015625,+0.1328125]`, with `12/3/113` discordance/ties. Conditional
+  active-row support is `0.93933` (`0.93359`--`0.94922`), with no abstentions.
+  Final/minimum qpos-distance intervals cross zero, so the claim is a
+  Reacher-scoped binary-success gain from source-action decision repair, not
+  learned-dynamics or universal-world-model evidence. Aggregate artifact:
+  `results/gdd_wm_cross_environment_20261016/live_reacher_top1_proposal_relative_wilson_two_batch_128_stratified.json`;
+  code: `experiments/compare_reacher_capacity_planning.py` and
+  `experiments/aggregate_reacher_capacity_batches.py`.
+- Reacher predicted-cost incremental controls (2026-10-16): fixed `0.5`
+  source-action/model-cost fusion on fresh roots produced no-dynamics/true/
+  shuffled success `39/64`, `34/64`, `38/64`. True fusion improved final qpos
+  distance by `-0.03426`, CI `[-0.06971,-0.00152]`, but reduced binary success
+  and did not beat shuffled, so this is smoothing rather than candidate-paired
+  dynamics evidence. A calibration-only source-action top-k tie-break audit
+  tested `k={2,4,8,16,32,64}`; all true-vs-shuffled CIs crossed zero and the
+  legal selector failed closed to `k=1`. The exploratory fresh `k=2` panel was
+  `38/64`, `39/64`, `39/64`, with true-minus-shuffled success exactly zero.
+  Current runtime policy remains no-dynamics. Artifacts:
+  `results/gdd_wm_cross_environment_20261016/live_reacher_cost_fusion_seed20263600_64_paired.json`,
+  `results/gdd_wm_cross_environment_20261016/reacher_model_cost_elite_selection/calibration_and_outcome.json`,
+  and `results/gdd_wm_cross_environment_20261016/live_reacher_cost_elite_seed20263700_64_paired.json`.
+- HTSC checkpoint-provenance repairability panel (2026-10-16):
+  `generate_candidate_bank.py --split-assignment checkpoint_protocol_v1`
+  prevents bank-level repartition from reusing predictor-fit episodes. The
+  resulting CUDA panel has 54 train, 14 calibration and 32 outcome roots with
+  16 candidates/root and realized RGB successors. Finite-sample fixed-bank
+  coverage is `31/32` for the root-conditioned bank and `32/32` for the
+  shared-world bank; exact-winner release remains `0` in both cases.
+  Root-conditioned candidates fail the mandatory Bank-only control because
+  candidate identity encodes goal direction. On the shared-world intervention,
+  the train-only effect adapter reduces outcome regret from Bank-only `0.0851`
+  to `0.0328`, paired gain `+0.0523`, 95% CI
+  `[+0.0139,+0.0923]`; it also beats No-dynamics, shuffled prediction,
+  predeclared unseen candidate IDs and matched temporal-order Bank-only with
+  intervals above zero. Generic RGB-successor residual adaptation does not
+  retain that benefit. Operational status remains abstain because exact-winner
+  and preregistered bounded-regret permissions release zero roots. Compact
+  artifact: `results/htsc_checkpoint_provenance_20261016/summary.json`; code:
+  `experiments/decision_benchmark/summarize_htsc_repairability.py`.

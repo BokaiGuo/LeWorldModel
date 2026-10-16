@@ -36,6 +36,10 @@ MARKER_RADIUS = 9
 FRAME_STRIDE = 5
 HORIZONS = (1, 2, 4)
 GATE_TOLERANCE_GRID = (0.05, 0.10, 0.20, 0.30, 0.50)
+PRIVILEGED_METHODS = frozenset({
+    "ground_truth_candidate_oracle",
+    "perfect_dynamics_mpc",
+})
 
 
 def require_cuda() -> torch.device:
@@ -92,10 +96,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kv", type=float, default=0.20)
     parser.add_argument("--wm-dynamics-tolerance", type=float, default=0.10)
     parser.add_argument(
+        "--projection-min-alpha", type=float, default=0.25,
+        help="minimum retained WM-action fraction for wm_rgb_projected_guarded",
+    )
+    parser.add_argument("--oracle-depth", type=int, default=4)
+    parser.add_argument("--oracle-beam-width", type=int, default=8)
+    parser.add_argument(
         "--methods",
         nargs="+",
-        choices=("random", "visual_greedy", "visual_dynamics", "wm_rgb", "wm_rgb_guarded"),
-        default=["random", "visual_greedy", "visual_dynamics", "wm_rgb", "wm_rgb_guarded"],
+        choices=(
+            "random", "visual_greedy", "visual_dynamics", "wm_rgb",
+            "wm_rgb_guarded", "wm_rgb_projected", "wm_rgb_projected_guarded",
+            "ground_truth_candidate_oracle",
+            "perfect_dynamics_mpc",
+        ),
+        default=[
+            "random", "visual_greedy", "visual_dynamics", "wm_rgb",
+            "wm_rgb_guarded", "wm_rgb_projected", "wm_rgb_projected_guarded",
+        ],
     )
     parser.add_argument("--seed", type=int, default=20261016)
     return parser.parse_args()
@@ -698,6 +716,148 @@ def visual_dynamics_scores(
     return distance + velocity_penalty + action_penalty
 
 
+def ground_truth_candidate_scores(
+    runtime: LegacyPointMazeRuntime,
+    actions: np.ndarray,
+    target: np.ndarray,
+) -> np.ndarray:
+    """Score a fixed candidate bank with one exact simulator block.
+
+    This is a privileged candidate-bank ceiling. Simulator state is used only
+    for counterfactual evaluation and is restored before returning; it is not
+    a deployable RGB policy input.
+    """
+
+    if runtime is None:
+        raise ValueError("ground-truth candidate oracle requires a simulator runtime")
+    candidates = np.asarray(actions, dtype=np.float64)
+    if candidates.ndim != 2 or candidates.shape[1] != 2 or not np.isfinite(candidates).all():
+        raise ValueError(f"actions must have shape [N, 2] and be finite, got {candidates.shape}")
+    target_xy = np.asarray(target, dtype=np.float64).reshape(-1)[:2]
+    base_state = runtime.state.copy()
+    scores: list[float] = []
+    try:
+        for action in candidates:
+            runtime.reset(base_state)
+            runtime.step_block(action)
+            scores.append(float(np.linalg.norm(runtime.state[:2] - target_xy)))
+    finally:
+        runtime.reset(base_state)
+    return np.asarray(scores, dtype=np.float64)
+
+
+def perfect_dynamics_mpc_action(
+    runtime: LegacyPointMazeRuntime,
+    target: np.ndarray,
+    directions: int,
+    magnitudes: list[float],
+    *,
+    root_current: np.ndarray | None = None,
+    depth: int = 4,
+    beam_width: int = 8,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Select the first action from an exact-dynamics finite-horizon beam MPC.
+
+    This is a privileged planner ceiling. The root candidate bank is generated
+    from the same observed current position as the fixed-bank baselines, while
+    banks at simulated successor states may use exact simulator positions. Only
+    the first action is executed before the next observation. The learned WM
+    score is never consulted.
+    """
+
+    if runtime is None:
+        raise ValueError("perfect-dynamics MPC requires a simulator runtime")
+    if depth < 1 or beam_width < 1:
+        raise ValueError("oracle depth and beam width must be positive")
+    target_xy = np.asarray(target, dtype=np.float64).reshape(-1)[:2]
+    initial_state = runtime.state.copy()
+    root_position = (
+        initial_state[:2]
+        if root_current is None
+        else np.asarray(root_current, dtype=np.float64).reshape(-1)[:2]
+    )
+    if root_position.shape != (2,) or not np.isfinite(root_position).all():
+        raise ValueError("root_current must contain two finite coordinates")
+    beam: list[tuple[float, np.ndarray, list[np.ndarray]]] = [(0.0, initial_state, [])]
+    try:
+        for _ in range(int(depth)):
+            expansions: list[tuple[float, np.ndarray, list[np.ndarray]]] = []
+            for _cost, state, sequence in beam:
+                bank_position = root_position if not sequence else state[:2]
+                actions = action_bank(bank_position, target_xy, directions, magnitudes)
+                for action in actions:
+                    runtime.reset(state)
+                    runtime.step_block(action)
+                    next_state = runtime.state.copy()
+                    terminal_distance = float(np.linalg.norm(next_state[:2] - target_xy))
+                    expansions.append((terminal_distance, next_state, sequence + [action.copy()]))
+            expansions.sort(key=lambda item: item[0])
+            beam = expansions[: int(beam_width)]
+        if not beam or not beam[0][2]:
+            raise RuntimeError("perfect-dynamics MPC produced no candidate sequence")
+        return np.asarray(beam[0][2][0], dtype=np.float64), {
+            "depth": int(depth),
+            "beam_width": int(beam_width),
+            "predicted_terminal_distance": float(beam[0][0]),
+            "root_action_bank_source": (
+                "rgb_calibrated_observation" if root_current is not None
+                else "simulator_state_fallback"
+            ),
+            "successor_action_bank_source": "exact_simulator_state",
+            "privileged_state_used": True,
+            "privileged_role": "exact finite-horizon planner ceiling only",
+        }
+    finally:
+        runtime.reset(initial_state)
+
+
+def project_action_to_dynamics_support(
+    wm_action: np.ndarray,
+    dynamics_action: np.ndarray,
+    current: np.ndarray,
+    velocity: np.ndarray,
+    target: np.ndarray,
+    dynamics: VisualDynamicsCalibration,
+    kp: float,
+    kv: float,
+    tolerance: float,
+    grid_size: int = 101,
+) -> tuple[np.ndarray, float, float, float]:
+    """Project a WM action toward a calibration-supported action.
+
+    The projection searches the segment from the visual-dynamics action
+    (alpha=0) to the WM action (alpha=1), returning the largest alpha whose
+    calibration-dynamics score is within the declared tolerance of the
+    dynamics action.  It changes the executed action without inventing a new
+    direction and remains a calibration-only support intervention.
+    """
+
+    if grid_size < 2:
+        raise ValueError("grid_size must be at least two")
+    if tolerance < 0.0:
+        raise ValueError("tolerance must be non-negative")
+    wm = np.clip(np.asarray(wm_action, dtype=np.float64).reshape(-1)[:2], -1.0, 1.0)
+    dyn = np.clip(np.asarray(dynamics_action, dtype=np.float64).reshape(-1)[:2], -1.0, 1.0)
+    if not np.isfinite(wm).all() or not np.isfinite(dyn).all():
+        raise ValueError("wm_action and dynamics_action must be finite")
+    alphas = np.linspace(1.0, 0.0, int(grid_size), dtype=np.float64)
+    candidates = dyn[None, :] + alphas[:, None] * (wm - dyn)[None, :]
+    scores = visual_dynamics_scores(
+        current, velocity, target, candidates, dynamics, kp, kv,
+    )
+    support_score = float(scores[-1])
+    admissible = np.flatnonzero(scores <= support_score + float(tolerance) + 1.0e-12)
+    selected = int(admissible[0]) if len(admissible) else len(alphas) - 1
+    selected_alpha = float(alphas[selected])
+    selected_action = np.clip(candidates[selected], -1.0, 1.0)
+    return (
+        selected_action.astype(np.float64),
+        selected_alpha,
+        float(scores[selected]),
+        support_score,
+    )
+
+
 def choose_action(
     method: str,
     model: Any,
@@ -718,6 +878,10 @@ def choose_action(
     kv: float,
     wm_dynamics_tolerance: float,
     rng: np.random.Generator,
+    projection_min_alpha: float = 0.25,
+    runtime: LegacyPointMazeRuntime | None = None,
+    oracle_depth: int = 4,
+    oracle_beam_width: int = 8,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     current_center = green_center(current_rgb)
     goal_center = green_center(goal_rgb)
@@ -753,6 +917,32 @@ def choose_action(
     elif method == "visual_dynamics":
         scores = visual_dynamics_scores(current, velocity, target, actions, dynamics, kp, kv)
         index = int(np.argmin(scores))
+    elif method == "ground_truth_candidate_oracle":
+        scores = ground_truth_candidate_scores(runtime, actions, target)
+        index = int(np.argmin(scores))
+        gate_info.update({
+            "privileged_state_used": True,
+            "privileged_role": "counterfactual candidate-bank ceiling only",
+        })
+    elif method == "perfect_dynamics_mpc":
+        selected_action, planner_info = perfect_dynamics_mpc_action(
+            runtime, target, directions, magnitudes,
+            root_current=current,
+            depth=oracle_depth, beam_width=oracle_beam_width,
+        )
+        gate_info.update(planner_info)
+        return selected_action, {
+            "selected_index": None,
+            "candidate_count": None,
+            "current_visual_position": current.tolist(),
+            "goal_visual_position": goal.tolist(),
+            "visual_velocity": velocity.tolist(),
+            "route_waypoints": [np.asarray(point).tolist() for point in waypoints],
+            "active_waypoint": np.asarray(target).tolist(),
+            "selected_action": selected_action.tolist(),
+            "candidate_scores": None,
+            "action_transfer_gate": gate_info,
+        }
     elif method == "wm_rgb":
         scores = model_candidate_scores(
             model, readout, context_images, context_proprios, actions,
@@ -782,6 +972,51 @@ def choose_action(
             gate_info["fallback_used"] = True
             gate_info["fallback_reason"] = "wm_action_outside_calibration_dynamics_tolerance"
         scores = wm_scores
+    elif method in {"wm_rgb_projected", "wm_rgb_projected_guarded"}:
+        wm_scores = model_candidate_scores(
+            model, readout, context_images, context_proprios, actions,
+            action_mean, action_std, target,
+        )
+        dynamics_scores = visual_dynamics_scores(
+            current, velocity, target, actions, dynamics, kp, kv
+        )
+        wm_index = int(np.argmin(wm_scores))
+        dynamics_index = int(np.argmin(dynamics_scores))
+        projected_action, alpha, projected_score, support_score = project_action_to_dynamics_support(
+            actions[wm_index], actions[dynamics_index], current, velocity, target,
+            dynamics, kp, kv, wm_dynamics_tolerance,
+        )
+        gate_info.update({
+            "wm_selected_index": wm_index,
+            "dynamics_selected_index": dynamics_index,
+            "dynamics_regret_of_wm": float(
+                dynamics_scores[wm_index] - dynamics_scores[dynamics_index]
+            ),
+            "projection_used": bool(alpha < 1.0 - 1.0e-12),
+            "projection_alpha": alpha,
+            "projected_dynamics_score": projected_score,
+            "dynamics_support_score": support_score,
+        })
+        executed_action = projected_action
+        if method == "wm_rgb_projected_guarded" and alpha < projection_min_alpha:
+            executed_action = actions[dynamics_index]
+            gate_info.update({
+                "fallback_used": True,
+                "fallback_reason": "projection_alpha_below_minimum",
+                "projection_min_alpha": float(projection_min_alpha),
+            })
+        return executed_action, {
+            "selected_index": wm_index,
+            "candidate_count": int(len(actions)),
+            "current_visual_position": current.tolist(),
+            "goal_visual_position": goal.tolist(),
+            "visual_velocity": velocity.tolist(),
+            "route_waypoints": [np.asarray(point).tolist() for point in waypoints],
+            "active_waypoint": np.asarray(target).tolist(),
+            "selected_action": executed_action.tolist(),
+            "candidate_scores": np.asarray(wm_scores).tolist(),
+            "action_transfer_gate": gate_info,
+        }
     else:
         raise ValueError(f"unknown planning method {method}")
     return actions[index], {
@@ -819,6 +1054,9 @@ def run_episode(
     max_blocks: int,
     success_radius: float,
     seed: int,
+    projection_min_alpha: float = 0.25,
+    oracle_depth: int = 4,
+    oracle_beam_width: int = 8,
 ) -> dict[str, Any]:
     images, states = load_episode(dataset_root, episode)
     renderer = DatasetMatchedRenderer.from_episode(images, calibration)
@@ -857,7 +1095,8 @@ def run_episode(
                 method, model, readout, current_rgb, goal_rgb, context_images,
                 context_proprios, calibration, action_mean, action_std,
                 directions, magnitudes, dynamics, maze_map, planner_map, kp, kv,
-                wm_dynamics_tolerance, rng,
+                wm_dynamics_tolerance, rng, projection_min_alpha, runtime=runtime,
+                oracle_depth=oracle_depth, oracle_beam_width=oracle_beam_width,
             )
         except ValueError as exc:
             detector_failures += 1
@@ -962,6 +1201,8 @@ def select_gate_tolerance(candidates: list[dict[str, Any]]) -> float:
 
 def main() -> None:
     args = parse_args()
+    if not 0.0 <= float(args.projection_min_alpha) <= 1.0:
+        raise ValueError("projection-min-alpha must be in [0, 1]")
     device = require_cuda()
     dataset_root = args.dataset_root.resolve()
     calibration_episodes = parse_episode_list(args.calibration_episodes, "calibration episodes")
@@ -1020,7 +1261,8 @@ def main() -> None:
                 action_mean, action_std, dynamics, maze_map, args.planner_map,
                 args.directions, args.magnitudes, args.probe_blocks, args.kp, args.kv,
                 float(tolerance), args.max_blocks, args.success_radius,
-                args.seed + 100000 + index,
+                args.seed + 100000 + index, args.projection_min_alpha,
+                args.oracle_depth, args.oracle_beam_width,
             ) for index, episode in enumerate(gate_calibration_episodes)]
             tolerance_candidates.append({
                 "tolerance": float(tolerance),
@@ -1045,9 +1287,11 @@ def main() -> None:
                 action_mean, action_std, dynamics, maze_map, args.planner_map,
                 args.directions, args.magnitudes, args.probe_blocks, args.kp, args.kv,
                 selected_tolerance, args.max_blocks, args.success_radius,
-                args.seed + index,
+                args.seed + index, args.projection_min_alpha,
+                args.oracle_depth, args.oracle_beam_width,
             ))
     aggregates = {method: _aggregate([row for row in rows if row["method"] == method]) for method in methods}
+    privileged_methods = [method for method in methods if method in PRIVILEGED_METHODS]
     report = {
         "schema": "pointmaze_rgb_online_planning.v3",
         "protocol": {
@@ -1074,8 +1318,13 @@ def main() -> None:
                 "kv": args.kv,
                 "wm_dynamics_tolerance": args.wm_dynamics_tolerance,
                 "selected_wm_dynamics_tolerance": selected_tolerance,
+                "projection_min_alpha": args.projection_min_alpha,
+                "oracle_depth": args.oracle_depth,
+                "oracle_beam_width": args.oracle_beam_width,
             },
             "methods": list(methods),
+            "privileged_methods": privileged_methods,
+            "runtime_state_access": bool(privileged_methods),
             "goal_state_for_environment_only": GOAL_STATE.tolist(),
             "success_radius": args.success_radius,
             "gate_calibration": gate_calibration_report,
@@ -1099,6 +1348,11 @@ def main() -> None:
         "aggregates": aggregates,
         "rows": rows,
         "evidence_boundary": (
+            "same-legacy-dynamics mixed RGB consequence and privileged fixed-bank "
+            "ceiling; privileged methods are not deployable and do not prove "
+            "universal transfer, physical causality, or the official swm package "
+            "interface"
+            if privileged_methods else
             "same-legacy-dynamics RGB-only receding-horizon consequence with a "
             "calibration-only visual readout; not proof of universal transfer, "
             "physical causality, or the official swm package interface"

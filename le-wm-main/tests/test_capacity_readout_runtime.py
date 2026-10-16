@@ -8,6 +8,7 @@ from experiments.capacity_readout_runtime import (
     capacity_action_summary,
     load_capacity_readout,
     load_indexed_canonical_readout,
+    proposal_relative_action_summary,
 )
 
 
@@ -40,8 +41,19 @@ def test_capacity_readout_loader_rejects_non_raw_runtime_artifact(tmp_path) -> N
     path = tmp_path / "goal_relative.npz"
     values = _arrays(action_frame="goal_relative")
     np.savez(path, **values)
-    with pytest.raises(ValueError, match="action_frame='raw'"):
+    with pytest.raises(ValueError, match="proposal_relative"):
         load_capacity_readout(path)
+
+
+def test_proposal_relative_runtime_chart_removes_row_affine_shift() -> None:
+    base = torch.arange(2 * 3 * 12, dtype=torch.float32).reshape(2, 3, 12)
+    shifted = base.clone()
+    shifted[1] = 100.0 + 4.0 * shifted[1]
+    reference = base.clone()
+    reference[1] = base[0]
+    actual = proposal_relative_action_summary(shifted)
+    expected = proposal_relative_action_summary(reference)
+    torch.testing.assert_close(actual, expected)
 
 
 class _FakeBase(torch.nn.Module):
@@ -78,8 +90,8 @@ def test_capacity_runtime_uses_raw_width_and_frozen_gate() -> None:
 
 def test_capacity_runtime_applies_base_rank_trust_region() -> None:
     values = _arrays(gate=1)
-    values["action_coefficient"][-1] = 2.0
-    values["residual_coefficient"][-1] = 1.0
+    values["action_coefficient"][0] = 2.0
+    values["residual_coefficient"][0] = 1.0
     artifact = {
         key: torch.as_tensor(value)
         for key, value in values.items()
@@ -107,7 +119,7 @@ def test_capacity_runtime_applies_base_rank_trust_region() -> None:
 
 def test_capacity_runtime_masks_unsupported_gaussian_candidates() -> None:
     values = _arrays(gate=1)
-    values["residual_coefficient"][-1] = 1.0
+    values["residual_coefficient"][0] = 1.0
     artifact = {
         key: torch.as_tensor(value)
         for key, value in values.items()
@@ -133,7 +145,7 @@ def test_capacity_runtime_masks_unsupported_gaussian_candidates() -> None:
 
 def test_capacity_runtime_uses_base_cost_for_unsupported_without_additive_mode() -> None:
     values = _arrays(gate=1)
-    values["residual_coefficient"][-1] = 1.0
+    values["residual_coefficient"][0] = 1.0
     artifact = {
         key: torch.as_tensor(value)
         for key, value in values.items()
@@ -182,7 +194,7 @@ def test_capacity_runtime_rejects_malformed_candidate_bank_mask() -> None:
 
 def test_capacity_runtime_computes_trust_region_cutoff_on_bank_only() -> None:
     values = _arrays(gate=1)
-    values["residual_coefficient"][-1] = 1.0
+    values["residual_coefficient"][0] = 1.0
     artifact = {
         key: torch.as_tensor(value)
         for key, value in values.items()
@@ -210,7 +222,7 @@ def test_capacity_runtime_computes_trust_region_cutoff_on_bank_only() -> None:
 
 def _final_stage_artifact() -> dict:
     values = _arrays(gate=1)
-    values["residual_coefficient"][-1] = 1.0
+    values["residual_coefficient"][0] = 1.0
     artifact = {
         key: torch.as_tensor(value)
         for key, value in values.items()
@@ -228,6 +240,196 @@ def _final_stage_artifact() -> dict:
         "residual_start_iteration": 7,
     })
     return artifact
+
+
+def _mlp_proposal_artifact() -> dict:
+    values = _arrays(gate=0)
+    artifact = {
+        key: torch.as_tensor(value)
+        for key, value in values.items()
+        if key not in {"gate_enabled", "action_frame", "feature_family", "goal_conditioning"}
+    }
+    artifact.update({
+        "gate_enabled": False,
+        "action_frame": "raw",
+        "feature_family": "source_delta_action",
+        "goal_conditioning": "none",
+        "mlp_no_dynamics_gate_enabled": True,
+        "mlp_residual_start_iteration": 7,
+        "mlp_planner_call_index": 1,
+        "mlp_no_dynamics_feature_mean": torch.zeros(204),
+        "mlp_no_dynamics_feature_scale": torch.ones(204),
+        "mlp_no_dynamics_residual_mean": torch.tensor(0.0),
+        "mlp_no_dynamics_residual_scale": torch.tensor(1.0),
+        "mlp_no_dynamics_layer_0_weight": torch.zeros(64, 204),
+        "mlp_no_dynamics_layer_0_bias": torch.zeros(64),
+        "mlp_no_dynamics_layer_2_weight": torch.zeros(32, 64),
+        "mlp_no_dynamics_layer_2_bias": torch.zeros(32),
+        "mlp_no_dynamics_layer_4_weight": torch.zeros(1, 32),
+        "mlp_no_dynamics_layer_4_bias": torch.zeros(1),
+        "proposal_support_mean": torch.zeros(12),
+        "proposal_support_scale": torch.ones(12),
+        "proposal_support_radius_sq": torch.tensor([100.0]),
+    })
+    return artifact
+
+
+def test_no_dynamics_mlp_is_final_stage_and_support_gated() -> None:
+    model = CapacityReadoutCostModel(
+        _RankedBase(), _mlp_proposal_artifact(),
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    actions = torch.zeros(1, 3, 5, 10)
+    actions[0, 2] = 100.0
+    early = model.get_cost(
+        {
+            "_cem_iteration": torch.full((1, 3), 6),
+            "_planner_call_index": torch.full((1, 3), 1),
+        }, actions,
+    )
+    torch.testing.assert_close(early, torch.tensor([[0.0, 1.0, 2.0]]))
+    final = model.get_cost(
+        {
+            "_cem_iteration": torch.full((1, 3), 7),
+            "_planner_call_index": torch.full((1, 3), 1),
+        }, actions,
+    )
+    torch.testing.assert_close(final, torch.tensor([[0.5, 0.5, 2.0]]))
+    diagnostics = model.runtime_diagnostics()
+    assert diagnostics["mlp_evaluated_rows"] == 1
+    assert diagnostics["mlp_proposal_support_rate"] == pytest.approx(2 / 3)
+    assert diagnostics["mlp_active_rows"] == 1
+    assert diagnostics["mlp_row_support_fraction_mean"] == pytest.approx(2 / 3)
+
+
+def test_no_dynamics_mlp_falls_back_when_row_support_is_below_calibration() -> None:
+    artifact = _mlp_proposal_artifact()
+    artifact.update({
+        "mlp_residual_start_iteration": 0,
+        "mlp_planner_call_index": 0,
+        "proposal_support_min_fraction": 0.75,
+        "proposal_support_radius_sq": torch.tensor([0.1]),
+    })
+    base = _RankedBase()
+    model = CapacityReadoutCostModel(
+        base, artifact, np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    actions = torch.full((1, 4, 5, 10), 100.0)
+    actions[:, :2] = 0.0
+    info = {
+        "_cem_iteration": torch.zeros(1, 4, dtype=torch.int64),
+        "_planner_call_index": torch.zeros(1, 4, dtype=torch.int64),
+    }
+    expected = base.get_cost(info, actions)
+    actual = model.get_cost(info, actions)
+    assert torch.equal(actual, expected)
+    diagnostics = model.runtime_diagnostics()
+    assert diagnostics["mlp_evaluated_rows"] == 0
+    assert diagnostics["mlp_abstained_low_support_rows"] == 1
+
+
+def test_no_dynamics_mlp_can_blend_frozen_model_cost() -> None:
+    artifact = _mlp_proposal_artifact()
+    artifact["mlp_base_cost_blend_weight"] = 0.5
+    model = CapacityReadoutCostModel(
+        _RankedBase(), artifact,
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    actions = torch.zeros(1, 3, 5, 10)
+    actions[0, 2] = 100.0
+    costs = model.get_cost(
+        {
+            "_cem_iteration": torch.full((1, 3), 7),
+            "_planner_call_index": torch.full((1, 3), 1),
+        },
+        actions,
+    )
+    torch.testing.assert_close(costs, torch.tensor([[0.25, 0.75, 2.0]]))
+    diagnostics = model.runtime_diagnostics()
+    assert diagnostics["mlp_base_cost_blend_weight"] == 0.5
+    assert diagnostics["mlp_shuffle_base_cost_control"] is False
+
+
+def test_no_dynamics_mlp_shuffled_model_cost_is_placebo_control() -> None:
+    artifact = _mlp_proposal_artifact()
+    artifact.update({
+        "mlp_base_cost_blend_weight": 0.5,
+        "mlp_shuffle_base_cost_control": True,
+    })
+    model = CapacityReadoutCostModel(
+        _RankedBase(), artifact,
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    actions = torch.zeros(1, 3, 5, 10)
+    actions[0, 2] = 100.0
+    costs = model.get_cost(
+        {
+            "_cem_iteration": torch.full((1, 3), 7),
+            "_planner_call_index": torch.full((1, 3), 1),
+        },
+        actions,
+    )
+    torch.testing.assert_close(costs, torch.tensor([[1.25, 0.25, 2.0]]))
+    diagnostics = model.runtime_diagnostics()
+    assert diagnostics["mlp_shuffle_base_cost_control"] is True
+
+
+def test_no_dynamics_mlp_model_cost_can_only_tiebreak_safe_elite() -> None:
+    artifact = _mlp_proposal_artifact()
+    artifact["mlp_base_cost_elite_k"] = 2
+    model = CapacityReadoutCostModel(
+        _RankedBase(), artifact,
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    actions = torch.zeros(1, 3, 5, 10)
+    actions[0, 2] = 100.0
+    costs = model.get_cost(
+        {
+            "_cem_iteration": torch.full((1, 3), 7),
+            "_planner_call_index": torch.full((1, 3), 1),
+        },
+        actions,
+    )
+    assert int(torch.argmin(costs, dim=1).item()) == 0
+    assert costs[0, 2] == 2.0
+    assert model.runtime_diagnostics()["mlp_base_cost_elite_k"] == 2
+
+
+def test_no_dynamics_mlp_shuffled_elite_control_breaks_tiebreak_pairing() -> None:
+    artifact = _mlp_proposal_artifact()
+    artifact.update({
+        "mlp_base_cost_elite_k": 2,
+        "mlp_shuffle_base_cost_control": True,
+    })
+    model = CapacityReadoutCostModel(
+        _RankedBase(), artifact,
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    actions = torch.zeros(1, 3, 5, 10)
+    actions[0, 2] = 100.0
+    costs = model.get_cost(
+        {
+            "_cem_iteration": torch.full((1, 3), 7),
+            "_planner_call_index": torch.full((1, 3), 1),
+        },
+        actions,
+    )
+    assert int(torch.argmin(costs, dim=1).item()) == 1
+
+
+def test_no_dynamics_mlp_rejects_wrong_replan_phase() -> None:
+    model = CapacityReadoutCostModel(
+        _RankedBase(), _mlp_proposal_artifact(),
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    costs = model.get_cost(
+        {
+            "_cem_iteration": torch.full((1, 3), 7),
+            "_planner_call_index": torch.zeros(1, 3, dtype=torch.int64),
+        },
+        torch.zeros(1, 3, 5, 10),
+    )
+    torch.testing.assert_close(costs, torch.tensor([[0.0, 1.0, 2.0]]))
 
 
 def test_capacity_runtime_keeps_final_stage_residual_off_before_start() -> None:
@@ -269,6 +471,77 @@ def test_capacity_runtime_fails_closed_without_iteration_metadata() -> None:
     )
     costs = model.get_cost({}, torch.zeros(1, 4, 5, 10))
     torch.testing.assert_close(costs, torch.tensor([[0.0, 1.0, 2.0, 3.0]]))
+
+
+def test_capacity_readout_uses_offline_intercept_first_layout() -> None:
+    features = torch.tensor([[[2.0, 3.0]]])
+    coefficient = torch.tensor([1.0, 4.0, 5.0])
+    result = CapacityReadoutCostModel._readout(
+        features,
+        coefficient,
+        torch.zeros(2),
+        torch.ones(2),
+    )
+    torch.testing.assert_close(result, torch.tensor([[24.0]]))
+
+
+def _low_rank_bilinear_artifact() -> dict:
+    values = _arrays(gate=0)
+    artifact = {
+        key: torch.as_tensor(value)
+        for key, value in values.items()
+        if key not in {"gate_enabled", "action_frame", "feature_family", "goal_conditioning"}
+    }
+    rank = 2
+    no_dynamics_width = 12 + rank * 12
+    full_width = no_dynamics_width + rank + rank * 12 + rank * rank
+    no_dynamics_coefficient = torch.zeros(no_dynamics_width + 1)
+    # Intercept first; rank the bank by its first raw action-summary entry.
+    no_dynamics_coefficient[1] = 1.0
+    artifact.update({
+        "gate_enabled": False,
+        "action_frame": "raw",
+        "feature_family": "source_delta_action",
+        "goal_conditioning": "none",
+        "bilinear_gate_enabled": True,
+        "bilinear_selected": "bilinear_no_dynamics_source_action",
+        "bilinear_no_dynamics_coefficient": no_dynamics_coefficient,
+        "bilinear_no_dynamics_mean": torch.zeros(no_dynamics_width),
+        "bilinear_no_dynamics_scale": torch.ones(no_dynamics_width),
+        "bilinear_full_coefficient": torch.zeros(full_width + 1),
+        "bilinear_full_mean": torch.zeros(full_width),
+        "bilinear_full_scale": torch.ones(full_width),
+        "bilinear_source_mean": torch.zeros(192),
+        "bilinear_source_components": torch.eye(192)[:rank],
+        "bilinear_delta_mean": torch.zeros(192),
+        "bilinear_delta_components": torch.eye(192)[:rank],
+        "bilinear_rank": rank,
+    })
+    return artifact
+
+
+def test_low_rank_bilinear_readout_rank_maps_bank_and_preserves_gaussian() -> None:
+    model = CapacityReadoutCostModel(
+        _RankedBase(), _low_rank_bilinear_artifact(),
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    actions = torch.zeros(1, 3, 5, 10)
+    actions[0, 1, :, 0::2] = 1.0
+    actions[0, 2, :, 1::2] = 1.0
+    info = {"_candidate_bank_mask": torch.tensor([[False, True, True]])}
+    costs = model.get_cost(info, actions)
+    # The readout reverses the supported bank order on the frozen base-cost
+    # scale, while the unsupported Gaussian/mean slot remains exactly frozen.
+    torch.testing.assert_close(costs, torch.tensor([[0.0, 2.0, 1.0]]))
+
+
+def test_low_rank_bilinear_readout_fails_closed_without_bank_mask() -> None:
+    model = CapacityReadoutCostModel(
+        _RankedBase(), _low_rank_bilinear_artifact(),
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    costs = model.get_cost({}, torch.zeros(1, 3, 5, 10))
+    torch.testing.assert_close(costs, torch.tensor([[0.0, 1.0, 2.0]]))
 
 
 def _indexed_artifact() -> dict:

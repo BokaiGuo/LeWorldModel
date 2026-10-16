@@ -78,7 +78,9 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
     """
 
     def __init__(self, *args, candidate_bank: torch.Tensor,
-                 candidate_bank_iterations: int | None = None, **kwargs):
+                 candidate_bank_iterations: int | None = None,
+                 record_candidate_trace: bool = False,
+                 final_action_selection: str = "mean", **kwargs):
         super().__init__(*args, **kwargs)
         if candidate_bank.ndim != 3:
             raise ValueError("candidate_bank must have shape [bank, horizon, action_dim]")
@@ -88,9 +90,17 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
         if candidate_bank_iterations is not None and candidate_bank_iterations < 1:
             raise ValueError("candidate_bank_iterations must be positive or None")
         self.candidate_bank_iterations = candidate_bank_iterations
+        self.record_candidate_trace = bool(record_candidate_trace)
+        self.candidate_trace: list[dict[str, torch.Tensor]] = []
+        self.solve_calls = 0
+        if final_action_selection not in {"mean", "best"}:
+            raise ValueError("final_action_selection must be 'mean' or 'best'")
+        self.final_action_selection = final_action_selection
 
     @torch.inference_mode()
     def solve(self, info_dict: dict, init_action: torch.Tensor | None = None) -> dict:
+        planner_call_index = int(self.solve_calls)
+        self.solve_calls += 1
         total_envs = len(next(iter(info_dict.values())))
         init_action = prepare_init_action(
             self.model, info_dict, init_action, self.horizon,
@@ -104,6 +114,7 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
         if tuple(bank.shape[1:]) != expected:
             raise ValueError(f"candidate bank shape {tuple(bank.shape[1:])} != {expected}")
         outputs = {"costs": [], "mean": [], "var": []}
+        trace_batches: list[dict[str, torch.Tensor]] = []
 
         for start_idx in range(0, total_envs, self.batch_size):
             end_idx = min(start_idx + self.batch_size, total_envs)
@@ -123,6 +134,9 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
                 expanded_infos[key] = value_batch
 
             final_cost = None
+            final_candidates = None
+            final_candidate_costs = None
+            final_bank_mask = None
             for _step in range(self.n_steps):
                 use_bank = (
                     self.candidate_bank_iterations is None
@@ -145,6 +159,14 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
                 )
                 bank_mask[:, 1 : 1 + active_bank.shape[0]] = True
                 expanded_infos["_candidate_bank_mask"] = bank_mask
+                expanded_infos["_cem_iteration"] = torch.full(
+                    (current_bs, self.num_samples), _step,
+                    dtype=torch.int64, device=self.device,
+                )
+                expanded_infos["_planner_call_index"] = torch.full(
+                    (current_bs, self.num_samples), planner_call_index,
+                    dtype=torch.int64, device=self.device,
+                )
                 costs = self.model.get_cost(expanded_infos, candidates)
                 if costs.ndim != 2 or costs.shape != (current_bs, self.num_samples):
                     raise RuntimeError(f"unexpected candidate cost shape: {tuple(costs.shape)}")
@@ -153,14 +175,41 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
                 topk_candidates = candidates[batch_indices, topk_inds]
                 batch_mean = topk_candidates.mean(dim=1)
                 batch_var = topk_candidates.std(dim=1)
+                if (
+                    self.final_action_selection == "best"
+                    and _step == self.n_steps - 1
+                ):
+                    batch_mean = topk_candidates[:, 0]
                 final_cost = topk_vals.mean(dim=1).cpu().tolist()
+                final_candidates = candidates
+                final_candidate_costs = costs
+                final_bank_mask = bank_mask
             mean[start_idx:end_idx] = batch_mean
             var[start_idx:end_idx] = batch_var
             outputs["costs"].extend(final_cost or [])
+            if self.record_candidate_trace:
+                if final_candidates is None or final_candidate_costs is None or final_bank_mask is None:
+                    raise RuntimeError("CEM candidate trace was requested but no iteration ran")
+                trace_batches.append({
+                    "candidates": final_candidates.detach().cpu(),
+                    "costs": final_candidate_costs.detach().cpu(),
+                    "bank_mask": final_bank_mask.detach().cpu(),
+                    **{
+                        key: expanded_infos[key].detach().cpu()
+                        for key in ("emb", "predicted_emb", "goal_emb")
+                        if torch.is_tensor(expanded_infos.get(key))
+                    },
+                })
 
         outputs["actions"] = mean.detach().cpu()
         outputs["mean"] = [mean.detach().cpu()]
         outputs["var"] = [var.detach().cpu()]
+        if self.record_candidate_trace:
+            trace_keys = tuple(trace_batches[0])
+            self.candidate_trace.append({
+                key: torch.cat([batch[key] for batch in trace_batches], dim=0)
+                for key in trace_keys
+            })
         return outputs
 
 

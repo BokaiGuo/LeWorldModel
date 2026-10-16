@@ -24,7 +24,7 @@ from experiments.empirical_spectral_audit.enriched_record_schema import load_pay
 from experiments.empirical_spectral_audit.evaluate_pointmaze_adapter_external_evidence import _fit_readouts
 from experiments.decision_benchmark.task_contrast import (
     calibrate_contrast_bound,
-    certify_pair,
+    certify_candidate_bank,
     pairwise_task_contrast_audit,
 )
 
@@ -90,13 +90,18 @@ def audit(dataset: Path, arrays_path: Path, fit_export: Path, projection_metadat
             continue
         root_count += 1
         best, runner_up = int(order[0]), int(order[1])
-        if float(predicted[runner_up] - predicted[best]) > float(calibration_report["bound"]):
+        bound = calibration_report["bound"]
+        potential_bank_certificate = certify_candidate_bank(
+            predicted[indices], bound, support_passed=True,
+            candidate_ids=[int(value) for value in indices],
+        )
+        if potential_bank_certificate["status"] == "permit":
             margin_separated += 1
         # Support coverage has not been independently calibrated for this
         # bank, so the operational status must remain abstain.
-        certify_pair(
-            float(predicted[best]), float(predicted[runner_up]), calibration_report["bound"],
-            support_passed=False, candidate_ids=(int(best), int(runner_up)),
+        certify_candidate_bank(
+            predicted[indices], bound, support_passed=False,
+            candidate_ids=[int(value) for value in indices],
         )
     return {
         "schema": "offline_candidate_task_contrast_audit.v1",

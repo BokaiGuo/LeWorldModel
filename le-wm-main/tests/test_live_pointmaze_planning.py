@@ -4,15 +4,24 @@ import numpy as np
 import pytest
 
 from experiments.run_live_pointmaze_planning import (
+    PRIVILEGED_METHODS,
     GOAL_STATE,
     VisualCalibration,
     VisualDynamicsCalibration,
     action_bank,
     choose_action,
+    ground_truth_candidate_scores,
     green_center,
     parse_episode_list,
+    perfect_dynamics_mpc_action,
+    project_action_to_dynamics_support,
     select_gate_tolerance,
 )
+
+
+def test_exact_dynamics_planners_are_reported_as_privileged() -> None:
+    assert "ground_truth_candidate_oracle" in PRIVILEGED_METHODS
+    assert "perfect_dynamics_mpc" in PRIVILEGED_METHODS
 
 
 def test_green_center_extracts_only_the_marker() -> None:
@@ -37,6 +46,62 @@ def test_action_bank_is_goal_relative_and_finite() -> None:
 def test_action_bank_rejects_too_few_directions() -> None:
     with pytest.raises(ValueError, match="at least four"):
         action_bank(np.zeros(2), GOAL_STATE, 3, [0.25])
+
+
+def test_ground_truth_candidate_scores_restore_runtime_state() -> None:
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self._state = np.asarray([0.0, 0.0, 0.0, 0.0])
+
+        @property
+        def state(self) -> np.ndarray:
+            return self._state.copy()
+
+        def reset(self, state: np.ndarray) -> None:
+            self._state = np.asarray(state, dtype=np.float64).copy()
+
+        def step_block(self, action: np.ndarray) -> np.ndarray:
+            self._state[:2] += np.asarray(action, dtype=np.float64)
+            return self.state
+
+    runtime = FakeRuntime()
+    scores = ground_truth_candidate_scores(
+        runtime,
+        np.asarray([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]]),
+        np.asarray([1.0, 0.0]),
+    )
+    assert np.argmin(scores) == 0
+    assert np.allclose(runtime.state, np.zeros(4))
+
+
+def test_depth_one_perfect_mpc_uses_observed_root_candidate_bank() -> None:
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self._state = np.asarray([0.10, 0.20, 0.0, 0.0])
+
+        @property
+        def state(self) -> np.ndarray:
+            return self._state.copy()
+
+        def reset(self, state: np.ndarray) -> None:
+            self._state = np.asarray(state, dtype=np.float64).copy()
+
+        def step_block(self, action: np.ndarray) -> np.ndarray:
+            self._state[:2] += np.asarray(action, dtype=np.float64)
+            return self.state
+
+    runtime = FakeRuntime()
+    target = np.asarray([1.0, 1.0])
+    observed_current = np.asarray([0.0, 0.5])
+    candidates = action_bank(observed_current, target, 8, [0.25, 0.50])
+    expected = int(np.argmin(ground_truth_candidate_scores(runtime, candidates, target)))
+    selected, info = perfect_dynamics_mpc_action(
+        runtime, target, 8, [0.25, 0.50], root_current=observed_current,
+        depth=1, beam_width=len(candidates),
+    )
+    assert np.allclose(selected, candidates[expected])
+    assert info["privileged_state_used"] is True
+    assert np.allclose(runtime.state, np.asarray([0.10, 0.20, 0.0, 0.0]))
 
 
 def test_parse_episode_list_accepts_explicit_root_lists() -> None:
@@ -117,3 +182,45 @@ def test_guarded_world_model_falls_back_when_dynamics_regret_exceeds_tolerance(m
     gate = decision["action_transfer_gate"]
     assert gate["fallback_used"] is True
     assert gate["fallback_reason"] == "wm_action_outside_calibration_dynamics_tolerance"
+
+
+def test_action_projection_keeps_identical_supported_endpoint() -> None:
+    dynamics = VisualDynamicsCalibration(
+        position_delta_weights=np.asarray(
+            [[0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]
+        ),
+        velocity_weights=np.zeros((5, 2)),
+        position_delta_rmse=np.zeros(2),
+        velocity_rmse=np.zeros(2),
+        calibration_episodes=(0,),
+    )
+    action = np.asarray([0.25, -0.50])
+    projected, alpha, score, support = project_action_to_dynamics_support(
+        action, action, np.zeros(2), np.zeros(2), np.asarray([1.0, 1.0]),
+        dynamics, 0.8, 0.2, 0.0,
+    )
+    assert np.allclose(projected, action)
+    assert alpha == pytest.approx(1.0)
+    assert score == pytest.approx(support)
+
+
+def test_action_projection_moves_out_of_support_wm_action_toward_dynamics() -> None:
+    dynamics = VisualDynamicsCalibration(
+        position_delta_weights=np.asarray(
+            [[0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]
+        ),
+        velocity_weights=np.zeros((5, 2)),
+        position_delta_rmse=np.zeros(2),
+        velocity_rmse=np.zeros(2),
+        calibration_episodes=(0,),
+    )
+    wm = np.asarray([1.0, 0.0])
+    safe = np.asarray([0.0, 1.0])
+    projected, alpha, score, support = project_action_to_dynamics_support(
+        wm, safe, np.zeros(2), np.zeros(2), np.asarray([0.0, 1.0]),
+        dynamics, 0.8, 0.2, 0.01,
+    )
+    assert 0.0 <= alpha < 1.0
+    assert np.all(projected >= -1.0) and np.all(projected <= 1.0)
+    assert score <= support + 0.01 + 1.0e-8
+    assert not np.allclose(projected, wm)

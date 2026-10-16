@@ -30,6 +30,12 @@ evidence manifest 契约，再接入新的研究模块。
 ATM → HTSC → GDD-WM 的统一论文主线、阶段门和当前 P0/P1 证据状态见
 [docs/UNIFIED_DECISION_TRANSFER_PAPER_PLAN_20261014.md](docs/UNIFIED_DECISION_TRANSFER_PAPER_PLAN_20261014.md)。
 
+H-JEPA 启发的“信息价值随 horizon 与 planning phase 改变”已经纳入现有主线，
+正式方法与验收协议见
+[Phase- and Horizon-Conditioned Transfer Sufficiency](docs/PHASE_HORIZON_CONDITIONED_TRANSFER_SUFFICIENCY_20261016.md)。
+该扩展不把层级预测自动等同于决策充分性：高层表示仍须通过 action relevance、
+deployment support、subgoal reachability 和独立闭环 consequence gate。
+
 本轮实际执行状态、GPU 阻塞边界、代码修复和可恢复运行目录见
 [docs/EXECUTION_REPORT_20261014.md](docs/EXECUTION_REPORT_20261014.md)。
 
@@ -347,6 +353,39 @@ and action support, not MLP capacity or selector tuning. Any new positive result
 must be obtained on this canonical protocol and then transferred to an
 independent closed-loop consequence.
 
+### 2026-10-16：Reacher proposal-relative decision repair
+
+旧在线 `4.30%/4.48%` support 统计把未激活 planner rows 放入分母，不能再作为
+“部署仅有约 4% 支持”的证据；旧 `98.44%` empirical gate 对有限 candidate
+cloud 也过严。现已实现 cloud 内 action 标准化的 `proposal_relative` chart，并
+用 calibration cell 的单侧 90% Wilson lower bound 的第 5 百分位冻结支持阈值
+`0.927105`。该规则不读取在线 outcome。
+
+CUDA 离线 outcome 上 action-only/source-action/full-predicted/shuffled regret
+为 `0.47152/0.21495/0.25498/0.19389`。因此 source-action decision signal
+成立，但 predicted dynamics 仍未通过 no-dynamics/shuffled control。两批互斥
+fresh roots 在线结果分别为 `32/64 -> 38/64` 与 `36/64 -> 39/64`；按 batch
+分层、root 为 bootstrap unit 的 128-root 汇总为 `68/128 -> 77/128`，paired
+`+0.0703125`，95% CI `[+0.015625,+0.1328125]`。第二批单独 CI 仍跨零，
+continuous qpos 指标也均跨零，必须同时报告。
+
+当前新结论限定为：proposal-relative、phase-gated source-action readout 在
+Reacher fresh RGB 闭环上提高二值成功率。它不是 learned predicted-dynamics
+修复、因果物理 latent、跨环境证据或通用 world model。下一条关键门槛是让
+predicted dynamics 在冻结协议下稳定超过 no-dynamics 与 shuffled-prediction，
+并在未见环境复现独立 consequence。主 artifact：
+`le-wm-main/results/gdd_wm_cross_environment_20261016/live_reacher_top1_proposal_relative_wilson_two_batch_128_stratified.json`。
+
+该 predicted-dynamics 门槛随后进行了两次直接干预。固定 `0.5` model-cost
+fusion 在 fresh 64 roots 上把 final qpos distance 显著降低，但 success 从
+`39/64` 降至 `34/64`，且不优于 shuffled-cost placebo。calibration-only top-k
+tie-break 又检验 `k=2..64`，所有 true-vs-shuffled CI 均跨零，合法 selector
+回退 `k=1`；exploratory fresh `k=2` 的 true/shuffled 均为 `39/64`。因此继续
+调 runtime 权重已经被否证，当前正式控制器保持 proposal-relative
+no-dynamics。下一修复必须进入 action-contrastive predictor / GDD-WM
+distillation，并继续要求 no-dynamics、shuffled 与独立闭环 consequence 三道
+门同时通过。
+
 ## 2026-10-15 continuation: cross-environment evidence and D1/D2 closure
 
 本轮继续推进不再扩充 PushT 单环境实验，而是完成两项可验证闭环：
@@ -414,3 +453,33 @@ stable held-out regret improvement. The next repair target is therefore the
 learned action-effect interface and action support, not MLP capacity or
 selector tuning. Any new positive result must use this canonical protocol and
 then transfer to an independent closed-loop consequence.
+
+### 2026-10-16：HTSC checkpoint-provenance 与 shared-world repair
+
+HTSC 的 split-conformal 实现已按有限样本公式
+`ceil((n+1)(1-alpha))` 修复，并新增 `n={8,10,20,40}` 的 exact rank
+枚举测试。旧 8-root calibration 在 `alpha=0.1` 下没有有限上界，必须
+fail-closed。进一步审计发现，旧 candidate-bank 的后置 split 与 learned
+predictor 原始 episode partition 重叠；新 `checkpoint_protocol_v1` 强制继承
+checkpoint 的 `54/14/32` train/calibration/outcome roots。
+
+在 100-root、16-candidate、真实 RGB successor 的 CUDA panel 上，frozen
+fixed-bank contrast bound 在独立 outcome 达到 `31/32=96.875%` coverage，
+shared-world bank 达到 `32/32`，但两者 exact-winner release 均为 `0`。这验证
+了 marginal fixed-bank coverage，不验证 adaptive CEM conditional coverage。
+
+根因干预显示，旧 root-conditioned bank 的候选 ID 编码 goal direction：repair
+regret `0.0832`，反而差于 Bank-only `0.0132`。换成预先冻结的 shared-world
+action bank 后，train-root-only intervention effect adapter 在 32 个独立 outcome
+roots 上达到 regret `0.0328`，优于 Bank-only `0.0851`（paired gain `+0.0523`,
+95% CI `[+0.0139,+0.0923]`）、No-dynamics `0.2034` 和 shuffled `0.1602`。
+未见 candidate-ID 对照相对 shuffled 的 gain 为 `+0.0310`，CI
+`[+0.0110,+0.0535]`；matched temporal-order gain over Bank-only 为 `+0.0394`，
+CI `[+0.0190,+0.0602]`。generic RGB successor residual adapter 则恶化
+held-out successor RMSE，并保持零 release。
+
+正式判定是 `Know + Repair + Abstain`：coverage 与 intervention-supervised
+decision repair 成立，但 exact-winner 和预声明 epsilon-regret certificate 仍
+零放行。因此该结果不是 frozen LeWM dynamics、在线 planning 或 universal
+world-model 证据。汇总 artifact：
+`le-wm-main/results/htsc_checkpoint_provenance_20261016/summary.json`。

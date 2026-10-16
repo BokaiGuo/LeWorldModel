@@ -55,7 +55,11 @@ def test_selective_release_reports_coverage_and_regret():
     assert report["root_count"] == 2
     assert report["released_root_count"] == 1
     assert report["coverage"] == 0.5
+    assert report["release_rate"] == 0.5
+    assert report["useful_coverage"] == 0.5
     assert report["released_mean_regret"] == 0.0
+    assert report["released_rgb_false_release_rate"] == 0.0
+    assert report["released_physical_false_release_rate"] == 0.0
 
 
 def test_joint_support_rejects_temporally_unsupported_candidate():

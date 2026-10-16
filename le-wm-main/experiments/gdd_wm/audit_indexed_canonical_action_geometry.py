@@ -29,6 +29,15 @@ from experiments.gdd_wm.audit_transfer_sufficient_feature_families import (
 )
 
 
+SHORTCUT_CONTROL_FAMILIES = (
+    "full_source_delta_bank",
+    "bank_only",
+    "no_dynamics_source_bank",
+    "source_plus_delta",
+    "shuffled_prediction_full",
+)
+
+
 def _load(dataset_path: Path, arrays_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
     arrays = np.load(arrays_path, allow_pickle=False)
@@ -65,11 +74,25 @@ def _canonical_summary(row: dict[str, Any]) -> np.ndarray:
     return _action_summary(canonical)
 
 
-def _fit_indexed_bank(train_rows: list[dict[str, Any]]) -> dict[int, np.ndarray]:
+def _bank_summary(row: dict[str, Any], coordinate_frame: str) -> np.ndarray:
+    if coordinate_frame == "goal_relative":
+        return _canonical_summary(row)
+    if coordinate_frame == "world_fixed":
+        return _action_summary(row["action_sequence"])
+    raise ValueError(
+        "indexed action audit requires goal_relative or world_fixed bank, got "
+        f"{coordinate_frame}"
+    )
+
+
+def _fit_indexed_bank(
+    train_rows: list[dict[str, Any]],
+    coordinate_frame: str = "goal_relative",
+) -> dict[int, np.ndarray]:
     bank: dict[int, np.ndarray] = {}
     for row in train_rows:
         candidate = int(row["candidate_id"])
-        summary = _canonical_summary(row)
+        summary = _bank_summary(row, coordinate_frame)
         previous = bank.get(candidate)
         if previous is not None and not np.allclose(previous, summary, atol=1.0e-7, rtol=0.0):
             raise ValueError(f"train candidate {candidate} is not a shared canonical action")
@@ -79,7 +102,11 @@ def _fit_indexed_bank(train_rows: list[dict[str, Any]]) -> dict[int, np.ndarray]
     return bank
 
 
-def _shared_bank_diagnostic(rows: list[dict[str, Any]], bank: dict[int, np.ndarray]) -> dict[str, Any]:
+def _shared_bank_diagnostic(
+    rows: list[dict[str, Any]],
+    bank: dict[int, np.ndarray],
+    coordinate_frame: str = "goal_relative",
+) -> dict[str, Any]:
     deviations = []
     missing = []
     for row in rows:
@@ -87,7 +114,7 @@ def _shared_bank_diagnostic(rows: list[dict[str, Any]], bank: dict[int, np.ndarr
         if candidate not in bank:
             missing.append(candidate)
             continue
-        deviations.append(float(np.linalg.norm(_canonical_summary(row) - bank[candidate])))
+        deviations.append(float(np.linalg.norm(_bank_summary(row, coordinate_frame) - bank[candidate])))
     values = np.asarray(deviations, dtype=np.float64)
     return {
         "rows_checked": int(values.size),
@@ -98,13 +125,124 @@ def _shared_bank_diagnostic(rows: list[dict[str, Any]], bank: dict[int, np.ndarr
     }
 
 
-def _features(row: dict[str, Any], bank: dict[int, np.ndarray]) -> np.ndarray:
+def _features(
+    row: dict[str, Any],
+    bank: dict[int, np.ndarray],
+    *,
+    family: str = "full_source_delta_bank",
+    predicted_override: np.ndarray | None = None,
+) -> np.ndarray:
     candidate = int(row["candidate_id"])
     if candidate not in bank:
         raise ValueError(f"candidate {candidate} is absent from train-derived bank")
     source = np.asarray(row["source_latent_model"], dtype=np.float64)
-    predicted = np.asarray(row["_predicted"], dtype=np.float64)
-    return np.concatenate([source, predicted - source, bank[candidate]])
+    predicted = np.asarray(
+        row["_predicted"] if predicted_override is None else predicted_override,
+        dtype=np.float64,
+    )
+    if source.shape != predicted.shape:
+        raise ValueError("source and predicted latent dimensions do not match")
+    action = bank[candidate]
+    if family in {"full_source_delta_bank", "shuffled_prediction_full"}:
+        return np.concatenate([source, predicted - source, action])
+    if family == "bank_only":
+        return action.copy()
+    if family == "no_dynamics_source_bank":
+        return np.concatenate([source, action])
+    if family == "source_plus_delta":
+        return np.concatenate([source, predicted - source])
+    raise ValueError(f"unknown shortcut-control family {family}")
+
+
+def _cyclic_prediction_shuffle(rows: list[dict[str, Any]]) -> dict[int, np.ndarray]:
+    """Break candidate/prediction coupling without crossing roots or splits."""
+
+    grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
+    for index, row in enumerate(rows):
+        key = (str(row["split"]), str(row["instance_id"]))
+        grouped.setdefault(key, []).append((index, row))
+    shuffled: dict[int, np.ndarray] = {}
+    for key, group in grouped.items():
+        ordered = sorted(group, key=lambda item: int(item[1]["candidate_id"]))
+        if len(ordered) < 2:
+            raise ValueError(f"prediction shuffle needs at least two candidates in {key}")
+        predictions = [np.asarray(row["_predicted"], dtype=np.float64) for _, row in ordered]
+        for position, (index, _row) in enumerate(ordered):
+            shuffled[index] = predictions[(position + 1) % len(predictions)]
+    if len(shuffled) != len(rows):
+        raise RuntimeError("prediction shuffle did not cover every candidate row")
+    return shuffled
+
+
+def _fit_and_evaluate(
+    rows: list[dict[str, Any]],
+    features: np.ndarray,
+    targets: np.ndarray,
+    train_mask: np.ndarray,
+    alpha: float,
+    margin: float,
+) -> dict[str, Any]:
+    fit = _fit_ridge(features[train_mask], targets[train_mask], alpha)
+    train_predictions = _predict(features[train_mask], fit)
+    return {
+        "feature_dimension": int(features.shape[1]),
+        "train_cost_fit_rmse": float(
+            np.sqrt(np.mean((train_predictions - targets[train_mask]) ** 2))
+        ),
+        **_evaluate(rows, _predict(features, fit), margin),
+    }
+
+
+def _unseen_candidate_audit(
+    rows: list[dict[str, Any]],
+    bank: dict[int, np.ndarray],
+    targets: np.ndarray,
+    alpha: float,
+    margin: float,
+) -> dict[str, Any]:
+    """Evaluate continuous action features on candidate IDs absent from fit."""
+
+    candidate_ids = sorted(bank)
+    if len(candidate_ids) < 8:
+        raise ValueError("unseen-candidate audit requires at least eight candidates")
+    heldout_ids = [candidate for index, candidate in enumerate(candidate_ids) if index % 4 == 3]
+    fit_ids = [candidate for candidate in candidate_ids if candidate not in set(heldout_ids)]
+    fit_mask = np.asarray([
+        str(row["split"]) == "train" and int(row["candidate_id"]) in fit_ids
+        for row in rows
+    ])
+    evaluation_mask = np.asarray([
+        str(row["split"]) in {"calibration", "outcome"}
+        and int(row["candidate_id"]) in heldout_ids
+        for row in rows
+    ])
+    evaluation_rows = [row for row, keep in zip(rows, evaluation_mask) if keep]
+    evaluation_targets = targets[evaluation_mask]
+    families = {}
+    for family in ("full_source_delta_bank", "bank_only", "no_dynamics_source_bank", "source_plus_delta"):
+        features = np.asarray([_features(row, bank, family=family) for row in rows], dtype=np.float64)
+        fit = _fit_ridge(features[fit_mask], targets[fit_mask], alpha)
+        evaluation_features = features[evaluation_mask]
+        families[family] = {
+            "feature_dimension": int(features.shape[1]),
+            "fit_rows": int(np.sum(fit_mask)),
+            "evaluation_rows": int(np.sum(evaluation_mask)),
+            **_evaluate(evaluation_rows, _predict(evaluation_features, fit), margin),
+        }
+    return {
+        "partition_rule": "sorted_candidate_index_mod_4_equals_3_is_unseen",
+        "fit_candidate_ids": fit_ids,
+        "unseen_candidate_ids": heldout_ids,
+        "fit_split": "train",
+        "evaluation_splits": ["calibration", "outcome"],
+        "outcome_used_for_partition_or_fit": False,
+        "feature_families": families,
+        "evaluation_target_count": int(evaluation_targets.size),
+        "claim_boundary": (
+            "held-out candidate-ID/action-template interpolation within the declared canonical bank; "
+            "not adaptive CEM or arbitrary continuous-action generalization"
+        ),
+    }
 
 
 def audit(
@@ -123,15 +261,37 @@ def audit(
     train_roots = {str(row["instance_id"]) for row in train}
     if train_roots & ({str(row["instance_id"]) for row in calibration} | {str(row["instance_id"]) for row in outcome}):
         raise ValueError("candidate roots must be disjoint across splits")
-    bank = _fit_indexed_bank(train)
-    features = np.asarray([_features(row, bank) for row in rows], dtype=np.float64)
+    bank_coordinate_frame = str(metadata.get("candidate_bank_coordinate_frame", "goal_relative"))
+    if not bool(metadata.get("shared_candidate_bank", False)):
+        raise ValueError("indexed action audit requires metadata.shared_candidate_bank=true")
+    bank = _fit_indexed_bank(train, bank_coordinate_frame)
     train_mask = np.asarray([str(row["split"]) == "train" for row in rows])
     targets = np.asarray([float(row["real_task_cost"]) for row in rows], dtype=np.float64)
-    readout = _fit_ridge(features[train_mask], targets[train_mask], alpha)
-    scores = _predict(features, readout)
-    evaluation = _evaluate(rows, scores, margin)
+    shuffled_predictions = _cyclic_prediction_shuffle(rows)
+    shortcut_controls: dict[str, Any] = {}
+    for family in SHORTCUT_CONTROL_FAMILIES:
+        features = np.asarray(
+            [
+                _features(
+                    row,
+                    bank,
+                    family=family,
+                    predicted_override=(
+                        shuffled_predictions[index]
+                        if family == "shuffled_prediction_full"
+                        else None
+                    ),
+                )
+                for index, row in enumerate(rows)
+            ],
+            dtype=np.float64,
+        )
+        shortcut_controls[family] = _fit_and_evaluate(
+            rows, features, targets, train_mask, alpha, margin,
+        )
+    evaluation = shortcut_controls["full_source_delta_bank"]
     return {
-        "schema": "gdd_wm_indexed_canonical_action_geometry.v0.1",
+        "schema": "gdd_wm_indexed_canonical_action_geometry.v0.2",
         "status": "completed_diagnostic",
         "protocol": {
             "candidate_dataset": str(candidate_dataset.resolve()),
@@ -140,6 +300,7 @@ def audit(
             "task_readout_fit_split": "train",
             "evaluation_splits": ["calibration", "outcome"],
             "test_action_features": "train_derived_candidate_id_lookup",
+            "candidate_bank_coordinate_frame": bank_coordinate_frame,
             "outcome_used_for_fit_or_feature_selection": False,
             "ridge_alpha": float(alpha),
             "pair_margin": float(margin),
@@ -148,13 +309,22 @@ def audit(
             "candidate_count": len(bank),
             "candidate_ids": sorted(bank),
             "train_derived_shared_bank": True,
-            "all_root_shared_bank_diagnostic": _shared_bank_diagnostic(rows, bank),
+            "all_root_shared_bank_diagnostic": _shared_bank_diagnostic(
+                rows, bank, bank_coordinate_frame,
+            ),
         },
         "task_readout": {
-            "feature_dimension": int(features.shape[1]),
-            "train_cost_fit_rmse": float(np.sqrt(np.mean((_predict(features[train_mask], readout) - targets[train_mask]) ** 2))),
             **evaluation,
         },
+        "shortcut_controls": shortcut_controls,
+        "prediction_shuffle": {
+            "scheme": "within_split_within_root_candidate_id_cyclic_shift_by_one",
+            "cross_root_mixing": False,
+            "cross_split_mixing": False,
+        },
+        "unseen_candidate_audit": _unseen_candidate_audit(
+            rows, bank, targets, alpha, margin,
+        ),
         "claim_boundary": (
             "offline train-derived indexed canonical action geometry with simulator-labeled task readout; "
             "not D-JEPA preference validation, physical causality, or closed-loop RGB planning"

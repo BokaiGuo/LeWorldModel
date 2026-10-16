@@ -49,6 +49,7 @@ def _candidate_sequences(
     seed: int,
     family: str = "paired_order_v2",
     canonical_action_frame: bool = False,
+    world_action_frame: bool = False,
 ) -> np.ndarray:
     if count < 4 or steps < 1:
         raise ValueError("candidate count must be >=4 and steps must be positive")
@@ -60,8 +61,11 @@ def _candidate_sequences(
     norm = max(float(np.linalg.norm(delta)), 1e-8)
     goal_direct = delta / norm
     goal_perpendicular = np.asarray([-goal_direct[1], goal_direct[0]])
-    direct = np.asarray([1.0, 0.0]) if canonical_action_frame else goal_direct
-    perpendicular = np.asarray([0.0, 1.0]) if canonical_action_frame else goal_perpendicular
+    if canonical_action_frame and world_action_frame:
+        raise ValueError("canonical goal-relative and shared world action frames are mutually exclusive")
+    fixed_axes = canonical_action_frame or world_action_frame
+    direct = np.asarray([1.0, 0.0]) if fixed_axes else goal_direct
+    perpendicular = np.asarray([0.0, 1.0]) if fixed_axes else goal_perpendicular
     sequences: list[np.ndarray] = []
 
     def constant(direction: np.ndarray, magnitude: float) -> np.ndarray:
@@ -112,7 +116,7 @@ def _candidate_sequences(
     rng = np.random.default_rng(seed)
     while len(sequences) < count:
         sequence = rng.uniform(-0.75, 0.75, size=(steps, 2))
-        if canonical_action_frame:
+        if fixed_axes:
             # A rotation preserves the 2-norm.  Bound the local vectors so
             # every root remains inside the simulator's [-1, 1] controls.
             norms = np.linalg.norm(sequence, axis=1, keepdims=True)
@@ -167,6 +171,66 @@ def _split_for_index(index: int, assignment: str = "legacy_v1") -> str:
     raise ValueError(f"unsupported split assignment: {assignment}")
 
 
+def _hash_random_split_map(instance_ids: list[str]) -> dict[str, str]:
+    """Create exact 60/20/20 root splits independent of source ordering."""
+    if len(instance_ids) < 5 or len(set(instance_ids)) != len(instance_ids):
+        raise ValueError("hash-random splitting requires at least five unique roots")
+    ordered = sorted(
+        instance_ids,
+        key=lambda item: hashlib.sha256(
+            f"pointmaze_hash_random_v1::{item}".encode("utf-8")
+        ).hexdigest(),
+    )
+    heldout = len(ordered) // 5
+    outcome = set(ordered[:heldout])
+    calibration = set(ordered[heldout : 2 * heldout])
+    return {
+        item: (
+            "outcome" if item in outcome else "calibration" if item in calibration else "train"
+        )
+        for item in ordered
+    }
+
+
+def _checkpoint_protocol_split_map(
+    checkpoint_payload: dict[str, Any],
+    episode_ids: list[str],
+) -> dict[str, str]:
+    """Reuse the learned predictor's immutable episode partition.
+
+    A fresh bank-level repartition is not independent when the predictor was
+    already fitted on some of those episodes.  This helper makes the original
+    checkpoint provenance the source of truth and rejects missing or
+    overlapping assignments.
+    """
+
+    protocol = checkpoint_payload.get("protocol", {})
+    aliases = {
+        "train": ("train_episode_ids", "fit_episode_ids"),
+        "calibration": ("calibration_episode_ids",),
+        "outcome": ("outcome_episode_ids",),
+    }
+    split_by_episode: dict[str, str] = {}
+    for split, keys in aliases.items():
+        values = None
+        for key in keys:
+            if protocol.get(key) is not None:
+                values = protocol[key]
+                break
+        if values is None:
+            raise ValueError(f"checkpoint protocol is missing {keys[0]}")
+        for episode in values:
+            canonical = str(int(episode))
+            if canonical in split_by_episode:
+                raise ValueError(f"checkpoint protocol assigns episode {canonical} more than once")
+            split_by_episode[canonical] = split
+    selected = [str(int(episode)) for episode in episode_ids]
+    missing = sorted(set(selected) - set(split_by_episode))
+    if missing:
+        raise ValueError(f"checkpoint protocol does not assign selected episodes: {missing}")
+    return {episode: split_by_episode[episode] for episode in selected}
+
+
 def generate(
     source_export: Path,
     checkpoint: Path,
@@ -183,8 +247,13 @@ def generate(
     source_window_start: int = 0,
     history_windows: int = 1,
     canonical_action_bank: bool = False,
+    shared_world_action_bank: bool = False,
 ) -> dict[str, Any]:
     payload = load_payload(source_export)
+    if canonical_action_bank and shared_world_action_bank:
+        raise ValueError(
+            "canonical_action_bank and shared_world_action_bank are mutually exclusive"
+        )
     model, checkpoint_payload = _load_adapter(checkpoint, device)
     pca_mean = np.asarray(checkpoint_payload["pca_mean"], dtype=np.float64)
     pca_basis = np.asarray(checkpoint_payload["pca_basis"], dtype=np.float64)
@@ -243,6 +312,16 @@ def generate(
     source_rows = [source_rows_by_episode[key] for key in selected_keys[:max_instances]]
     if len(source_rows) < 5:
         raise ValueError("need at least five episode-disjoint source roots")
+    instance_ids = [f"pointmaze_episode_{row['episode_id']}" for row in source_rows]
+    hash_split = _hash_random_split_map(instance_ids) if split_assignment == "hash_random_v1" else None
+    checkpoint_split = (
+        _checkpoint_protocol_split_map(
+            checkpoint_payload,
+            [str(row["episode_id"]) for row in source_rows],
+        )
+        if split_assignment == "checkpoint_protocol_v1"
+        else None
+    )
     all_records: list[dict[str, Any]] = []
     predicted_latents: dict[str, np.ndarray] = {}
     realized_states: dict[str, np.ndarray] = {}
@@ -255,9 +334,10 @@ def generate(
             goal_array,
             candidates,
             steps,
-            7000 if canonical_action_bank else 7000 + instance_index,
+            7000 if (canonical_action_bank or shared_world_action_bank) else 7000 + instance_index,
             candidate_family,
             canonical_action_frame=canonical_action_bank,
+            world_action_frame=shared_world_action_bank,
         )
         bank_hash = _bank_hash(
             np.round(_to_goal_frame(sequences, source_state, goal_array), 8)
@@ -297,7 +377,13 @@ def generate(
             realized_states[record_key] = final_state
             all_records.append({
                 "instance_id": instance_id,
-                "split": _split_for_index(instance_index, split_assignment),
+                "split": (
+                    hash_split[instance_id]
+                    if hash_split is not None
+                    else checkpoint_split[str(int(row["episode_id"]))]
+                    if checkpoint_split is not None
+                    else _split_for_index(instance_index, split_assignment)
+                ),
                 "environment": "PointMaze",
                 "start_episode_id": str(row["episode_id"]),
                 "source_frame": int(row.get("source_frame", int(source_window_start) + 5)),
@@ -344,12 +430,19 @@ def generate(
         "outcome_used_for_teacher_or_metric_selection": False,
         "snapshot_selection_from_outcome": False,
         "teacher_frozen_before_distillation": True,
-        "shared_candidate_bank": True,
+        "shared_candidate_bank": bool(canonical_action_bank or shared_world_action_bank),
         "runtime_teacher_forbidden": True,
         "candidate_bank_count": int(candidates),
         "candidate_family": candidate_family,
-        "candidate_bank_coordinate_frame": "goal_relative" if canonical_action_bank else "raw_control",
+        "candidate_bank_coordinate_frame": (
+            "goal_relative"
+            if canonical_action_bank
+            else "world_fixed"
+            if shared_world_action_bank
+            else "root_conditioned_raw_control"
+        ),
         "canonical_action_bank": bool(canonical_action_bank),
+        "shared_world_action_bank": bool(shared_world_action_bank),
         "source_selection": source_selection,
         "split_assignment": split_assignment,
         "source_window_start": int(source_window_start),
@@ -404,10 +497,22 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--candidate-family", default="paired_order_v2", choices=("paired_order_v2", "goal_directed_mixture_v1"))
     parser.add_argument("--source-selection", default="sorted_episode", choices=("sorted_episode", "nearest_goal", "reachable_goal"))
-    parser.add_argument("--split-assignment", default="legacy_v1", choices=("legacy_v1", "distance_balanced_v1"))
+    parser.add_argument(
+        "--split-assignment",
+        default="legacy_v1",
+        choices=("legacy_v1", "distance_balanced_v1", "hash_random_v1", "checkpoint_protocol_v1"),
+    )
     parser.add_argument("--source-window-start", type=int, default=0)
     parser.add_argument("--history-windows", type=int, default=1)
     parser.add_argument("--canonical-action-bank", action="store_true")
+    parser.add_argument(
+        "--shared-world-action-bank",
+        action="store_true",
+        help=(
+            "reuse one fixed world-coordinate action bank on every root; unlike "
+            "--canonical-action-bank, candidate identity does not encode goal direction"
+        ),
+    )
     args = parser.parse_args()
     manifest = generate(
         args.source_export,
@@ -424,6 +529,7 @@ def main() -> None:
         source_window_start=args.source_window_start,
         history_windows=args.history_windows,
         canonical_action_bank=args.canonical_action_bank,
+        shared_world_action_bank=args.shared_world_action_bank,
     )
     print(json.dumps({key: manifest[key] for key in ("record_count", "instance_count", "split_instance_counts", "claim_boundary")}, indent=2))
 

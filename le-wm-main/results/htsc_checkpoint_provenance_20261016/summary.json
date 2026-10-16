@@ -1,0 +1,778 @@
+{
+  "finite_sample_coverage": {
+    "root_conditioned_frozen": {
+      "bound": 5.540939724512093,
+      "coverage": 0.96875,
+      "covered_roots": 31,
+      "outcome_roots": 32,
+      "released_roots": 0
+    },
+    "shared_world_frozen": {
+      "bound": 6.653995587734663,
+      "coverage": 1.0,
+      "covered_roots": 32,
+      "outcome_roots": 32,
+      "released_roots": 0
+    }
+  },
+  "indirect_successor_repair_boundary": {
+    "conclusion": "generic RGB successor residual training does not recover task ranking",
+    "outcome_physical_inversion_rate": 0.4574579831932773,
+    "outcome_regret": 0.14563420085377898,
+    "outcome_rgb_contrast_error_mean": 1.313453614167732,
+    "released_roots": 0
+  },
+  "permission": {
+    "exact_winner_operational_release_count": 0,
+    "full_bank_bounded_regret": {
+      "calibration": {
+        "alpha": 0.1,
+        "bound": 0.3862356615986675,
+        "calibration_root_count": 13,
+        "claim_boundary": "marginal scalar root-risk bound under exchangeability; not state-conditional coverage",
+        "finite_sample_rank": 13,
+        "root_scores": [
+          0.048124703214697195,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.30124415104762897,
+          0.0,
+          0.08917552555488939,
+          0.0,
+          0.3862356615986675,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "schema": "root_score_calibration.v1",
+        "status": "ok"
+      },
+      "certificate_type": "marginal epsilon-optimal fixed-bank regret; not exact-winner certification",
+      "empirical_supported_outcome_coverage": 1.0,
+      "support": {
+        "claim_boundary": "train-support gate; not a density guarantee or adaptive-candidate certificate",
+        "feature": "frozen source latent projection",
+        "fit_split": "train roots only",
+        "leave_one_train_root_out_distances": [
+          0.5332566134863063,
+          0.5861894251241805,
+          0.6182170889326407,
+          0.483740434676479,
+          0.5332566134863063,
+          1.2974480668439925,
+          0.19088707389111695,
+          0.05092188476353322,
+          0.3375133940787266,
+          0.3375133940787266,
+          0.5450125087273309,
+          0.5638815373116733,
+          0.5519520318317932,
+          0.46798912983874064,
+          0.5775591134715867,
+          0.5598132389365775,
+          0.5408641047393746,
+          0.569650316562934,
+          0.7461404628060959,
+          0.4531295265640879,
+          0.6255136952455082,
+          0.569650316562934,
+          0.5317765254850383,
+          0.5861894251241805,
+          0.4302698479540589,
+          0.19088707389111695,
+          0.5459512146429667,
+          0.5638815373116733,
+          1.2154301783445542,
+          0.5629327039030747,
+          0.6070868028192139,
+          0.5519520318317932,
+          0.9684001135181491,
+          0.6652083730542767,
+          0.8608842100144025,
+          0.5999652743277638,
+          0.4302698479540589,
+          0.468199263837297,
+          0.5629327039030747,
+          0.5317765254850383,
+          0.4942285098264091,
+          0.621724967097188,
+          0.05092188476353322,
+          0.5885159513570113,
+          0.6182170889326407,
+          0.5664167977844409,
+          0.46798912983874064,
+          0.483740434676479,
+          0.7184946006559421,
+          0.5429301172018547,
+          0.5429301172018547,
+          0.7184946006559421,
+          0.6383341492941211,
+          1.1184587458319453
+        ],
+        "quantile": 0.9,
+        "roots": {
+          "pointmaze_episode_1800": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1801": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1802": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1803": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1804": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1805": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1806": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1807": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1808": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1809": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1810": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1811": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1812": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1813": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1814": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1815": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1816": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1817": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1818": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1819": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1820": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1821": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1822": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1823": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1824": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1825": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1826": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1827": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1828": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1829": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1830": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1831": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1832": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1833": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1834": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1835": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1836": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1837": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1838": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1839": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1840": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1841": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1842": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1843": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1844": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1845": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1846": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1847": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1848": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1849": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1850": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1851": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1852": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1853": {
+            "nearest_train_root_distance": 0.0,
+            "passed": true,
+            "split": "train"
+          },
+          "pointmaze_episode_1854": {
+            "nearest_train_root_distance": 0.6118663266025435,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1855": {
+            "nearest_train_root_distance": 0.6507802015218878,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1856": {
+            "nearest_train_root_distance": 0.28503432020459446,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1857": {
+            "nearest_train_root_distance": 0.40427069751257866,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1858": {
+            "nearest_train_root_distance": 0.4586682206017735,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1859": {
+            "nearest_train_root_distance": 0.5792627180539044,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1860": {
+            "nearest_train_root_distance": 0.31874015157462204,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1861": {
+            "nearest_train_root_distance": 0.598366035394902,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1862": {
+            "nearest_train_root_distance": 1.0182777347231713,
+            "passed": false,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1863": {
+            "nearest_train_root_distance": 0.23857539247730022,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1864": {
+            "nearest_train_root_distance": 0.616223320684638,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1865": {
+            "nearest_train_root_distance": 0.5260226397938778,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1866": {
+            "nearest_train_root_distance": 0.6105099614310872,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1867": {
+            "nearest_train_root_distance": 0.41064666596820976,
+            "passed": true,
+            "split": "calibration"
+          },
+          "pointmaze_episode_1868": {
+            "nearest_train_root_distance": 0.3099030138857032,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1869": {
+            "nearest_train_root_distance": 0.7977553621598121,
+            "passed": false,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1870": {
+            "nearest_train_root_distance": 0.060919133012865855,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1871": {
+            "nearest_train_root_distance": 0.6656613756494182,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1872": {
+            "nearest_train_root_distance": 0.2706218749973802,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1873": {
+            "nearest_train_root_distance": 0.5937080888420483,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1874": {
+            "nearest_train_root_distance": 0.49898757319072085,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1875": {
+            "nearest_train_root_distance": 0.36256168347172363,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1876": {
+            "nearest_train_root_distance": 0.4838721582328144,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1877": {
+            "nearest_train_root_distance": 0.49979411552994846,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1878": {
+            "nearest_train_root_distance": 0.5147965153346251,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1879": {
+            "nearest_train_root_distance": 0.8733243354100776,
+            "passed": false,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1880": {
+            "nearest_train_root_distance": 0.5368318066837299,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1881": {
+            "nearest_train_root_distance": 0.5532392267367036,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1882": {
+            "nearest_train_root_distance": 0.6677653682961331,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1883": {
+            "nearest_train_root_distance": 0.4704625948888158,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1884": {
+            "nearest_train_root_distance": 0.8020500070620634,
+            "passed": false,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1885": {
+            "nearest_train_root_distance": 0.2097398128169622,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1886": {
+            "nearest_train_root_distance": 0.4227576839627278,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1887": {
+            "nearest_train_root_distance": 0.2573607042354223,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1888": {
+            "nearest_train_root_distance": 1.151877216255508,
+            "passed": false,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1889": {
+            "nearest_train_root_distance": 0.35239659768791937,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1890": {
+            "nearest_train_root_distance": 0.8389935632338067,
+            "passed": false,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1891": {
+            "nearest_train_root_distance": 0.7952358900770564,
+            "passed": false,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1892": {
+            "nearest_train_root_distance": 0.7665755268498127,
+            "passed": false,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1893": {
+            "nearest_train_root_distance": 0.9754519137020844,
+            "passed": false,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1894": {
+            "nearest_train_root_distance": 0.358995543738729,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1895": {
+            "nearest_train_root_distance": 0.256465284013767,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1896": {
+            "nearest_train_root_distance": 0.6164139803872812,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1897": {
+            "nearest_train_root_distance": 0.35714138417482016,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1898": {
+            "nearest_train_root_distance": 0.6683724695310936,
+            "passed": true,
+            "split": "outcome"
+          },
+          "pointmaze_episode_1899": {
+            "nearest_train_root_distance": 0.5588485337934335,
+            "passed": true,
+            "split": "outcome"
+          }
+        },
+        "threshold": 0.7461404628060959,
+        "train_root_count": 54
+      },
+      "supported_calibration_root_count": 13,
+      "supported_outcome_root_count": 24,
+      "tolerance_reports": {
+        "0.05": {
+          "empirical_violation_rate": null,
+          "mean_released_regret": null,
+          "permitted_root_count": 0,
+          "release_rate": 0.0,
+          "tolerance": 0.05
+        },
+        "0.1": {
+          "empirical_violation_rate": null,
+          "mean_released_regret": null,
+          "permitted_root_count": 0,
+          "release_rate": 0.0,
+          "tolerance": 0.1
+        },
+        "0.25": {
+          "empirical_violation_rate": null,
+          "mean_released_regret": null,
+          "permitted_root_count": 0,
+          "release_rate": 0.0,
+          "tolerance": 0.25
+        }
+      }
+    },
+    "matched_order_bounded_regret": {
+      "calibration": {
+        "alpha": 0.1,
+        "bound": 0.19082875117350123,
+        "calibration_root_count": 13,
+        "claim_boundary": "marginal scalar root-risk bound under exchangeability; not state-conditional coverage",
+        "finite_sample_rank": 13,
+        "root_scores": [
+          0.04648807340366756,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.03377794521273761,
+          0.0,
+          0.05385595857711395,
+          0.0,
+          0.19082875117350123,
+          0.0,
+          0.0014001335220874545,
+          0.00749454292382104
+        ],
+        "schema": "root_score_calibration.v1",
+        "status": "ok"
+      },
+      "certificate_type": "marginal epsilon-optimal temporal-order regret within four matched pairs",
+      "empirical_supported_outcome_coverage": 1.0,
+      "supported_calibration_root_count": 13,
+      "supported_outcome_root_count": 24,
+      "tolerance_reports": {
+        "0.02": {
+          "empirical_violation_rate": null,
+          "permitted_root_count": 0,
+          "release_rate": 0.0,
+          "tolerance": 0.02
+        },
+        "0.05": {
+          "empirical_violation_rate": null,
+          "permitted_root_count": 0,
+          "release_rate": 0.0,
+          "tolerance": 0.05
+        },
+        "0.1": {
+          "empirical_violation_rate": null,
+          "permitted_root_count": 0,
+          "release_rate": 0.0,
+          "tolerance": 0.1
+        }
+      }
+    },
+    "status": "abstain"
+  },
+  "protocol": {
+    "alpha": 0.1,
+    "candidate_bank": "100 roots x 16 equal-duration candidates",
+    "candidate_modes": [
+      "root-conditioned",
+      "shared-world fixed bank"
+    ],
+    "checkpoint_split_provenance": {
+      "calibration": 14,
+      "outcome": 32,
+      "train": 54
+    },
+    "environment": "PointMaze",
+    "outcome_used_for_fit_or_gate_selection": false,
+    "repair_labels": "train-root-only simulator terminal XY effects",
+    "runtime_repair_input": "frozen RGB latent plus complete candidate action sequence"
+  },
+  "schema": "htsc_checkpoint_provenance_repairability.v1",
+  "shared_world_repair": {
+    "bank_only_regret": 0.08508252215174392,
+    "matched_order_gain_over_bank_only": {
+      "estimate": 0.03935279846680638,
+      "groups": 32,
+      "lower": 0.01895022436967352,
+      "upper": 0.06021868900219056
+    },
+    "matched_order_left_better_fraction": {
+      "0-1": 0.5,
+      "2-3": 0.21875,
+      "4-5": 0.4375,
+      "6-7": 0.4375
+    },
+    "mechanism_positive": true,
+    "new_candidate_gain_over_shuffled": {
+      "estimate": 0.03099980046031675,
+      "groups": 32,
+      "lower": 0.010997690045911031,
+      "upper": 0.05351677667127754
+    },
+    "no_dynamics_regret": 0.20335478074144775,
+    "outcome_regret": 0.03276057865250893,
+    "paired_regret_gain_over_controls": {
+      "bank_only": {
+        "estimate": 0.05232194349923498,
+        "groups": 32,
+        "lower": 0.01385568879404207,
+        "upper": 0.09226773288486864
+      },
+      "no_dynamics": {
+        "estimate": 0.1705942020889388,
+        "groups": 32,
+        "lower": 0.11891795954023446,
+        "upper": 0.2179869541765732
+      },
+      "shuffled_prediction": {
+        "estimate": 0.12745300241220747,
+        "groups": 32,
+        "lower": 0.09446610926725443,
+        "upper": 0.16104928919535913
+      }
+    },
+    "shuffled_prediction_regret": 0.1602135810647164
+  },
+  "shortcut_diagnosis": {
+    "conclusion": "root-conditioned candidate identity leaks the goal-directed shortcut",
+    "root_conditioned_bank_only_regret": 0.013191272707736276,
+    "root_conditioned_gain_over_bank_only": {
+      "estimate": -0.07003382865777524,
+      "groups": 32,
+      "lower": -0.10720202884020433,
+      "upper": -0.03583183808653263
+    },
+    "root_conditioned_repair_regret": 0.08322510136551153
+  },
+  "verdict": {
+    "abstain": "required because exact-winner and preregistered bounded-regret permissions release zero roots",
+    "claim_boundary": "one PointMaze checkpoint; not frozen-LeWM dynamics, adaptive CEM coverage, closed-loop planning, or universal transfer",
+    "know": "validated marginal fixed-bank coverage on independent roots",
+    "repair": "positive intervention-supervised shared-world action ranking with shortcut and new-candidate controls"
+  }
+}

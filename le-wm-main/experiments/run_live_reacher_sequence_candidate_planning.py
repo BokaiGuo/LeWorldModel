@@ -82,6 +82,20 @@ def _planning_policy(args, action_mean: np.ndarray, action_std: np.ndarray):
             artifact["base_rank_quantile"] = float(args.capacity_base_rank_quantile)
         if args.capacity_base_cost_correction:
             artifact["base_cost_correction"] = True
+        if args.capacity_base_cost_blend_weight is not None:
+            if not 0.0 <= args.capacity_base_cost_blend_weight <= 1.0:
+                raise ValueError("capacity base-cost blend weight must be in [0, 1]")
+            artifact["mlp_base_cost_blend_weight"] = float(
+                args.capacity_base_cost_blend_weight
+            )
+        if args.capacity_shuffle_base_cost_control:
+            artifact["mlp_shuffle_base_cost_control"] = True
+        if args.capacity_base_cost_elite_k is not None:
+            if args.capacity_base_cost_elite_k < 1:
+                raise ValueError("capacity base-cost elite k must be positive")
+            artifact["mlp_base_cost_elite_k"] = int(
+                args.capacity_base_cost_elite_k
+            )
         model = CapacityReadoutCostModel(model, artifact, action_mean, action_std)
     if args.num_samples <= int(candidate_bank.shape[0]) + 1:
         raise ValueError(
@@ -99,6 +113,7 @@ def _planning_policy(args, action_mean: np.ndarray, action_std: np.ndarray):
         seed=args.seed,
         candidate_bank=candidate_bank,
         candidate_bank_iterations=args.candidate_bank_iterations,
+        final_action_selection=args.final_action_selection,
     )
     return (
         swm.policy.WorldModelPolicy(
@@ -115,6 +130,60 @@ def _planning_policy(args, action_mean: np.ndarray, action_std: np.ndarray):
         ),
         labels,
     )
+
+
+def _qpos_distance(current: np.ndarray, target: np.ndarray) -> float:
+    current = np.asarray(current, dtype=np.float64).reshape(-1)
+    target = np.asarray(target, dtype=np.float64).reshape(-1)
+    if current.size < 2 or target.size < 2:
+        raise ValueError("Reacher qpos distance requires at least two joints")
+    delta = (current[:2] - target[:2] + np.pi) % (2.0 * np.pi) - np.pi
+    return float(np.linalg.norm(delta))
+
+
+def _world_qpos_distance(world: swm.World, env_index: int) -> float:
+    env = world.envs.envs[int(env_index)].unwrapped
+    current = np.asarray(env.env.physics.data.qpos, dtype=np.float64)
+    target = np.asarray(env.env.task.target_qpos, dtype=np.float64)
+    return _qpos_distance(current, target)
+
+
+def _evaluate_with_qpos_metrics(world: swm.World, episodes: int, seed: int) -> dict:
+    """Evaluate while recording privileged metrics, never policy inputs."""
+    successes = np.zeros(episodes, dtype=np.int64)
+    seeds = np.zeros(episodes, dtype=np.int64)
+    final_distance = np.full(episodes, np.nan, dtype=np.float64)
+    min_by_env = np.full(world.num_envs, np.inf, dtype=np.float64)
+    min_distance = np.full(episodes, np.nan, dtype=np.float64)
+
+    def on_step(active_world):
+        for env_index in range(active_world.num_envs):
+            min_by_env[env_index] = min(
+                min_by_env[env_index],
+                _world_qpos_distance(active_world, env_index),
+            )
+
+    def on_done(env_index, episode_index, active_world):
+        successes[episode_index] = int(active_world.terminateds[env_index])
+        seeds[episode_index] = int(active_world.envs.seeds[env_index])
+        final_distance[episode_index] = _world_qpos_distance(active_world, env_index)
+        min_distance[episode_index] = min_by_env[env_index]
+
+    world._run(
+        episodes=episodes,
+        seed=seed,
+        mode="wait",
+        on_step=on_step,
+        on_done=on_done,
+    )
+    if np.any(~np.isfinite(final_distance)) or np.any(~np.isfinite(min_distance)):
+        raise RuntimeError("Reacher evaluator did not record every episode distance")
+    return {
+        "episode_successes": successes,
+        "seeds": seeds,
+        "final_qpos_distance": final_distance,
+        "min_qpos_distance": min_distance,
+    }
 
 
 def _run(args, kind: str, action_mean: np.ndarray, action_std: np.ndarray):
@@ -135,16 +204,27 @@ def _run(args, kind: str, action_mean: np.ndarray, action_std: np.ndarray):
     )
     try:
         world.set_policy(policy)
-        result = world.evaluate(episodes=args.episodes, seed=args.seed, reset_mode="wait")
+        result = _evaluate_with_qpos_metrics(world, args.episodes, args.seed)
     finally:
         world.close()
     successes = np.asarray(result["episode_successes"], dtype=np.int64)
-    return {
+    output = {
         "success_rate": float(successes.mean()),
         "episode_successes": successes.tolist(),
         "seeds": np.asarray(result["seeds"], dtype=np.int64).tolist(),
+        "final_qpos_distance": np.asarray(
+            result["final_qpos_distance"], dtype=np.float64,
+        ).tolist(),
+        "min_qpos_distance": np.asarray(
+            result["min_qpos_distance"], dtype=np.float64,
+        ).tolist(),
+        "mean_final_qpos_distance": float(np.mean(result["final_qpos_distance"])),
+        "mean_min_qpos_distance": float(np.mean(result["min_qpos_distance"])),
         "candidate_labels": labels,
     }
+    if kind != "random" and isinstance(policy.solver.model, CapacityReadoutCostModel):
+        output["runtime_diagnostics"] = policy.solver.model.runtime_diagnostics()
+    return output
 
 
 def _canonicalize(result: dict) -> dict:
@@ -152,6 +232,8 @@ def _canonicalize(result: dict) -> dict:
     output = dict(result)
     output["seeds"] = np.asarray(result["seeds"], dtype=np.int64)[order].tolist()
     output["episode_successes"] = np.asarray(result["episode_successes"], dtype=np.int64)[order].tolist()
+    for key in ("final_qpos_distance", "min_qpos_distance"):
+        output[key] = np.asarray(result[key], dtype=np.float64)[order].tolist()
     return output
 
 
@@ -183,6 +265,10 @@ def main() -> None:
     parser.add_argument("--n-steps", type=int, default=8)
     parser.add_argument("--topk", type=int, default=16)
     parser.add_argument(
+        "--final-action-selection", choices=("mean", "best"), default="mean",
+        help="execute the final elite mean or the final top-1 candidate",
+    )
+    parser.add_argument(
         "--cost-metric", choices=("euclidean", "capacity_safe_readout"), default="euclidean",
     )
     parser.add_argument("--capacity-readout-artifact", type=Path, default=None)
@@ -197,6 +283,29 @@ def main() -> None:
     parser.add_argument(
         "--capacity-base-cost-correction", action="store_true",
         help="keep frozen model cost and apply the readout only as an additive correction",
+    )
+    parser.add_argument(
+        "--capacity-base-cost-blend-weight",
+        type=float,
+        default=None,
+        help=(
+            "fixed weight on frozen LeWM cost after rank-affine source-action repair; "
+            "zero recovers the source-action-only controller"
+        ),
+    )
+    parser.add_argument(
+        "--capacity-shuffle-base-cost-control",
+        action="store_true",
+        help="roll frozen LeWM costs within each proposal cloud as a dynamics-placebo control",
+    )
+    parser.add_argument(
+        "--capacity-base-cost-elite-k",
+        type=int,
+        default=None,
+        help=(
+            "allow frozen LeWM cost to tie-break only within the top-k "
+            "source-action candidates; one disables the tie-break"
+        ),
     )
     parser.add_argument("--target-delta", type=float, nargs=2, default=(0.65, -0.65))
     args = parser.parse_args()
@@ -221,6 +330,7 @@ def main() -> None:
             "checkpoint_frozen": True,
             "runtime_input": "rendered RGB current frame, rendered RGB target-qpos frame, and action/history only",
             "runtime_state_access": False,
+            "privileged_state_used_for_evaluation_metrics_only": True,
             "same_seed_pairing": True,
             "target_delta": [float(value) for value in args.target_delta],
             "device": args.device,
@@ -239,9 +349,13 @@ def main() -> None:
             "capacity_correction_multiplier_override": args.capacity_correction_multiplier,
             "capacity_base_rank_quantile_override": args.capacity_base_rank_quantile,
             "capacity_base_cost_correction": args.capacity_base_cost_correction,
+            "capacity_base_cost_blend_weight": args.capacity_base_cost_blend_weight,
+            "capacity_shuffle_base_cost_control": args.capacity_shuffle_base_cost_control,
+            "capacity_base_cost_elite_k": args.capacity_base_cost_elite_k,
             "candidate_bank_in_cem_budget": True,
             "candidate_bank_iterations": args.candidate_bank_iterations,
             "cem": {"num_samples": args.num_samples, "n_steps": args.n_steps, "topk": args.topk},
+            "final_action_selection": args.final_action_selection,
             "horizon": args.horizon,
             "receding_horizon": args.receding_horizon,
             "action_block": args.action_block,

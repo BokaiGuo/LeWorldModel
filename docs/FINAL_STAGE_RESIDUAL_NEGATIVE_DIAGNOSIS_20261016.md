@@ -1204,3 +1204,463 @@ The protocol now has a real positive planning result for PointMaze, while the
 pure `wm_rgb` arm remains negative. The next required test is to reduce the
 fallback rate without losing the held-out non-degradation guarantee; any such
 change must be selected on calibration roots only.
+
+## WM action projection intervention — 2026-10-16
+
+To test whether the high fallback rate was caused by a binary gate rather than
+by an unusable WM action direction, `run_live_pointmaze_planning.py` now adds
+`wm_rgb_projected`. It first selects the frozen WM candidate, then searches the
+line segment from the calibration visual-dynamics candidate to that WM action.
+The executed action is the largest point whose calibration-dynamics score is
+within the fixed `0.10` tolerance. The projection uses no outcome labels and
+does not alter the frozen WM ranking, action bank, calibration roots, or
+receding-horizon budget.
+
+The implementation is covered by two endpoint/support tests in
+`tests/test_live_pointmaze_planning.py`; the full live-planning regression
+file reports `12 passed`.
+
+The exact 20-root external panel gave:
+
+| method | success | mean final distance |
+| --- | ---: | ---: |
+| `wm_rgb` | `2/20` | `1.0773` |
+| `wm_rgb_projected` | `5/20` | `0.5971` |
+| `wm_rgb_guarded` | `13/20` | `0.3243` |
+
+The independent excluded-16 panel gave:
+
+| method | success | mean final distance |
+| --- | ---: | ---: |
+| `wm_rgb` | `2/16` | `0.9330` |
+| `wm_rgb_projected` | `10/16` | `0.4421` |
+| `wm_rgb_guarded` | `13/16` | `0.2191` |
+
+Across both panels (`n=36`), projection versus pure WM reduced final distance
+by `0.4850` with root-level bootstrap CI `[-0.6151,-0.3583]` and improved
+success from `4/36` to `15/36`. However, projection versus guarded planning
+was worse by `+0.2507` distance, CI `[+0.1508,+0.3559]`, with success
+`15/36` versus `26/36`. Projection was active on `80.3%` of 714 decisions,
+with mean interpolation coefficient `0.484`; it therefore reduced binary
+fallback by changing actions, not by recovering the missing transfer signal.
+
+The updated diagnosis is:
+
+> action-support mismatch is a genuine component of the negative result, but
+> continuous action projection cannot replace action-identifiability. The
+> frozen WM ranking remains unreliable in a substantial fraction of roots, and
+> the strongest held-out controller still requires fail-closed fallback.
+
+Artifacts:
+
+- `results/pointmaze_rgb_online_planning_v14_cuda_external20_projected/report.json`;
+- `results/pointmaze_rgb_online_planning_v15_cuda_excluded16_projected/report.json`;
+- `experiments/run_live_pointmaze_planning.py`;
+- `tests/test_live_pointmaze_planning.py`.
+
+This is a successful causal diagnosis and a partial repair, not evidence for
+pure frozen-world-model planning. The next controller experiment must either
+calibrate an alpha-dependent fallback on disjoint calibration roots or add a
+future/action preference head that improves the WM ranking itself.
+
+## Alpha-gated projection follow-up — 2026-10-16
+
+The next direct test asked whether the high fallback rate could be reduced by
+executing a projected WM action whenever at least `alpha=0.25` of the WM
+action remained inside the calibration visual-dynamics support region. The
+alpha threshold was fixed before the excluded-16 outcome panel and was not
+selected from outcome performance. All other settings matched the 24-block
+receding-horizon protocol.
+
+| panel | method | success | mean final distance | fallback rate |
+| --- | --- | ---: | ---: | ---: |
+| external outcome-20 | `wm_rgb_projected_guarded` | `5/20` | `0.5507` | `13.0%` |
+| excluded-16 | `wm_rgb_projected_guarded` | `9/16` | `0.4310` | `17.1%` |
+
+Using the exact 24-block baselines on the same 36 roots gives:
+
+| method | success | mean final distance |
+| --- | ---: | ---: |
+| `wm_rgb` | `4/36` | `1.0132` |
+| `wm_rgb_projected` | `15/36` | `0.5282` |
+| `wm_rgb_guarded` | `26/36` | `0.2775` |
+| `wm_rgb_projected_guarded` | `14/36` | `0.4975` |
+
+The alpha-gated controller reduced distance relative to pure WM by `-0.5156`
+(root bootstrap 95% CI `[-0.6590,-0.3767]`), but it was worse than the
+predeclared guarded controller by `+0.2200` (CI `[+0.1400,+0.3074]`) and
+lost success on 12 roots while winning on none. Thus reducing binary fallback
+does not recover action identifiability: the projected WM ranking remains
+unsafe on a substantial subset of held-out roots. This is a failed repair of
+the transfer bottleneck, not a failed implementation.
+
+The result sharpens the causal diagnosis:
+
+> support mismatch is real, but the dominant residual error is an unreliable
+> within-support action-effect ranking; fail-closed fallback is carrying the
+> positive closed-loop result.
+
+Artifact:
+
+- `results/pointmaze_rgb_online_planning_v16_cuda_external20_projected_guarded_alpha025/report.json`;
+- `results/pointmaze_rgb_online_planning_v17_cuda_excluded16_projected_guarded_alpha025/report.json`;
+- `experiments/run_live_pointmaze_planning.py`;
+- `tests/test_live_pointmaze_planning.py` (`12 passed`).
+
+The alpha-gated projection branch is therefore closed as a negative boundary.
+The next intervention must change the ranking signal itself (for example a
+future/action preference head or an independently calibrated task-transfer
+readout), and must preserve the guarded controller as the fail-closed arm.
+
+## HTSC finite-sample calibration correction — 2026-10-16
+
+The review identified a real implementation/theory mismatch in the task
+contrast certificate. The previous calibration used the order statistic
+`ceil(n(1-alpha))`, which can be below the standard split-conformal finite-
+sample rank. The implementation now uses
+`ceil((n+1)(1-alpha))`. When the requested rank is larger than the number of
+independent calibration roots, the report returns
+`status=insufficient_calibration` and `bound=null`; `certify_pair`, offline
+candidate auditing, and RGB selective release then fail closed.
+
+This correction is covered by the task-contrast tests and preserves the
+existing claim boundary: the construction concerns fixed declared candidate
+banks and exchangeable calibration roots. It does not provide conditional
+coverage for an adaptive CEM-generated candidate set, and it does not turn a
+certificate into a guarantee that the planner can reach the task goal.
+
+## Privileged fixed-bank candidate ceiling — 2026-10-16
+
+To separate learned-transfer failure from planner reachability, the runner now
+includes a deliberately privileged `ground_truth_candidate_oracle`. At each
+decision it evaluates every candidate in the same fixed action bank with one
+exact simulator block, selects the true best immediate successor, and restores
+the simulator state before execution. No RGB policy may use this method; it is
+only a candidate-bank ceiling.
+
+| panel | method | success | mean final distance |
+| --- | --- | ---: | ---: |
+| external outcome-20 | `ground_truth_candidate_oracle` | `11/20` | `0.3097` |
+| excluded-16 | `ground_truth_candidate_oracle` | `13/16` | `0.2416` |
+| combined | `ground_truth_candidate_oracle` | `24/36` | `0.2794` |
+
+The oracle is not perfect on the external panel despite exact one-step
+dynamics, while the guarded RGB controller reached `13/20` there. Thus a
+portion of the negative result is planner-side: fixed-bank local greedy
+selection cannot always reach the goal. The result also prevents a stronger
+but incorrect conclusion that all remaining failures are representation
+failures. The next control must be a true multi-step perfect-dynamics or
+subgoal planner on the same roots; only the residual between that ceiling and
+the learned controller should be attributed to transfer.
+
+Artifacts:
+
+- `experiments/run_live_pointmaze_planning.py`;
+- `results/pointmaze_rgb_online_planning_v18_cuda_external20_oracle/report.json`;
+- `results/pointmaze_rgb_online_planning_v19_cuda_excluded16_oracle/report.json`.
+
+## Exact-planner protocol audit and root-bank correction — 2026-10-16
+
+The initial finite-horizon implementation exposed two experimental confounds.
+First, the root action bank was regenerated from the privileged simulator state,
+while the established fixed-bank oracle used the RGB-calibrated observed
+position. In this contact-rich environment, a small angular change can select a
+different wall-contact outcome. Second, the initial finite-horizon runs used a
+12-block execution budget, whereas the established oracle reports used 24
+blocks. Comparing their final success rates would therefore confound action
+selection with episode budget.
+
+The code now takes an explicit `root_current` position. The root candidate bank
+is identical to the observed fixed bank; exact simulator positions are used
+only for successor expansion. The depth-1/beam-32, 24-block run then exactly
+reproduced the established external-20 oracle:
+
+| method | budget | success | mean final distance | mean blocks |
+| --- | ---: | ---: | ---: | ---: |
+| fixed-bank exact oracle | 24 | `11/20` | `0.3097` | `21.05` |
+| corrected exact MPC, depth 1 / beam 32 | 24 | `11/20` | `0.3097` | `21.05` |
+
+This closes an implementation/protocol negative result rather than improving
+the learned model. The preliminary depth-4/beam-8 runs with 12 blocks remain
+diagnostic smoke artifacts only (`2/20`, distance `1.4335` on external-20;
+`5/16`, distance `0.9847` on excluded-16). A later matched 24-block run is
+reported below; the smoke artifacts are not used in that comparison.
+
+The correction is covered by the live-planning regression, which now has
+`21 passed` together with the task-contrast tests. Artifacts:
+
+- `experiments/run_live_pointmaze_planning.py`;
+- `tests/test_live_pointmaze_planning.py`;
+- `results/pointmaze_rgb_online_planning_v24_cuda_external20_perfect_mpc_d1_b32_rootfixed_max24/report.json`.
+
+## World-fixed bank root cause and decision-repair result — 2026-10-16
+
+The previous indexed canonical-action gain was subjected to Bank-only,
+No-dynamics, within-root Shuffled-prediction, and unseen-candidate-ID controls.
+The original `+0.1090` regret reduction was reproduced against the old
+`source_plus_delta` baseline, but Full did not beat Bank-only or No-dynamics;
+its consistency was significantly worse than Bank-only. The result was a
+goal-relative candidate-bank shortcut, not learned-dynamics evidence.
+
+The repaired benchmark reuses one world-coordinate action bank on every root,
+so candidate identity no longer encodes the goal direction. On this benchmark,
+the previous linear task readout collapsed: Full, Bank-only, No-dynamics and
+Shuffled-prediction all had outcome regret `0.2062` in the initial 40-root
+pilot. The missing function was then localized to a state-action interaction:
+the earlier interaction family contained `source x delta` and `delta x action`
+but omitted `source x action`, which is necessary for root-conditioned ranking
+of a shared world-frame bank.
+
+A fixed train-only bilinear ridge readout with terms
+`[action, source x action]` was evaluated under a new source-order-independent
+hash split over 100 episode-disjoint roots and two checkpoint contexts. Its
+release gate used only five-fold root-disjoint train OOF regret and the sign of
+calibration regret; outcome was never used for selection. The gate selected
+the No-dynamics bilinear adapter and rejected the predicted-dynamics extension.
+
+| outcome-20 method | mean regret | pairwise consistency |
+| --- | ---: | ---: |
+| action-only | `0.1103` | `0.5594` |
+| gated No-dynamics bilinear | `0.0476` | `0.6735` |
+| Full predicted-dynamics bilinear | `0.0416` | `0.6873` |
+| Shuffled-prediction bilinear | `0.0397` | `0.6885` |
+
+For the released No-dynamics adapter, held-out-panel regret changed by `-0.0628` with paired
+95% CI `[-0.1196,-0.0130]`, while consistency changed by `+0.1141` with CI
+`[+0.0315,+0.2080]`. Train OOF regret changed by `-0.0215`, CI
+`[-0.0419,-0.0019]`, and calibration regret had the same sign (`-0.0136`).
+Because Full did not beat No-dynamics and Shuffled-prediction was at least as
+good, this is a positive frozen-RGB-latent **decision repair** result, not a
+positive learned-dynamics result. The same gate and outcome values were
+reproduced when jointly fitting four checkpoint contexts from two predictor
+architectures (`jepa_final_mlp` and `jepa_final_standardized_mlp`); the Full
+versus No-dynamics train-OOF CI still crossed zero. This is useful
+architecture-repeated evidence, but all contexts share the same PointMaze
+roots and simulator labels. Because these roots were already visible during
+method development, the hash-split outcome is exploratory rather than a final
+untouched test. The method is simulator-oracle-supervised and still requires a
+new environment/root collection and online consequence before becoming a
+planning claim.
+
+Artifacts:
+
+- `experiments/decision_benchmark/generate_candidate_bank.py`;
+- `experiments/gdd_wm/audit_train_only_teacher_capacity.py`;
+- `results/decision_benchmark_candidate_bank_20261016/worldfixed100_hashsplit_decision_repair_v9_s20261016_cuda/capacity_audit.json`;
+- `results/decision_benchmark_candidate_bank_20261016/worldfixed100_hashsplit_decision_repair_v9_s20261016_cuda/capacity_readout.npz`.
+- `results/decision_benchmark_candidate_bank_20261016/worldfixed100_hashsplit_2arch4context_decision_repair_s20261016_cuda/capacity_audit.json`.
+
+## Matched depth-4 reachability ceiling — 2026-10-16
+
+The previously blocked depth-4/beam-8 exact-dynamics run is now complete on the
+same external 20 roots and the same 24-block budget as depth-1/beam-32. The
+runner also now reports both exact-dynamics methods as privileged and sets
+`runtime_state_access=true`; the earlier depth-1 report incorrectly omitted
+that metadata even though successor expansion used simulator state.
+
+| exact-dynamics ceiling | success | mean final distance | mean blocks |
+| --- | ---: | ---: | ---: |
+| depth 1 / beam 32 | `11/20` | `0.3097` | `21.05` |
+| depth 4 / beam 8 | `12/20` | `0.2967` | `21.85` |
+
+The episode-paired success difference was `+0.05`, bootstrap 95% CI
+`[-0.20,+0.30]`; the final-distance improvement was `+0.0130`, CI
+`[-0.0886,+0.1094]`. Thus increasing privileged search depth did not produce a
+stable gain. Planner reachability is now measured rather than blocked, but it
+does not explain or repair the frozen predicted-dynamics failure.
+
+Artifacts:
+
+- `results/pointmaze_rgb_online_planning_v25_cuda_external20_perfect_mpc_d4_b8_rootfixed_max24/report.json`;
+- `results/pointmaze_rgb_online_planning_v26_cuda_external20_perfect_mpc_d1_b32_rootfixed_max24_privfixed/report.json`;
+- `results/pointmaze_rgb_online_planning_v25_cuda_external20_perfect_mpc_d4_b8_rootfixed_max24/paired_vs_d1_privfixed.json`;
+- `experiments/compare_pointmaze_planner_depths.py`.
+
+## H-JEPA insight integration and Reacher 128-root replication — 2026-10-16
+
+The H-JEPA research note suggests a sharper interpretation of the current
+failure pattern: information value is conditional on prediction horizon and
+planning phase. Fine action-effect state can be necessary locally while a
+different, slower task geometry is useful for distant goals. Slow
+predictability alone remains insufficient because an action-irrelevant scene
+identity can also be stable. The resulting proposed object is therefore
+phase- and horizon-conditioned transfer sufficiency, not an unconditional
+hierarchical or universal world-model claim. The complete protocol is in
+`docs/PHASE_HORIZON_CONDITIONED_TRANSFER_SUFFICIENCY_20261016.md`.
+
+The frozen capacity protocol was then rerun on the deployment-aligned
+128-root Reacher panel on CUDA. It used the unchanged `[64,32]` source-action
+MLP, 400 epochs, seed `20262250`, second-replan roots, final-CEM candidates,
+and the original raw-control/absolute-cost diagnostic chart. The split was
+64 train, 32 calibration and 32 untouched outcome roots.
+
+On the outcome roots, action-only regret was `0.5319`; source-action MLP regret
+was `0.2226`, a paired delta of `-0.3093` with 95% CI
+`[-0.4311,-0.1930]`. The full predicted-dynamics MLP had regret `0.3116`, and
+shuffled-prediction had regret `0.1919`. Thus the source-action decision signal
+replicates at larger sample size, but the current predicted dynamics do not
+add independent transfer information and can degrade the decision readout.
+
+The exploratory bilinear calibration-only rule selected full dynamics, but
+the stricter five-fold train-OOF plus calibration gate rejected both bilinear
+repairs because the train-OOF intervals crossed zero. This is direct evidence
+that one phase-specific calibration result must not be promoted into a general
+transfer certificate. No online Reacher claim is opened by this audit.
+
+Artifact:
+
+- `results/gdd_wm_cross_environment_20261016/reacher_deployment_aligned_panel128_capacity_frozen/capacity_audit.json`.
+
+### Fresh online consequence and proposal-support repair
+
+The 128-root source-action artifact was then evaluated against Euclidean
+top-1 execution on 64 fresh roots (`20263000`--`20263063`). Success changed
+from `31/64` to `33/64`, but the paired success CI crossed zero
+(`[-0.0625,+0.1250]`) and final qpos error worsened by `+0.0514`, 95% CI
+`[+0.0116,+0.0959]`. There were six readout-only wins, four baseline-only
+wins and 54 ties. This is a failed independent online consequence despite the
+strong offline regret result.
+
+The initially reported `4.30%` proposal-support rate was subsequently found to
+be an invalid denominator: the numerator counted candidates only on active
+final-CEM/second-replan rows, while the denominator included inactive planner
+calls and iterations. It must not be used as evidence that deployment support
+was only four percent. The old `98.44%` empirical-quantile gate was also too
+strict for finite candidate clouds and forced all rows to abstain. Those two
+artifacts remain useful fail-closed smoke tests, but not a causal diagnosis.
+
+The repaired action chart is `proposal_relative`: each 12-dimensional action
+summary is standardized by the mean and standard deviation of its own CEM
+candidate cloud. This removes cloud-specific translation and scale while
+preserving local action position, and applies the identical transformation at
+fit and deployment time. The finite-sample support gate now takes a one-sided
+90% Wilson lower bound for each calibration cell and freezes the fifth
+percentile of those lower bounds (`0.927105`). It reads calibration action
+support only and never reads online outcomes.
+
+On the corresponding CUDA offline audit, action-only regret was `0.47152` and
+the proposal-relative source-action MLP reached `0.21495`, paired delta
+`-0.25657`, 95% CI `[-0.34151,-0.16521]`. However, full predicted dynamics
+reached only `0.25498`, while shuffled prediction reached `0.19389`. Thus the
+repair recovers a phase-specific source-action decision signal but still
+rejects independent value from the learned predicted dynamics.
+
+Two root-disjoint fresh online batches then used the frozen readout and Wilson
+gate without outcome tuning:
+
+| fresh roots | baseline | readout | paired success delta | 95% CI | readout-only / baseline-only |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `20263300`--`20263363` | `32/64` | `38/64` | `+0.09375` | `[+0.015625,+0.171875]` | `7/1` |
+| `20263400`--`20263463` | `36/64` | `39/64` | `+0.046875` | `[-0.03125,+0.125]` | `5/2` |
+
+The prespecified batch-stratified root bootstrap gives `68/128 -> 77/128`,
+paired delta `+0.0703125`, 95% CI `[+0.015625,+0.1328125]`, with `12/3/113`
+readout-only wins / baseline-only wins / ties. Both batch point estimates are
+positive; the second-minus-first batch contrast is `-0.046875`, CI
+`[-0.15625,+0.0625]`. Active-row conditional support is `0.93933` on average
+(`0.93359`--`0.94922`), all `64/64` active rows were evaluated, none abstained,
+and all changed argmin.
+
+Continuous trajectory quality did not improve reliably: pooled final-qpos
+delta is `+0.00921`, CI `[-0.04270,+0.04936]`, and minimum-qpos delta is
+`-0.00188`, CI `[-0.00750,+0.00352]`. The valid conclusion is therefore a
+fresh Reacher binary-success gain from proposal-relative source-action
+decision repair, not a predicted-dynamics repair, universal certificate, or
+general continuous-error improvement.
+
+Artifacts and adjudication code:
+
+- `results/gdd_wm_cross_environment_20261016/reacher_deployment_aligned_panel128_capacity_proposal_relative_wilson/capacity_audit.json`;
+- `results/gdd_wm_cross_environment_20261016/live_reacher_top1_proposal_relative_wilson_seed20263300_64_paired.json`;
+- `results/gdd_wm_cross_environment_20261016/live_reacher_top1_proposal_relative_wilson_seed20263400_64_paired.json`;
+- `results/gdd_wm_cross_environment_20261016/live_reacher_top1_proposal_relative_wilson_two_batch_128_stratified.json`;
+- `experiments/compare_reacher_capacity_planning.py`;
+- `experiments/aggregate_reacher_capacity_batches.py`.
+
+Artifacts and implementation:
+
+- `results/gdd_wm_cross_environment_20261016/live_reacher_top1_panel128_seed20263000_64_paired.json`;
+- `results/gdd_wm_cross_environment_20261016/live_reacher_top1_support_gate_seed20263100_64_paired.json`;
+- `results/gdd_wm_cross_environment_20261016/reacher_deployment_aligned_panel128_capacity_support_fraction_gate/capacity_readout.npz`;
+- `experiments/capacity_readout_runtime.py`;
+- `experiments/compare_reacher_capacity_planning.py`.
+
+### Predicted-cost repair attempts: smoothing gain, causal-pairing no-go
+
+The remaining no-dynamics boundary was attacked without changing the frozen
+checkpoint. The first intervention blended the proposal-relative source-action
+score with the frozen LeWM predicted-to-goal cost at fixed weight `0.5`. A
+within-cloud rolled model cost was run as the paired placebo. On 64 fresh roots
+(`20263600`--`20263663`), no-dynamics / true fusion / shuffled fusion reached
+`39/64`, `34/64`, and `38/64` success. True fusion improved final qpos distance
+by `-0.03426`, CI `[-0.06971,-0.00152]`, but reduced success by `-0.078125`, CI
+`[-0.171875,+0.015625]`, and did not beat shuffled fusion. The distance gain is
+therefore a smoothing effect, not accepted candidate-paired dynamics evidence.
+
+A second conservative intervention allowed model cost to choose only within a
+small source-action elite. The formal calibration-only audit tests
+`k={2,4,8,16,32,64}` and requires the true tie-break to beat both no-dynamics
+and within-cell shuffled cost with a root-bootstrap CI below zero. Every
+true-versus-shuffled interval crossed zero, so the legal selection is `k=1`,
+fail-closed to no-dynamics. An exploratory fresh 64-root `k=2` control was also
+run: no-dynamics / true / shuffled reached `38/64`, `39/64`, and `39/64`;
+true-minus-shuffled success was exactly zero with CI `[-0.0625,+0.0625]`, and
+all continuous intervals crossed zero.
+
+This localizes the unresolved representation failure. Frozen LeWM cost can
+regularize trajectory scale, but its candidate identity does not add reliable
+online information after conditioning on proposal-relative source-action
+repair. The formal controller therefore remains no-dynamics. A predicted-
+dynamics claim now requires retraining or distillation that changes the
+candidate-paired action-effect representation, not another runtime weight.
+
+Artifacts:
+
+- `results/gdd_wm_cross_environment_20261016/live_reacher_cost_fusion_seed20263600_64_paired.json`;
+- `results/gdd_wm_cross_environment_20261016/reacher_model_cost_elite_selection/calibration_and_outcome.json`;
+- `results/gdd_wm_cross_environment_20261016/live_reacher_cost_elite_seed20263700_64_paired.json`;
+- `experiments/audit_reacher_cost_elite_selection.py`;
+- `experiments/compare_reacher_cost_fusion.py`.
+
+## HTSC finite-sample and candidate-shortcut closure — 2026-10-16
+
+The old eight-root calibration silently used the sample maximum at
+`alpha=0.1`, although the valid split-conformal rank is nine. The implementation
+now returns `insufficient_calibration` whenever
+`ceil((n+1)(1-alpha)) > n`; exact enumeration covers `n=8,10,20,40`.
+Candidate certificates also reject adaptive candidate generation explicitly.
+
+A deeper provenance audit found that the candidate bank had been repartitioned
+after the predictor was trained. Several nominal calibration/outcome episodes
+were predictor-fit episodes. The new `checkpoint_protocol_v1` partition uses
+the checkpoint's immutable episode lists and yields 54 train, 14 calibration
+and 32 outcome roots. On 1,600 RGB-verified candidate transitions, the legal
+frozen fixed-bank bounds cover `31/32` and `32/32` outcome roots in the
+root-conditioned and shared-world variants, respectively, while releasing no
+action. Thus coverage is empirically supported but useful coverage is zero.
+
+The negative ranking result was then decomposed with mandatory shortcut
+controls. In the root-conditioned bank, a candidate ID nearly determines the
+goal-directed action; Bank-only regret is `0.0132`, better than the repaired
+model's `0.0832`. The apparent shuffled-prediction gain is therefore invalid as
+dynamics evidence. A shared world-coordinate bank removes this leakage and
+balances temporal-order preferences. A five-seed train-root-only intervention
+effect ensemble then obtains outcome regret `0.0328`, versus Bank-only `0.0851`,
+No-dynamics `0.2034`, and shuffled prediction `0.1602`. Paired gains and 95%
+root-bootstrap intervals are respectively `+0.0523 [0.0139,0.0923]`,
+`+0.1706 [0.1189,0.2180]`, and `+0.1275 [0.0945,0.1610]`. The predeclared unseen
+candidate-ID gain over shuffled is `+0.0310 [0.0110,0.0535]`; matched-order
+gain over Bank-only is `+0.0394 [0.0190,0.0602]`.
+
+This is a valid mechanism positive for intervention-supervised decision
+repair, not a frozen-world-model dynamics result. The indirect RGB-successor
+adapter overfits train roots, worsens held-out successor RMSE, and still
+releases zero roots. The 90% exact-winner and epsilon-regret certificates also
+remain too wide because of calibration outliers. The operational verdict is
+therefore:
+
+> Know marginal fixed-bank coverage; repair shared-world action ranking;
+> abstain from certified online execution.
+
+Primary artifact:
+`le-wm-main/results/htsc_checkpoint_provenance_20261016/summary.json`.
