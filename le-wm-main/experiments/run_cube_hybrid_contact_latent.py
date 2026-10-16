@@ -9,6 +9,9 @@ Compared arms:
 
 * ``latent_static``: current RGB plus action, no previous frame;
 * ``latent_temporal``: current/previous RGB plus previous action;
+* ``latent_temporal_pixel_guarded``: temporal latent proposal with a fixed RGB
+  successor-error guard that falls back to pixel feedback after a worsening
+  step;
 * ``rgb_pixel_adaptive``: the already validated RGB short-pulse controller.
 
 Calibration is root-disjoint from deployment and uses no deployment outcome.
@@ -116,6 +119,20 @@ def _latent_action(
     scores = torch.linalg.vector_norm(prediction, dim=1)
     index = int(scores.argmin().item())
     return np.asarray(candidates[index], dtype=np.float32), float(scores[index].item())
+
+
+def _pixel_guard_should_fallback(
+    last_error: float | None,
+    current_error: float | None,
+    already_triggered: bool,
+    threshold: float,
+) -> bool:
+    """Return the irreversible RGB fallback decision for one push step."""
+    if already_triggered or last_error is None or current_error is None:
+        return bool(already_triggered)
+    if threshold < 0.0:
+        raise ValueError("pixel guard threshold must be non-negative")
+    return bool(current_error > last_error + threshold)
 
 
 def _teleport_pinch_xy_to_block(raw: Any, block_world: np.ndarray) -> dict[str, Any]:
@@ -687,12 +704,13 @@ def _run_branch_arm_on_env(
     static_fit: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
     rgb_model: dict[str, np.ndarray], candidates: np.ndarray, device: str,
     batch_size: int, method: str, push_steps: int, push_pixel_gain: float,
+    pixel_guard_threshold: float,
     env: Any,
 ) -> dict[str, Any]:
     """Evaluate one controller from already paired post-contact branches."""
     if method not in {
         "latent_static", "latent_temporal", "latent_temporal_compact",
-        "latent_gated_residual", "rgb_pixel_adaptive",
+        "latent_gated_residual", "latent_temporal_pixel_guarded", "rgb_pixel_adaptive",
     }:
         raise ValueError(f"unknown method: {method}")
     episodes: list[dict[str, Any]] = []
@@ -719,6 +737,8 @@ def _run_branch_arm_on_env(
             push_errors: list[float] = []
             adaptation_sign = 1.0
             last_push_error: float | None = None
+            pixel_guard_triggered = False
+            pixel_guard_trace: list[bool] = []
             goal_xy, goal_valid = _image_xy(goal_image, effector=False)
 
             for _ in range(push_steps):
@@ -728,6 +748,19 @@ def _run_branch_arm_on_env(
                     target_reference_y=float(goal_xy[1]) if goal_valid else None,
                 )
                 action = np.zeros(5, dtype=np.float32)
+                pixel_error = None
+                error_norm = None
+                if goal_valid and block_valid:
+                    pixel_error = np.asarray(goal_xy - block_xy, dtype=np.float32)
+                    error_norm = float(np.linalg.norm(pixel_error))
+                    if method == "latent_temporal_pixel_guarded":
+                        pixel_guard_triggered = _pixel_guard_should_fallback(
+                            last_push_error,
+                            error_norm,
+                            pixel_guard_triggered,
+                            pixel_guard_threshold,
+                        )
+                        push_errors.append(error_norm)
                 if method == "latent_static":
                     action[:], score = _latent_action(
                         current=obs, previous=previous, goal=goal_image,
@@ -762,10 +795,16 @@ def _run_branch_arm_on_env(
                         family_name="latent_residual_compact",
                     )
                     push_scores.append(score)
+                elif method == "latent_temporal_pixel_guarded" and not pixel_guard_triggered:
+                    action[:], score = _latent_action(
+                        current=obs, previous=previous, goal=goal_image,
+                        previous_action=previous_action, candidates=candidates,
+                        model=model, fit=latent_fit, device=device,
+                        batch_size=batch_size, temporal=True,
+                    )
+                    push_scores.append(score)
                 elif goal_valid and block_valid:
-                    pixel_error = np.asarray(goal_xy - block_xy, dtype=np.float32)
-                    error_norm = float(np.linalg.norm(pixel_error))
-                    push_errors.append(error_norm)
+                    assert pixel_error is not None and error_norm is not None
                     if last_push_error is not None and error_norm > last_push_error + 1.0e-3:
                         adaptation_sign *= -1.0
                     action[:2] = np.clip(
@@ -773,6 +812,20 @@ def _run_branch_arm_on_env(
                             pixel_error, rgb_model["pixel_action_mapping"], push_pixel_gain,
                         ), -1.0, 1.0,
                     ).astype(np.float32)
+                elif method == "latent_temporal_pixel_guarded":
+                    action[:], score = _latent_action(
+                        current=obs, previous=previous, goal=goal_image,
+                        previous_action=previous_action, candidates=candidates,
+                        model=model, fit=latent_fit, device=device,
+                        batch_size=batch_size, temporal=True,
+                    )
+                    push_scores.append(score)
+
+                if method == "latent_temporal_pixel_guarded":
+                    if error_norm is not None:
+                        last_push_error = error_norm
+                    pixel_guard_trace.append(bool(pixel_guard_triggered))
+                elif method == "rgb_pixel_adaptive" and error_norm is not None:
                     last_push_error = error_norm
 
                 phase_trace.append("push")
@@ -811,6 +864,9 @@ def _run_branch_arm_on_env(
                 "push_error_trace_runtime": push_errors,
                 "push_score_trace_runtime": push_scores,
                 "adaptation_sign_final": float(adaptation_sign),
+                "pixel_guard_triggered": bool(pixel_guard_triggered),
+                "pixel_guard_trace": pixel_guard_trace,
+                "pixel_guard_threshold": float(pixel_guard_threshold),
             })
         finally:
             # The wrapper owns the shared env and closes it once after all
@@ -850,6 +906,9 @@ def _paired_summary(arms: dict[str, dict[str, Any]]) -> dict[str, Any]:
         ("latent_gated_residual", "rgb_pixel_adaptive"),
         ("latent_temporal", "rgb_pixel_adaptive"),
         ("latent_static", "rgb_pixel_adaptive"),
+        ("latent_temporal_pixel_guarded", "latent_temporal"),
+        ("latent_temporal_pixel_guarded", "latent_static"),
+        ("latent_temporal_pixel_guarded", "rgb_pixel_adaptive"),
     ):
         delta = np.asarray([
             by_method[left][seed]["final_goal_distance_m"]
@@ -885,6 +944,13 @@ def main() -> None:
     parser.add_argument("--world-action-gain", type=float, default=0.20)
     parser.add_argument("--approach-standoff-m", type=float, default=0.0)
     parser.add_argument("--push-pixel-gain", type=float, default=0.20)
+    parser.add_argument(
+        "--pixel-guard-threshold", type=float, default=0.5,
+        help=(
+            "fixed RGB pixel-error increase required to switch the temporal latent "
+            "proposal to pixel feedback; calibrated independently of test outcomes"
+        ),
+    )
     parser.add_argument(
         "--candidate-bank", choices=("legacy", "lateral4", "lateral8"),
         default="legacy",
@@ -989,14 +1055,16 @@ def main() -> None:
             method=name,
             push_steps=args.push_steps,
             push_pixel_gain=args.push_pixel_gain,
+            pixel_guard_threshold=args.pixel_guard_threshold,
         )
         for name in (
             "latent_static", "latent_temporal", "latent_temporal_compact",
-            "latent_gated_residual", "rgb_pixel_adaptive",
+            "latent_gated_residual", "latent_temporal_pixel_guarded",
+            "rgb_pixel_adaptive",
         )
     }
     report = {
-        "schema": "cube_hybrid_contact_latent.v4",
+        "schema": "cube_hybrid_contact_latent.v5",
         "protocol": {
             "environment": "swm/OGBCube-v0",
             "checkpoint": args.policy,
@@ -1027,6 +1095,7 @@ def main() -> None:
             "world_action_gain": args.world_action_gain,
             "approach_standoff_m": args.approach_standoff_m,
             "push_pixel_gain": args.push_pixel_gain,
+            "pixel_guard_threshold": args.pixel_guard_threshold,
             "readout_fit": "calibration roots only; no test outcomes",
             "candidate_bank": candidates.tolist(),
             "candidate_bank_name": args.candidate_bank,
@@ -1050,10 +1119,12 @@ def main() -> None:
         "arms": arms,
         "paired": _paired_summary(arms),
         "claim_boundary": (
-            "Post-contact incremental consequence test. A positive temporal-minus-static "
-            "difference would support horizon-specific latent action transfer after RGB "
-            "support establishment, but would not establish universal world-model transfer, "
-            "causal latent dynamics, or general commutator certification."
+            "Post-contact incremental consequence test. The exploratory "
+            "latent_temporal_pixel_guarded arm uses frozen temporal latent ranking "
+            "until a fixed RGB pixel-error increase triggers feedback fallback; any "
+            "positive result is a hybrid closed-loop repair, not evidence of latent-only "
+            "action transfer, universal world-model transfer, causal latent dynamics, "
+            "or general commutator certification."
         ),
     }
     (args.output / "hybrid_contact_latent.json").write_text(
