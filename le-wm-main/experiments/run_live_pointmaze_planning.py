@@ -1,0 +1,997 @@
+"""RGB-only receding-horizon planning on the legacy PointMaze dynamics.
+
+This experiment is the online consequence of the support-corrected PointMaze
+candidate-bank result.  It deliberately keeps the environment state on the
+simulator side: the planner receives only current/goal RGB frames and a
+calibration-only visual proprio proxy derived from the RGB marker.  Simulator
+state is used for physics stepping and evaluation, never in the planner input.
+
+The released ``swm/SimplePointMaze-v0`` package is not installed in this
+checkout.  We therefore use the repository's already audited legacy XML and
+the dataset-matched RGB renderer.  The report names this boundary explicitly;
+it is a closed-loop same-dynamics RGB consequence, not evidence for a
+universal world model.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+import numpy as np
+import torch
+import yaml
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+GOAL_STATE = np.asarray([1.2, 1.2], dtype=np.float64)
+MARKER_RADIUS = 9
+FRAME_STRIDE = 5
+HORIZONS = (1, 2, 4)
+
+
+def require_cuda() -> torch.device:
+    """Fail closed instead of silently running this experiment on CPU."""
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "PointMaze live planning requires CUDA; torch.cuda.is_available() is false"
+        )
+    device = torch.device("cuda")
+    probe = torch.ones(8, device=device)
+    torch.cuda.synchronize(device)
+    if float(probe.sum().item()) != 8.0:
+        raise RuntimeError("CUDA tensor probe returned an invalid value")
+    return device
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo-root", type=Path, default=PROJECT_ROOT.parent)
+    parser.add_argument("--dataset-root", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--dinov2-source", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--calibration-start", type=int, default=1800)
+    parser.add_argument("--calibration-end", type=int, default=1850)
+    parser.add_argument("--test-start", type=int, default=1850)
+    parser.add_argument("--test-end", type=int, default=1860)
+    parser.add_argument("--max-test-episodes", type=int, default=None)
+    parser.add_argument("--max-blocks", type=int, default=12)
+    parser.add_argument("--directions", type=int, default=8)
+    parser.add_argument("--magnitudes", type=float, nargs="+", default=[0.25, 0.50, 0.75, 1.00])
+    parser.add_argument("--probe-blocks", type=int, default=1)
+    parser.add_argument("--calibration-frames", type=int, default=768)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--success-radius", type=float, default=0.25)
+    parser.add_argument("--planner-map", choices=("rgb_maze", "direct"), default="rgb_maze")
+    parser.add_argument("--kp", type=float, default=0.80)
+    parser.add_argument("--kv", type=float, default=0.20)
+    parser.add_argument("--wm-dynamics-tolerance", type=float, default=0.10)
+    parser.add_argument(
+        "--methods",
+        nargs="+",
+        choices=("random", "visual_greedy", "visual_dynamics", "wm_rgb", "wm_rgb_guarded"),
+        default=["random", "visual_greedy", "visual_dynamics", "wm_rgb", "wm_rgb_guarded"],
+    )
+    parser.add_argument("--seed", type=int, default=20261016)
+    return parser.parse_args()
+
+
+def _episode_path(root: Path, episode: int) -> Path:
+    path = root / "obses" / f"episode_{episode:03d}.pth"
+    if not path.exists():
+        raise FileNotFoundError(f"missing PointMaze episode RGB file: {path}")
+    return path
+
+
+def load_episode(root: Path, episode: int) -> tuple[np.ndarray, np.ndarray]:
+    images = torch.load(_episode_path(root, episode), map_location="cpu", weights_only=True)
+    states = torch.load(root / "states.pth", map_location="cpu", weights_only=True)[episode]
+    return np.asarray(images.numpy(), dtype=np.uint8), np.asarray(states.numpy(), dtype=np.float64)
+
+
+def green_center(image: np.ndarray) -> tuple[float, float]:
+    """Extract the moving-point marker from the dataset-matched RGB frame."""
+
+    image = np.asarray(image)
+    if image.ndim != 3 or image.shape[-1] != 3:
+        raise ValueError(f"expected HWC RGB image, got {image.shape}")
+    red, green, blue = image[..., 0], image[..., 1], image[..., 2]
+    mask = (
+        (green > 100.0)
+        & (green > red.astype(np.float32) * 1.25)
+        & (green > blue.astype(np.float32) * 1.15)
+        & (red < 100.0)
+    )
+    y, x = np.where(mask)
+    if len(x) == 0:
+        raise ValueError("PointMaze RGB frame has no detectable green marker")
+    return float(x.mean()), float(y.mean())
+
+
+def _ridge_fit(features: np.ndarray, targets: np.ndarray, ridge: float = 1.0e-4) -> np.ndarray:
+    features = np.asarray(features, dtype=np.float64)
+    targets = np.asarray(targets, dtype=np.float64)
+    gram = features.T @ features
+    gram += np.eye(features.shape[1], dtype=np.float64) * ridge
+    return np.linalg.solve(gram, features.T @ targets)
+
+
+@dataclass(frozen=True)
+class VisualCalibration:
+    pixel_to_position: np.ndarray
+    state_to_pixel: np.ndarray
+    pixel_delta_to_velocity: np.ndarray
+    position_rmse: np.ndarray
+    velocity_rmse: np.ndarray
+    calibration_episodes: tuple[int, ...]
+
+    def position(self, center: tuple[float, float]) -> np.ndarray:
+        feature = np.asarray([center[0], center[1], 1.0], dtype=np.float64)
+        return feature @ self.pixel_to_position
+
+    def velocity(self, delta: tuple[float, float]) -> np.ndarray:
+        feature = np.asarray([delta[0], delta[1], 1.0], dtype=np.float64)
+        return feature @ self.pixel_delta_to_velocity
+
+    def pixel(self, position: np.ndarray) -> np.ndarray:
+        feature = np.asarray([position[0], position[1], 1.0], dtype=np.float64)
+        return feature @ self.state_to_pixel
+
+
+@dataclass(frozen=True)
+class VisualDynamicsCalibration:
+    """Calibration-only coarse block dynamics used by the RGB controller."""
+
+    position_delta_weights: np.ndarray
+    velocity_weights: np.ndarray
+    position_delta_rmse: np.ndarray
+    velocity_rmse: np.ndarray
+    calibration_episodes: tuple[int, ...]
+
+    def predict_position_delta(self, velocity: np.ndarray, action: np.ndarray) -> np.ndarray:
+        feature = np.asarray([*np.asarray(velocity)[:2], *np.asarray(action)[:2], 1.0], dtype=np.float64)
+        return feature @ self.position_delta_weights
+
+    def predict_velocity(self, velocity: np.ndarray, action: np.ndarray) -> np.ndarray:
+        feature = np.asarray([*np.asarray(velocity)[:2], *np.asarray(action)[:2], 1.0], dtype=np.float64)
+        return feature @ self.velocity_weights
+
+
+def fit_visual_dynamics_calibration(
+    dataset_root: Path,
+    episodes: list[int],
+    ridge: float = 1.0e-3,
+) -> VisualDynamicsCalibration:
+    """Fit block dynamics from calibration roots; no test state is consumed."""
+
+    states = torch.load(dataset_root / "states.pth", map_location="cpu", weights_only=True)
+    actions = torch.load(dataset_root / "actions.pth", map_location="cpu", weights_only=True)
+    states_np = np.asarray(states.numpy(), dtype=np.float64)
+    actions_np = np.asarray(actions.numpy(), dtype=np.float64)
+    features: list[np.ndarray] = []
+    position_targets: list[np.ndarray] = []
+    velocity_targets: list[np.ndarray] = []
+    for episode in episodes:
+        if episode < 0 or episode >= states_np.shape[0]:
+            raise ValueError(f"calibration episode {episode} is outside the dataset")
+        for frame in range(0, states_np.shape[1] - FRAME_STRIDE, FRAME_STRIDE):
+            source = states_np[episode, frame]
+            action = actions_np[episode, frame : frame + FRAME_STRIDE].mean(axis=0)
+            target = states_np[episode, frame + FRAME_STRIDE]
+            features.append(np.asarray([*source[2:4], *action[:2], 1.0], dtype=np.float64))
+            position_targets.append(target[:2] - source[:2])
+            velocity_targets.append(target[2:4])
+    if len(features) < 32:
+        raise ValueError("too few calibration transitions for block dynamics fitting")
+    matrix = np.asarray(features, dtype=np.float64)
+    position = np.asarray(position_targets, dtype=np.float64)
+    velocity = np.asarray(velocity_targets, dtype=np.float64)
+    position_weights = _ridge_fit(matrix, position, ridge=ridge)
+    velocity_weights = _ridge_fit(matrix, velocity, ridge=ridge)
+    return VisualDynamicsCalibration(
+        position_delta_weights=position_weights,
+        velocity_weights=velocity_weights,
+        position_delta_rmse=np.sqrt(np.mean((matrix @ position_weights - position) ** 2, axis=0)),
+        velocity_rmse=np.sqrt(np.mean((matrix @ velocity_weights - velocity) ** 2, axis=0)),
+        calibration_episodes=tuple(episodes),
+    )
+
+
+def fit_visual_calibration(
+    dataset_root: Path,
+    episodes: list[int],
+    max_frames: int,
+) -> VisualCalibration:
+    """Fit the RGB->proprio mapping using calibration roots only."""
+
+    position_features: list[list[float]] = []
+    position_targets: list[list[float]] = []
+    pixel_features: list[list[float]] = []
+    pixel_targets: list[list[float]] = []
+    velocity_features: list[list[float]] = []
+    velocity_targets: list[list[float]] = []
+    used = 0
+    for episode in episodes:
+        images, states = load_episode(dataset_root, episode)
+        centers = [green_center(image) for image in images]
+        for frame, center in enumerate(centers):
+            position_features.append([center[0], center[1], 1.0])
+            position_targets.append(states[frame, :2].tolist())
+            pixel_features.append([states[frame, 0], states[frame, 1], 1.0])
+            pixel_targets.append([center[0], center[1]])
+            if frame >= FRAME_STRIDE:
+                previous = centers[frame - FRAME_STRIDE]
+                velocity_features.append(
+                    [center[0] - previous[0], center[1] - previous[1], 1.0]
+                )
+                velocity_targets.append(states[frame, 2:4].tolist())
+            used += 1
+            if used >= max_frames:
+                break
+        if used >= max_frames:
+            break
+    if len(position_features) < 32 or len(velocity_features) < 16:
+        raise ValueError("too few calibration frames for visual proprio fitting")
+    pos_x = np.asarray(position_features, dtype=np.float64)
+    pos_y = np.asarray(position_targets, dtype=np.float64)
+    state_x = np.asarray(pixel_features, dtype=np.float64)
+    state_y = np.asarray(pixel_targets, dtype=np.float64)
+    vel_x = np.asarray(velocity_features, dtype=np.float64)
+    vel_y = np.asarray(velocity_targets, dtype=np.float64)
+    pixel_to_position = _ridge_fit(pos_x, pos_y)
+    state_to_pixel = _ridge_fit(state_x, state_y)
+    pixel_delta_to_velocity = _ridge_fit(vel_x, vel_y)
+    return VisualCalibration(
+        pixel_to_position=pixel_to_position,
+        state_to_pixel=state_to_pixel,
+        pixel_delta_to_velocity=pixel_delta_to_velocity,
+        position_rmse=np.sqrt(np.mean((pos_x @ pixel_to_position - pos_y) ** 2, axis=0)),
+        velocity_rmse=np.sqrt(np.mean((vel_x @ pixel_delta_to_velocity - vel_y) ** 2, axis=0)),
+        calibration_episodes=tuple(episodes),
+    )
+
+
+@dataclass
+class DatasetMatchedRenderer:
+    base: np.ndarray
+    residual: np.ndarray
+    source_center: tuple[float, float]
+    calibration: VisualCalibration
+
+    @classmethod
+    def from_episode(
+        cls, images: np.ndarray, calibration: VisualCalibration
+    ) -> "DatasetMatchedRenderer":
+        base = np.median(images.astype(np.int16), axis=0).astype(np.int16)
+        source_center = green_center(images[0])
+        x0, y0 = np.rint(source_center).astype(int)
+        radius = MARKER_RADIUS
+        residual = (
+            images[0, y0 - radius : y0 + radius + 1, x0 - radius : x0 + radius + 1].astype(np.int16)
+            - base[y0 - radius : y0 + radius + 1, x0 - radius : x0 + radius + 1]
+        )
+        return cls(base=base, residual=residual, source_center=source_center, calibration=calibration)
+
+    def render(self, state: np.ndarray) -> np.ndarray:
+        output = self.base.copy()
+        center = self.calibration.pixel(np.asarray(state, dtype=np.float64)[:2])
+        x0, y0 = np.rint(center).astype(int)
+        radius = MARKER_RADIUS
+        height, width = output.shape[:2]
+        y0_start, y0_stop = max(0, y0 - radius), min(height, y0 + radius + 1)
+        x0_start, x0_stop = max(0, x0 - radius), min(width, x0 + radius + 1)
+        dy0, dy1 = y0_start - (y0 - radius), y0_stop - (y0 - radius)
+        dx0, dx1 = x0_start - (x0 - radius), x0_stop - (x0 - radius)
+        output[y0_start:y0_stop, x0_start:x0_stop] += self.residual[dy0:dy1, dx0:dx1]
+        return np.clip(output, 0, 255).astype(np.uint8)
+
+    def source_reconstruction_error(self, state: np.ndarray, image: np.ndarray) -> float:
+        rendered = self.render(state).astype(np.float64)
+        return float(np.mean(np.abs(rendered - image.astype(np.float64))))
+
+
+@dataclass(frozen=True)
+class RGBMazeMap:
+    """Static occupancy inferred from the calibration RGB background."""
+
+    free_cells: tuple[tuple[int, int], ...]
+    cell_positions: dict[tuple[int, int], np.ndarray]
+
+    @classmethod
+    def from_renderer(cls, renderer: DatasetMatchedRenderer) -> "RGBMazeMap":
+        free: list[tuple[int, int]] = []
+        positions: dict[tuple[int, int], np.ndarray] = {}
+        base = np.asarray(renderer.base, dtype=np.float64)
+        for grid_x in range(5):
+            for grid_y in range(5):
+                # The legacy XML places wall centers at world coordinates
+                # (grid_x+1, grid_y+1), while the particle body is translated
+                # by (1.2, 1.2).  This is a scene-coordinate conversion, not
+                # simulator-state input to the policy.
+                position = np.asarray([grid_x - 0.2, grid_y - 0.2], dtype=np.float64)
+                pixel = np.rint(renderer.calibration.pixel(position)).astype(int)
+                x0, x1 = max(0, pixel[0] - 2), min(base.shape[1], pixel[0] + 3)
+                y0, y1 = max(0, pixel[1] - 2), min(base.shape[0], pixel[1] + 3)
+                patch = base[y0:y1, x0:x1]
+                if patch.size == 0:
+                    raise ValueError("RGB maze occupancy probe fell outside the image")
+                mean_rgb = patch.reshape(-1, 3).mean(axis=0)
+                # Wall material is warm/brown; floor and goal are blue/gray.
+                is_wall = bool(mean_rgb[0] > 140.0 and mean_rgb[0] > mean_rgb[2] * 1.35)
+                positions[(grid_x, grid_y)] = position
+                if not is_wall:
+                    free.append((grid_x, grid_y))
+        if len(free) < 4:
+            raise ValueError(f"RGB occupancy inference found too few free cells: {free}")
+        return cls(tuple(free), positions)
+
+    def _nearest_free(self, position: np.ndarray) -> tuple[int, int]:
+        return min(
+            self.free_cells,
+            key=lambda cell: float(np.linalg.norm(self.cell_positions[cell] - np.asarray(position)[:2])),
+        )
+
+    def path_waypoints(self, current: np.ndarray, goal: np.ndarray) -> list[np.ndarray]:
+        """Return a shortest 4-neighbor route in RGB-inferred free space."""
+
+        start = self._nearest_free(current)
+        target = self._nearest_free(goal)
+        free = set(self.free_cells)
+        queue: list[tuple[int, int]] = [start]
+        parent: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
+        while queue:
+            node = queue.pop(0)
+            if node == target:
+                break
+            for neighbor in (
+                (node[0] - 1, node[1]),
+                (node[0] + 1, node[1]),
+                (node[0], node[1] - 1),
+                (node[0], node[1] + 1),
+            ):
+                if neighbor in free and neighbor not in parent:
+                    parent[neighbor] = node
+                    queue.append(neighbor)
+        if target not in parent:
+            raise ValueError(f"RGB-inferred maze has no route from {start} to {target}")
+        cells: list[tuple[int, int]] = []
+        node: tuple[int, int] | None = target
+        while node is not None:
+            cells.append(node)
+            node = parent[node]
+        cells.reverse()
+        points = [self.cell_positions[cell].copy() for cell in cells]
+        # Remove collinear intermediate grid centers while retaining turns.
+        compact: list[np.ndarray] = []
+        for point in points:
+            if len(compact) < 2:
+                compact.append(point)
+                continue
+            previous = compact[-1] - compact[-2]
+            current_step = point - compact[-1]
+            if np.allclose(previous, current_step):
+                compact[-1] = point
+            else:
+                compact.append(point)
+        # The nearest free cell is the cell the agent is already occupying;
+        # targeting its center first can send a high-velocity agent into a
+        # wall before it reaches the next route segment.  Drop that start
+        # cell and control directly toward the next free-cell center.
+        if compact:
+            compact = compact[1:]
+        compact.append(np.asarray(goal, dtype=np.float64)[:2].copy())
+        return compact
+
+
+class LegacyPointMazeRuntime:
+    """Environment-side legacy dynamics; its state never enters planner calls."""
+
+    def __init__(self, initial_state: np.ndarray):
+        import mujoco
+
+        from experiments.empirical_spectral_audit.evaluate_pointmaze_adapter_external_evidence import (
+            _legacy_pointmaze_xml,
+        )
+
+        self._mujoco = mujoco
+        self.model = mujoco.MjModel.from_xml_string(_legacy_pointmaze_xml())
+        self.data = mujoco.MjData(self.model)
+        self.reset(initial_state)
+
+    def reset(self, state: np.ndarray) -> None:
+        self.data.qpos[:] = np.asarray(state[:2], dtype=np.float64)
+        self.data.qvel[:] = np.asarray(state[2:4], dtype=np.float64)
+        self._mujoco.mj_forward(self.model, self.data)
+
+    def step_block(self, action: np.ndarray, steps: int = FRAME_STRIDE) -> np.ndarray:
+        action = np.asarray(action, dtype=np.float64)
+        for _ in range(steps):
+            self.data.ctrl[:] = action
+            self._mujoco.mj_step(self.model, self.data)
+        return self.state
+
+    @property
+    def state(self) -> np.ndarray:
+        return np.concatenate([np.asarray(self.data.qpos[:2]), np.asarray(self.data.qvel[:2])])
+
+
+def action_bank(
+    current: np.ndarray,
+    goal: np.ndarray,
+    directions: int,
+    magnitudes: list[float],
+) -> np.ndarray:
+    """Build a fixed-size goal-relative action bank in world coordinates."""
+
+    if directions < 4:
+        raise ValueError("directions must be at least four")
+    delta = np.asarray(goal, dtype=np.float64)[:2] - np.asarray(current, dtype=np.float64)[:2]
+    norm = float(np.linalg.norm(delta))
+    if norm < 1.0e-8:
+        delta = np.asarray([1.0, 0.0], dtype=np.float64)
+        norm = 1.0
+    forward = delta / norm
+    perpendicular = np.asarray([-forward[1], forward[0]])
+    values = []
+    for magnitude in magnitudes:
+        for angle in np.linspace(0.0, 2.0 * np.pi, directions, endpoint=False):
+            values.append(
+                float(magnitude)
+                * (np.cos(angle) * forward + np.sin(angle) * perpendicular)
+            )
+    bank = np.asarray(values, dtype=np.float32)
+    if bank.ndim != 2 or bank.shape[1] != 2 or not np.isfinite(bank).all():
+        raise ValueError(f"invalid action bank shape/content: {bank.shape}")
+    return bank
+
+
+def _pool_visual(value: torch.Tensor) -> torch.Tensor:
+    """Pool [N,V,H,W,D] or [T,N,V,H,W,D] visual tokens to [N,D]."""
+
+    if value.ndim == 6:
+        value = value[-1]
+    if value.ndim != 5:
+        raise ValueError(f"unexpected visual tensor shape {tuple(value.shape)}")
+    return value.mean(dim=(1, 2, 3))
+
+
+@dataclass
+class LatentReadout:
+    feature_mean: np.ndarray
+    feature_std: np.ndarray
+    weights: np.ndarray
+
+    def predict(self, features: torch.Tensor) -> torch.Tensor:
+        mean = torch.as_tensor(self.feature_mean, device=features.device, dtype=features.dtype)
+        std = torch.as_tensor(self.feature_std, device=features.device, dtype=features.dtype)
+        weights = torch.as_tensor(self.weights, device=features.device, dtype=features.dtype)
+        normalized = (features - mean) / std
+        return torch.cat([normalized, torch.ones((len(features), 1), device=features.device, dtype=features.dtype)], dim=1) @ weights
+
+
+def _load_jepa_model(
+    repo_root: Path,
+    dataset_root: Path,
+    checkpoint: Path,
+    dinov2_source: Path,
+    device: torch.device,
+) -> tuple[Any, Any, Any, np.ndarray, np.ndarray]:
+    root = repo_root / "le-wm-main"
+    if not root.exists():
+        root = repo_root
+    sys.path.insert(0, str(root))
+    sys.path.insert(0, str(root / "external/jepa-wms"))
+    from experiments.dino_checkpoint_compat.datasets.point_maze_dset import PointMazeDataset
+    from app.plan_common.datasets.preprocessor import Preprocessor
+    from app.plan_common.datasets.transforms import make_transforms
+    from app.vjepa_wm.modelcustom.simu_env_planning.vit_enc_preds import init_module
+
+    if not dinov2_source.exists():
+        raise FileNotFoundError(f"DINOv2 hub source does not exist: {dinov2_source}")
+    original_hub_load = torch.hub.load
+
+    def hub_load(repo_or_dir, model, *extra, **kwargs):
+        if repo_or_dir == "facebookresearch/dinov2":
+            return original_hub_load(str(dinov2_source), model, source="local", *extra, **kwargs)
+        return original_hub_load(repo_or_dir, model, *extra, **kwargs)
+
+    torch.hub.load = hub_load
+    config_path = root / "external/jepa-wms/configs/vjepa_wm/mz_sweep/mz_4f_fsk5_ask1_r224_vjtranoaug_predAdaLN_ftprop_depth6_repro_2roll_save_2n.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    aug = config["data_aug"]
+    transform = make_transforms(
+        img_size=224,
+        normalize=aug["normalize"],
+        random_horizontal_flip=False,
+        random_resize_aspect_ratio=(1.0, 1.0),
+        random_resize_scale=(1.0, 1.0),
+        reprob=0.0,
+        auto_augment=False,
+        motion_shift=False,
+    )
+    stats = PointMazeDataset(data_path=str(dataset_root), normalize_action=True)
+    preprocessor = Preprocessor(
+        stats.action_mean,
+        stats.action_std,
+        stats.state_mean,
+        stats.state_std,
+        stats.proprio_mean,
+        stats.proprio_std,
+        transform,
+    )
+    model = init_module(
+        str(checkpoint.parent), checkpoint.name, config["model"], device,
+        action_dim=2, proprio_dim=4, preprocessor=preprocessor,
+        cfgs_data=config["data"], wrapper_kwargs={"ctxt_window": 1},
+    )
+    model.eval()
+    return model, transform, stats, np.asarray(stats.action_mean), np.asarray(stats.action_std)
+
+
+def _image_tensor(images: list[np.ndarray]) -> torch.Tensor:
+    values = np.stack(images, axis=0).astype(np.float32)
+    return torch.from_numpy(values).permute(0, 3, 1, 2).unsqueeze(0)
+
+
+def fit_latent_readout(
+    model: Any,
+    calibration: VisualCalibration,
+    dataset_root: Path,
+    episodes: list[int],
+    max_frames: int,
+    batch_size: int,
+) -> LatentReadout:
+    """Fit a calibration-only latent->position readout with visual proprio."""
+
+    images: list[np.ndarray] = []
+    proprios: list[np.ndarray] = []
+    targets: list[np.ndarray] = []
+    for episode in episodes:
+        episode_images, states = load_episode(dataset_root, episode)
+        centers = [green_center(image) for image in episode_images]
+        for frame in range(0, len(episode_images), FRAME_STRIDE):
+            previous = centers[frame - FRAME_STRIDE] if frame >= FRAME_STRIDE else centers[frame]
+            delta = (centers[frame][0] - previous[0], centers[frame][1] - previous[1])
+            images.append(episode_images[frame])
+            proprios.append(np.concatenate([calibration.position(centers[frame]), calibration.velocity(delta)]))
+            targets.append(states[frame, :2])
+            if len(images) >= max_frames:
+                break
+        if len(images) >= max_frames:
+            break
+    features: list[np.ndarray] = []
+    with torch.no_grad():
+        for start in range(0, len(images), batch_size):
+            batch_array = np.stack(images[start : start + batch_size]).astype(np.float32)
+            batch_images = torch.from_numpy(batch_array).permute(0, 3, 1, 2).unsqueeze(1)
+            batch_proprio = torch.from_numpy(np.asarray(proprios[start : start + batch_size], dtype=np.float32)).unsqueeze(1)
+            encoded = model.encode({"visual": batch_images, "proprio": batch_proprio})
+            features.append(_pool_visual(encoded["visual"][:, 0]).detach().cpu().numpy())
+    matrix = np.concatenate(features, axis=0).astype(np.float64)
+    target = np.asarray(targets, dtype=np.float64)
+    feature_mean = matrix.mean(axis=0)
+    feature_std = np.maximum(matrix.std(axis=0), 1.0e-5)
+    normalized = (matrix - feature_mean) / feature_std
+    design = np.concatenate([normalized, np.ones((len(matrix), 1))], axis=1)
+    weights = _ridge_fit(design, target, ridge=1.0e-2)
+    return LatentReadout(feature_mean, feature_std, weights)
+
+
+def _make_context(
+    images: list[np.ndarray],
+    proprios: list[np.ndarray],
+) -> dict[str, torch.Tensor]:
+    if len(images) != len(proprios):
+        raise ValueError("image/proprio context lengths differ")
+    return {
+        "visual": _image_tensor(images),
+        "proprio": torch.from_numpy(np.asarray(proprios, dtype=np.float32)).unsqueeze(0),
+    }
+
+
+def model_candidate_scores(
+    model: Any,
+    readout: LatentReadout,
+    context_images: list[np.ndarray],
+    context_proprios: list[np.ndarray],
+    actions: np.ndarray,
+    action_mean: np.ndarray,
+    action_std: np.ndarray,
+    goal: np.ndarray,
+) -> np.ndarray:
+    from tensordict import TensorDict
+
+    context = _make_context(context_images, context_proprios)
+    with torch.no_grad():
+        encoded = model.encode(context)
+        latent_context = TensorDict(
+            {"visual": encoded["visual"], "proprio": encoded["proprio"]},
+            batch_size=[1, len(context_images)],
+        )
+        normalized = (actions - action_mean.reshape(1, 2)) / np.maximum(action_std.reshape(1, 2), 1.0e-6)
+        block = np.repeat(normalized[:, None, :], FRAME_STRIDE, axis=1).reshape(len(actions), -1)
+        suffix = torch.from_numpy(np.repeat(block[None, :, :], max(HORIZONS), axis=0).astype(np.float32)).to(model.device)
+        rollout = model.unroll(latent_context, act_suffix=suffix)
+        predicted_positions = []
+        for horizon in HORIZONS:
+            pooled = _pool_visual(rollout["visual"][len(context_images) - 1 + horizon])
+            predicted_positions.append(readout.predict(pooled).detach().cpu().numpy())
+    predicted = np.stack(predicted_positions, axis=1)
+    goal = np.asarray(goal, dtype=np.float64).reshape(1, 2)
+    distances = np.linalg.norm(predicted - goal, axis=-1)
+    return distances[:, 0] * 0.25 + distances[:, 1] * 0.25 + distances[:, 2] * 0.50
+
+
+def visual_dynamics_scores(
+    current: np.ndarray,
+    velocity: np.ndarray,
+    target: np.ndarray,
+    actions: np.ndarray,
+    dynamics: VisualDynamicsCalibration,
+    kp: float,
+    kv: float,
+) -> np.ndarray:
+    """Score candidate actions with RGB-estimated velocity and calibration dynamics."""
+
+    current = np.asarray(current, dtype=np.float64)[:2]
+    velocity = np.asarray(velocity, dtype=np.float64)[:2]
+    target = np.asarray(target, dtype=np.float64)[:2]
+    desired = np.clip(
+        kp * (target - current) / max(float(np.linalg.norm(target - current)), 1.0e-8)
+        - kv * velocity,
+        -1.0,
+        1.0,
+    )
+    predicted_position = np.stack(
+        [current + dynamics.predict_position_delta(velocity, action) for action in actions], axis=0
+    )
+    predicted_velocity = np.stack(
+        [dynamics.predict_velocity(velocity, action) for action in actions], axis=0
+    )
+    distance = np.linalg.norm(predicted_position - target.reshape(1, 2), axis=1)
+    velocity_penalty = 0.05 * np.linalg.norm(predicted_velocity, axis=1)
+    action_penalty = 0.02 * np.linalg.norm(actions - desired.reshape(1, 2), axis=1)
+    return distance + velocity_penalty + action_penalty
+
+
+def choose_action(
+    method: str,
+    model: Any,
+    readout: LatentReadout,
+    current_rgb: np.ndarray,
+    goal_rgb: np.ndarray,
+    context_images: list[np.ndarray],
+    context_proprios: list[np.ndarray],
+    calibration: VisualCalibration,
+    action_mean: np.ndarray,
+    action_std: np.ndarray,
+    directions: int,
+    magnitudes: list[float],
+    dynamics: VisualDynamicsCalibration,
+    maze_map: RGBMazeMap | None,
+    planner_map: str,
+    kp: float,
+    kv: float,
+    wm_dynamics_tolerance: float,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    current_center = green_center(current_rgb)
+    goal_center = green_center(goal_rgb)
+    current = calibration.position(current_center)
+    goal = calibration.position(goal_center)
+    velocity = np.asarray(context_proprios[-1], dtype=np.float64)[2:4]
+    if planner_map == "rgb_maze":
+        if maze_map is None:
+            raise ValueError("rgb_maze planner requires an RGB-inferred occupancy map")
+        waypoints = maze_map.path_waypoints(current, goal)
+        target = waypoints[0]
+    elif planner_map == "direct":
+        waypoints = [goal.copy()]
+        target = goal
+    else:
+        raise ValueError(f"unknown planner map {planner_map}")
+    actions = action_bank(current, target, directions, magnitudes)
+    gate_info: dict[str, Any] = {
+        "wm_selected_index": None,
+        "dynamics_selected_index": None,
+        "fallback_used": False,
+        "fallback_reason": None,
+        "dynamics_regret_of_wm": None,
+    }
+    if method == "random":
+        index = int(rng.integers(0, len(actions)))
+        scores = None
+    elif method == "visual_greedy":
+        direction = target - current
+        norm = max(float(np.linalg.norm(direction)), 1.0e-8)
+        scores = -(actions @ (direction / norm))
+        index = int(np.argmin(scores))
+    elif method == "visual_dynamics":
+        scores = visual_dynamics_scores(current, velocity, target, actions, dynamics, kp, kv)
+        index = int(np.argmin(scores))
+    elif method == "wm_rgb":
+        scores = model_candidate_scores(
+            model, readout, context_images, context_proprios, actions,
+            action_mean, action_std, target,
+        )
+        index = int(np.argmin(scores))
+    elif method == "wm_rgb_guarded":
+        wm_scores = model_candidate_scores(
+            model, readout, context_images, context_proprios, actions,
+            action_mean, action_std, target,
+        )
+        dynamics_scores = visual_dynamics_scores(
+            current, velocity, target, actions, dynamics, kp, kv
+        )
+        wm_index = int(np.argmin(wm_scores))
+        dynamics_index = int(np.argmin(dynamics_scores))
+        dynamics_regret = float(dynamics_scores[wm_index] - dynamics_scores[dynamics_index])
+        gate_info.update({
+            "wm_selected_index": wm_index,
+            "dynamics_selected_index": dynamics_index,
+            "dynamics_regret_of_wm": dynamics_regret,
+        })
+        if dynamics_regret <= wm_dynamics_tolerance:
+            index = wm_index
+        else:
+            index = dynamics_index
+            gate_info["fallback_used"] = True
+            gate_info["fallback_reason"] = "wm_action_outside_calibration_dynamics_tolerance"
+        scores = wm_scores
+    else:
+        raise ValueError(f"unknown planning method {method}")
+    return actions[index], {
+        "selected_index": index,
+        "candidate_count": int(len(actions)),
+        "current_visual_position": current.tolist(),
+        "goal_visual_position": goal.tolist(),
+        "visual_velocity": velocity.tolist(),
+        "route_waypoints": [np.asarray(point).tolist() for point in waypoints],
+        "active_waypoint": np.asarray(target).tolist(),
+        "selected_action": actions[index].tolist(),
+        "candidate_scores": None if scores is None else np.asarray(scores).tolist(),
+        "action_transfer_gate": gate_info,
+    }
+
+
+def run_episode(
+    method: str,
+    episode: int,
+    dataset_root: Path,
+    calibration: VisualCalibration,
+    model: Any,
+    readout: LatentReadout,
+    action_mean: np.ndarray,
+    action_std: np.ndarray,
+    dynamics: VisualDynamicsCalibration,
+    maze_map: RGBMazeMap | None,
+    planner_map: str,
+    directions: int,
+    magnitudes: list[float],
+    probe_blocks: int,
+    kp: float,
+    kv: float,
+    wm_dynamics_tolerance: float,
+    max_blocks: int,
+    success_radius: float,
+    seed: int,
+) -> dict[str, Any]:
+    images, states = load_episode(dataset_root, episode)
+    renderer = DatasetMatchedRenderer.from_episode(images, calibration)
+    runtime = LegacyPointMazeRuntime(states[0])
+    current_rgb = renderer.render(runtime.state)
+    goal_rgb = renderer.render(np.r_[GOAL_STATE, [0.0, 0.0]])
+    initial_render_error = renderer.source_reconstruction_error(runtime.state, images[0])
+    center = green_center(current_rgb)
+    proprio = np.concatenate([calibration.position(center), calibration.velocity((0.0, 0.0))])
+    reset_state = runtime.state.copy()
+    if probe_blocks < 0:
+        raise ValueError("probe_blocks must be non-negative")
+    if probe_blocks:
+        for _ in range(probe_blocks):
+            runtime.step_block(np.zeros(2, dtype=np.float64))
+        probe_rgb = renderer.render(runtime.state)
+        probe_center = green_center(probe_rgb)
+        probe_delta = (probe_center[0] - center[0], probe_center[1] - center[1])
+        probe_proprio = np.concatenate([
+            calibration.position(probe_center), calibration.velocity(probe_delta)
+        ])
+        current_rgb = probe_rgb
+        center = probe_center
+        context_images = [renderer.render(reset_state), probe_rgb]
+        context_proprios = [proprio.copy(), probe_proprio]
+    else:
+        context_images = [current_rgb, current_rgb.copy()]
+        context_proprios = [proprio.copy(), proprio.copy()]
+    planning_start_state = runtime.state.copy()
+    rng = np.random.default_rng(seed)
+    trace = []
+    detector_failures = 0
+    for block_index in range(max_blocks):
+        try:
+            action, decision = choose_action(
+                method, model, readout, current_rgb, goal_rgb, context_images,
+                context_proprios, calibration, action_mean, action_std,
+                directions, magnitudes, dynamics, maze_map, planner_map, kp, kv,
+                wm_dynamics_tolerance, rng,
+            )
+        except ValueError as exc:
+            detector_failures += 1
+            trace.append({"block": block_index, "error": str(exc)})
+            break
+        runtime.step_block(action)
+        next_rgb = renderer.render(runtime.state)
+        try:
+            next_center = green_center(next_rgb)
+            delta = (next_center[0] - center[0], next_center[1] - center[1])
+            next_proprio = np.concatenate([calibration.position(next_center), calibration.velocity(delta)])
+            center = next_center
+        except ValueError:
+            detector_failures += 1
+            next_proprio = context_proprios[-1].copy()
+        context_images = [context_images[-1], next_rgb]
+        context_proprios = [context_proprios[-1], next_proprio]
+        current_rgb = next_rgb
+        trace.append({
+            "block": block_index,
+            "runtime_state_for_evaluation": runtime.state.tolist(),
+            **decision,
+        })
+        if float(np.linalg.norm(runtime.state[:2] - GOAL_STATE)) <= success_radius:
+            break
+    final_distance = float(np.linalg.norm(runtime.state[:2] - GOAL_STATE))
+    return {
+        "episode_id": int(episode),
+        "method": method,
+        "initial_state_for_environment": reset_state.tolist(),
+        "planning_start_state_for_evaluation": planning_start_state.tolist(),
+        "final_state_for_evaluation": runtime.state.tolist(),
+        "initial_distance": float(np.linalg.norm(reset_state[:2] - GOAL_STATE)),
+        "planning_start_distance": float(np.linalg.norm(planning_start_state[:2] - GOAL_STATE)),
+        "final_distance": final_distance,
+        "probe_progress": float(
+            np.linalg.norm(reset_state[:2] - GOAL_STATE)
+            - np.linalg.norm(planning_start_state[:2] - GOAL_STATE)
+        ),
+        "progress": float(np.linalg.norm(reset_state[:2] - GOAL_STATE) - final_distance),
+        "success": bool(final_distance <= success_radius),
+        "blocks_executed": len(trace),
+        "detector_failures": int(detector_failures),
+        "renderer_initial_mean_abs_error": initial_render_error,
+        "trace": trace,
+        "policy_contract": {
+            "rgb_current_input": True,
+            "rgb_goal_available": True,
+            "goal_used_by_action_chart": True,
+            "simulator_state_in_policy_input": False,
+            "simulator_state_used_for": "environment stepping and held-out evaluation only",
+            "rgb_velocity_probe_blocks": int(probe_blocks),
+            "rgb_static_map": planner_map == "rgb_maze",
+        },
+    }
+
+
+def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {"episodes": 0}
+    return {
+        "episodes": len(rows),
+        "success_rate": float(np.mean([row["success"] for row in rows])),
+        "mean_final_distance": float(np.mean([row["final_distance"] for row in rows])),
+        "mean_progress": float(np.mean([row["progress"] for row in rows])),
+        "mean_probe_progress": float(np.mean([row["probe_progress"] for row in rows])),
+        "mean_planning_start_distance": float(np.mean([row["planning_start_distance"] for row in rows])),
+        "mean_blocks": float(np.mean([row["blocks_executed"] for row in rows])),
+        "detector_failure_rate": float(np.mean([row["detector_failures"] > 0 for row in rows])),
+        "renderer_initial_mean_abs_error": float(np.mean([row["renderer_initial_mean_abs_error"] for row in rows])),
+    }
+
+
+def main() -> None:
+    args = parse_args()
+    device = require_cuda()
+    dataset_root = args.dataset_root.resolve()
+    calibration_episodes = list(range(args.calibration_start, args.calibration_end))
+    test_episodes = list(range(args.test_start, args.test_end))
+    if args.max_test_episodes is not None:
+        test_episodes = test_episodes[: args.max_test_episodes]
+    if not calibration_episodes or not test_episodes:
+        raise ValueError("calibration and test episode ranges must be non-empty")
+    for episode in calibration_episodes + test_episodes:
+        _episode_path(dataset_root, episode)
+    print("[PointMaze live] fitting RGB->proprio calibration on calibration roots only")
+    calibration = fit_visual_calibration(dataset_root, calibration_episodes, args.calibration_frames)
+    print("[PointMaze live] fitting calibration-only block dynamics and RGB maze occupancy")
+    dynamics = fit_visual_dynamics_calibration(dataset_root, calibration_episodes)
+    calibration_images, _calibration_states = load_episode(dataset_root, calibration_episodes[0])
+    calibration_renderer = DatasetMatchedRenderer.from_episode(calibration_images, calibration)
+    maze_map = RGBMazeMap.from_renderer(calibration_renderer) if args.planner_map == "rgb_maze" else None
+    if maze_map is not None:
+        print(f"[PointMaze live] RGB occupancy inferred {len(maze_map.free_cells)} free cells")
+    print("[PointMaze live] loading frozen JEPA-WM on CUDA; policy input is RGB-derived only")
+    model, _transform, _stats, action_mean, action_std = _load_jepa_model(
+        args.repo_root.resolve(), dataset_root, args.checkpoint.resolve(), args.dinov2_source.resolve(), device
+    )
+    print("[PointMaze live] fitting latent->position readout on calibration roots only")
+    readout = fit_latent_readout(
+        model, calibration, dataset_root, calibration_episodes,
+        args.calibration_frames, args.batch_size,
+    )
+    methods = tuple(args.methods)
+    rows: list[dict[str, Any]] = []
+    for method in methods:
+        print(f"[PointMaze live] running method={method} on {len(test_episodes)} held-out roots")
+        for index, episode in enumerate(test_episodes):
+            rows.append(run_episode(
+                method, episode, dataset_root, calibration, model, readout,
+                action_mean, action_std, dynamics, maze_map, args.planner_map,
+                args.directions, args.magnitudes, args.probe_blocks, args.kp, args.kv,
+                args.wm_dynamics_tolerance, args.max_blocks, args.success_radius,
+                args.seed + index,
+            ))
+    aggregates = {method: _aggregate([row for row in rows if row["method"] == method]) for method in methods}
+    report = {
+        "schema": "pointmaze_rgb_online_planning.v3",
+        "protocol": {
+            "dataset_root": str(dataset_root),
+            "checkpoint": str(args.checkpoint.resolve()),
+            "dinov2_source": str(args.dinov2_source.resolve()),
+            "device": str(device),
+            "calibration_episodes": calibration_episodes,
+            "test_episodes": test_episodes,
+            "episode_disjoint": not bool(set(calibration_episodes) & set(test_episodes)),
+            "action_bank": {
+                "directions": args.directions,
+                "magnitudes": args.magnitudes,
+                "blocks_per_prediction": max(HORIZONS),
+                "executed_blocks_before_reobservation": 1,
+                "rgb_velocity_probe_blocks": args.probe_blocks,
+                "planner_map": args.planner_map,
+                "kp": args.kp,
+                "kv": args.kv,
+                "wm_dynamics_tolerance": args.wm_dynamics_tolerance,
+            },
+            "methods": list(methods),
+            "goal_state_for_environment_only": GOAL_STATE.tolist(),
+            "success_radius": args.success_radius,
+        },
+        "calibration": {
+            "episodes": list(calibration.calibration_episodes),
+            "position_rmse_pixels_to_state": calibration.position_rmse.tolist(),
+            "velocity_rmse": calibration.velocity_rmse.tolist(),
+            "pixel_to_position": calibration.pixel_to_position.tolist(),
+            "state_to_pixel": calibration.state_to_pixel.tolist(),
+            "pixel_delta_to_velocity": calibration.pixel_delta_to_velocity.tolist(),
+            "readout": "ridge latent pooled visual tokens -> qpos, calibration roots only",
+            "block_dynamics": {
+                "position_delta_weights": dynamics.position_delta_weights.tolist(),
+                "velocity_weights": dynamics.velocity_weights.tolist(),
+                "position_delta_rmse": dynamics.position_delta_rmse.tolist(),
+                "velocity_rmse": dynamics.velocity_rmse.tolist(),
+                "episodes": list(dynamics.calibration_episodes),
+            },
+        },
+        "aggregates": aggregates,
+        "rows": rows,
+        "evidence_boundary": (
+            "same-legacy-dynamics RGB-only receding-horizon consequence with a "
+            "calibration-only visual readout; not proof of universal transfer, "
+            "physical causality, or the official swm package interface"
+        ),
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps({"aggregates": aggregates, "output": str(args.output)}, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

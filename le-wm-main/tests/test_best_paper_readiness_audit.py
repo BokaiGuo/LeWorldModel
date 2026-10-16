@@ -58,3 +58,34 @@ def test_best_paper_audit_computes_g_h_and_rejects_missing_gates(tmp_path):
     assert item["permission"]["status"] == "rejected_fail_closed"
     assert report["theory_requirement"]["counterexample"]["same_declared_prediction_mse"] is True
     assert report["independent_real_gain"]["status"] == "blocked_missing_independent_gain_schema"
+
+
+def test_best_paper_audit_rejects_incomplete_external_metric_object(tmp_path):
+    root = tmp_path / "records"
+    _record(root)
+    results = tmp_path / "results"
+    results.mkdir()
+    artifact = {
+        "external_independent_gain": {
+            "schema": "external_independent_gain.v1",
+            "protocol": {
+                "privileged_state_used": False,
+                "test_planning_used_for_selection": False,
+                "train_calibration_test_root_disjoint": True,
+                "independent_heldout_consequence": True,
+            },
+            "metrics": {
+                "action_ranking_inversion": {"status": "available", "estimate": 0.1, "ci95": [0.0, 0.2]},
+                "multistep_task_error": {"status": "available", "estimate": 0.2, "ci95": [0.1, 0.3]},
+                "contact_retention": {"status": "not_applicable"},
+                "angle_closure": {"status": "available", "estimate": 0.3, "ci95": [0.2, 0.4]},
+                "planning_regret": {"status": "available", "estimate": 0.4, "ci95": [0.3, 0.5]},
+            },
+        }
+    }
+    (results / "incomplete.json").write_text(json.dumps(artifact))
+    report = audit(root, results)
+    gate = report["independent_real_gain"]
+    assert gate["candidate_artifact_count"] == 1
+    assert gate["valid_artifact_count"] == 0
+    assert any("contact_retention:status=not_applicable" in reason for item in gate["invalid_artifacts"] for reason in item["reasons"])

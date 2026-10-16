@@ -30,6 +30,7 @@ from experiments.empirical_spectral_audit.evaluate_pointmaze_adapter_external_ev
     _legacy_pointmaze_xml,
     _load_adapter,
 )
+from experiments.empirical_spectral_audit.pointmaze_action_charts import action_blocks_for_chart
 from experiments.empirical_spectral_audit.train_pointmaze_learned_adapter_panel import _predict
 
 
@@ -187,6 +188,7 @@ def generate(
     model, checkpoint_payload = _load_adapter(checkpoint, device)
     pca_mean = np.asarray(checkpoint_payload["pca_mean"], dtype=np.float64)
     pca_basis = np.asarray(checkpoint_payload["pca_basis"], dtype=np.float64)
+    action_feature_chart = str(checkpoint_payload.get("adapter_training", {}).get("action_feature_chart", "raw"))
     goal_array = np.asarray(goal, dtype=np.float64)
     # Use one source observation per episode, not adjacent windows from the
     # same root.  The source export is frozen and never modified.
@@ -276,7 +278,8 @@ def generate(
                     f"{checkpoint_history_windows * source_projection.size}"
                 )
             context_projection = np.repeat(source_history_projection[None], candidates, axis=0)
-        x = np.concatenate([context_projection, action_blocks], axis=1)
+        action_features = action_blocks_for_chart([row] * candidates, action_blocks, action_feature_chart)
+        x = np.concatenate([context_projection, action_features], axis=1)
         prediction = _predict(
             model,
             x,
@@ -360,6 +363,7 @@ def generate(
         "source_export": str(source_export.resolve()),
         "checkpoint": str(checkpoint.resolve()),
         "realized_latent_status": "unavailable_without_RGB_rollout_for_new_simulated_sequences",
+        "action_feature_chart": action_feature_chart,
     }
     output.mkdir(parents=True, exist_ok=True)
     arrays_path = output / "arrays.npz"

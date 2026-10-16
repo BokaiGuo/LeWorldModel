@@ -290,7 +290,7 @@ GDD-WM。
 | D0 schema/provenance | `experiments/gdd_wm/build_shared_candidate_dataset.py` | 已实现，只有 schema audit |
 | shared candidate bank | `experiments/decision_benchmark/` | 部分基础设施；v5 已有 realized RGB refs，但尚缺独立 D-JEPA teacher |
 | D1 stability | `experiments/gdd_wm/audit_preference_stability.py` | implemented; current bank rejected fail-closed |
-| D2 projection | 待新增 `gdd_wm/train_projection_distillation.py` | not-run |
+| D2 projection | `experiments/gdd_wm/train_projection_distillation.py` | implemented; current D1 gate rejected and training correctly short-circuited |
 | D3 co-training | 待新增 `gdd_wm/train_gdd_student.py` | blocked on D0-D2 |
 | D4 fixed/CEM evaluation | 复用 decision benchmark 与 planning gates | blocked on valid student |
 
@@ -322,3 +322,207 @@ preference stability；同时 teacher 是 `offline_environment_cost_v1`，且
 下一份合格 D1 数据必须同时提供：同一
 root/candidate pair 的至少两个独立 candidate-set contexts、独立 frozen teacher score、
 execution-grounded realized observation refs，以及 teacher/execution 互不泄漏的 provenance。
+
+### Train-only candidate-effect control（2026-10-15）
+
+为推进 D0/D1 被阻塞后的可验证部分，使用带有完整 history 字段的
+`jepa_history_near_goal_v5_source` 运行了 GPU train-root-only candidate-effect adapter。
+它不是 D-JEPA teacher，也不使用 outcome labels 选择模型；只作为 decision-transfer
+接口控制实验。history-latent+action 在 8 个 root-disjoint outcome roots 上的平均
+effect RMSE 为 `0.3358`，平均 paired regret gain 为 `+0.1243`，paired success gain
+为 `+0.125`；同一数据和 split 的 frozen-latent+action 对照分别为 `0.3518`、
+`+0.0998` 和 `+0.025`。这说明短期 history 在一个 PointMaze 离线候选任务上有
+增量 action-effect 信息，但仍不构成 D-JEPA preference stability、RGB successor
+verification 或闭环规划证据。
+
+artifact：
+`le-wm-main/results/gdd_wm_candidate_effect_cuda_20261015/history_latent_action_v5.json`
+和
+`le-wm-main/results/gdd_wm_candidate_effect_cuda_20261015/frozen_latent_action_v5.json`。
+由于该 source 的 manifest 明确标记 realized visual latent unavailable，D2 projection
+distillation 仍保持 blocked；下一步必须获得独立 frozen teacher 和重复 candidate-set
+contexts，不能用这个 positive control 绕过 D1 门禁。
+
+### Realized-RGB successor subgate（2026-10-15 continuation）
+
+现有 dataset-matched RGB successor artifact 已按 architecture × seed 聚合，未按 outcome
+选择 case。`results/gdd_wm_rgb_successor_panel_20261015/aggregate.json` 包含 `mlp` 与
+`standardized_mlp` 两个 architecture、各 5 个 seed、每 case 8 个 outcome roots；10/10
+case 通过 renderer consistency、realized RGB latent availability 和 projected successor
+comparison gate。
+
+80 个 outcome roots 的 candidate-level predicted-better fraction 为 `0.6656`，two-level
+case/root bootstrap CI 为 `[0.5977,0.7305]`；relative L2 improvement 为 `0.1421`，CI
+为 `[0.0849, 0.1965]`。这是 realized-RGB successor verification 的跨 case positive
+subgate，但不是 D1 teacher validation：单个 root 仍可为负，当前 bank 仍缺少同一
+root/candidate pair 的多个独立 candidate-set contexts，且原 teacher 仍有
+`teacher_score = -real_task_cost` 泄漏。因此 D2 继续保持 blocked。
+
+### Repeated candidate-context structure repair (2026-10-15)
+
+`experiments/gdd_wm/build_repeated_candidate_contexts.py` constructs the
+missing D1 table by joining independent candidate banks on exact
+root/action-sequence hash and assigning distinct context IDs. On two existing
+PointMaze banks it produces 2 contexts, 40 roots, 410 matched root/action
+pairs, and 820 records. The D1 audit consequently computes preference
+stability (1,930 repeated pair-context comparisons; flip rate `0.0`). It
+still rejects the data because the teacher is the leaked
+`offline_environment_cost_v1` oracle and 164 outcome/test records lack full
+runtime references. This is a structural D1 repair and sharper failure
+localization; it is not D-JEPA teacher evidence and does not authorize D2.
+
+### D1 package eligibility audit and D2 provenance hardening (2026-10-15)
+
+The read-only package audit inspected all 24 existing candidate packages and
+found `0/24` eligible. The failures are structural: the packages use
+`offline_environment_cost_v1`, their teacher score is exactly negative realized
+task cost, the original packages lack repeated root/candidate contexts, and
+outcome/test rows have incomplete runtime references. The complete artifact is
+`results/gdd_wm_teacher_candidate_audit_20261015/teacher_candidate_audit.json`.
+
+D2 therefore remains blocked. The projection runner now requires a
+provenance-bearing feature table with the exact candidate-dataset SHA-256,
+canonical record-key schema, explicit exclusion of candidate-set context,
+teacher rank, and held-out outcome inputs, plus a frozen-dynamics declaration.
+It also rejects projection ranks above the train-sample rank. This is a
+fail-closed interface repair; it does not convert the leaked package into a
+valid teacher or authorize D2 training.
+
+### Non-leaking train-only readout control (2026-10-15 continuation)
+
+To isolate the D1 structure from teacher quality, the new
+`experiments/gdd_wm/build_train_only_readout_teacher_package.py` joins two
+checkpoint-stage contexts using exact root/action hashes and fits a frozen
+standardized ridge readout on train roots only. It produces 2 contexts, 40
+roots, 640 matched root/action pairs, 1,280 records, and complete RGB
+successor references. The package audit passes (`1/1 eligible`), demonstrating
+that the repeated-context and runtime-reference gates are executable on a
+non-leaking control.
+
+This does not validate the teacher: D1 reports flip rate `0.3081`, overall
+execution consistency `0.4719`, and held-out outcome consistency `0.5800`.
+The artifact is therefore a positive infrastructure control but a negative
+teacher-quality result. Its claim boundary remains non-D-JEPA control only;
+it cannot open D2 or support planning claims.
+
+### Feature-family intervention (2026-10-16 continuation)
+
+Five feature families were frozen before outcome evaluation under the same
+two-context train-only ridge protocol: predicted terminal, source plus
+terminal, source plus delta, source/delta/action, and action summary. The
+root-bootstrap artifact is
+`results/gdd_wm_nonleaking_teacher_control_20261015/feature_family_panel/summary.json`.
+
+The action-only family has the strongest held-out outcome readout (pairwise
+consistency `0.6179`, mean regret `0.1060`), while predicted terminal is
+`0.5625` and `0.2116`; source/delta/action has no reliable consistency gain
+(paired delta `-0.0620`, CI crossing zero). This identifies action-distribution
+signal as a confound and does not validate latent decision geometry. It should
+remain a required action-only baseline in future teacher and distillation
+experiments, not be promoted as the proposed method.
+
+### Action-residualized latent increment test (2026-10-16 continuation)
+
+The teacher control now supports a second-stage train-only residual protocol:
+an action-summary readout is fit first, and each latent family is fit only to
+the remaining task-cost residual. On the held-out PointMaze roots,
+residualized predicted-terminal reaches `0.5932` pairwise consistency versus
+`0.6179` for action-only; the paired delta is `-0.0247` (root-bootstrap CI
+crosses zero) and regret increases by `0.0250`. Residualized source/delta/action
+is `0.5006`. Thus the current latent does not demonstrate incremental decision
+information after action distribution is controlled. The artifact is
+`results/gdd_wm_nonleaking_teacher_control_20261015/residualized_feature_panel/summary_vs_action.json`.
+
+### Fixed nonlinear-capacity control (2026-10-16 continuation)
+
+The residualized negative result was followed by a preregistered capacity
+check rather than by outcome-driven tuning. The new
+`experiments/gdd_wm/audit_train_only_teacher_capacity.py` keeps the
+`source_delta_action` family and the train-only action baseline fixed, then
+compares a standardized linear residual with one fixed CUDA shallow MLP. On
+the held-out PointMaze roots, the linear residual reduces mean regret by
+`0.1568` versus action-only (root-bootstrap 95% CI
+`[-0.2602,-0.0678]`), whereas the MLP reduction is only `0.0631` with CI
+`[-0.1797,+0.0360]`. Consistency gains are uncertain for both.
+
+This result is a bounded positive linear-readout control, not a solution to
+the latent transfer problem. It rejects the simple explanation that the
+previous negative result was caused by insufficient nonlinear readout
+capacity. The next interpretation remains support-sensitive and
+architecture-conditioned: the current latent may expose a small linear
+signal, but it has not shown robust incremental information after action
+conditioning across environments or an independent planning consequence.
+Artifact:
+`results/gdd_wm_nonleaking_teacher_control_20261015/capacity_audit/capacity_audit.json`.
+
+### Coordinate-frame and within-root estimand repair (2026-10-16 continuation)
+
+The capacity control was stress-tested against the two protocol confounds
+identified by the initial point estimate. On two independent canonical
+goal-frame seed contexts, the original raw-action linear residual gave regret
+delta `-0.0305` (95% CI crosses zero), while the fixed MLP gave `-0.0271`
+(CI crosses zero). Replacing raw action summaries with exact goal-relative
+summaries produced linear delta `0.0000` and MLP delta `-0.0265` (CI crosses
+zero). Finally, centering the train target within each train root before
+fitting, while retaining held-out root-wise ranking/regret, produced linear
+delta `0.0000` and MLP delta `-0.0360` (CI crosses zero).
+
+Thus the earlier absolute raw-action improvement is not stable under canonical
+candidate coordinates and a within-root action-effect estimand. The repair is
+now encoded in the runner as `--action-frame goal_relative` and
+`--target-mode root_centered`; future decision-transfer audits must report
+these controls before attributing gains to latent geometry. This strengthens
+the negative diagnosis rather than creating a positive latent claim: current
+evidence still lacks an independent, cross-environment latent increment.
+
+### Canonical action-frame closure (2026-10-16)
+
+The non-PushT candidate exporters were extended to include evaluator-only
+`source_state_raw` and `goal_raw` fields, which closes the missing-data
+condition for goal-relative action coordinates without exposing state to the
+RGB model. Four new CUDA/EGL panels were generated under
+`results/gdd_wm_cross_environment_20261016/*_goalframe/`.
+
+The predeclared goal-relative/root-centered audit removes the apparent raw
+action gain: TwoRoom linear/MLP regret deltas are `-3.0036`/`-3.3582` with
+confidence intervals crossing zero, and Reacher linear/MLP deltas are
+`+0.1087`/`+0.2677`, also with intervals crossing zero. Consequently the
+current positive raw-action signal is classified as a coordinate/root-geometry
+confound. The repair is successful at making the estimand valid, but it does
+not create a positive latent result; future work must change the learned
+action-effect representation or data support rather than increase readout
+capacity.
+
+### Context-safe capacity replication across non-PushT environments (2026-10-16)
+
+The train-only capacity runner was corrected after finding that repeated
+contexts had been merged before ranking. Each `context x root` is now an
+independent ranking cell; root-level summaries macro-average unique roots and
+bootstrap only unique outcome roots. The corrected CUDA artifacts are
+`results/gdd_wm_cross_environment_20261016/tworoom_capacity_root_centered_context_safe/`
+and
+`results/gdd_wm_cross_environment_20261016/reacher_capacity_root_centered_context_safe/`.
+
+The fixed MLP residual reduced held-out root-centered regret relative to the
+action-only baseline in both environments (TwoRoom `-16.8480`, CI
+`[-32.0209,-0.4949]`; Reacher `-1.9058`, CI `[-2.3356,-1.4063]`). Reacher's
+linear residual also improves (`-1.6113`, CI `[-2.0892,-1.1483]`), while the
+TwoRoom linear interval crosses zero. This is the first corrected
+non-PushT cross-environment capacity signal, but it remains a diagnostic
+replication over two history contexts, not the required architecture/seed
+matched benchmark. The action frame is still raw, so the canonical
+goal-relative replication remains mandatory before interpreting this as
+independent latent transfer information.
+
+### Goal-latent conditioning intervention (2026-10-16)
+
+The panel exporters now retain frozen RGB goal embeddings, and the audit
+supports `--goal-conditioning latent_relative` using only runtime-safe latent
+features (`goal-source` and `predicted-goal`). On the canonical
+goal-relative/root-centered protocol, TwoRoom gives linear/MLP regret deltas
+`-4.3478`/`-1.2867` with intervals crossing zero; Reacher gives
+`+0.2943`/`-0.2280`, with the linear interval excluding zero in the harmful
+direction and the MLP interval crossing zero. This intervention does not
+repair the negative result. It rules out missing goal latent as the sole cause
+and focuses the next method change on action-effect support/identifiability,
+not another readout-capacity increase.

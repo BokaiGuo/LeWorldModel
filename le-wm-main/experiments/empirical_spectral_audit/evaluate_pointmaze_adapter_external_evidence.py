@@ -29,6 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from experiments.empirical_spectral_audit.enriched_record_schema import load_payload
+from experiments.empirical_spectral_audit.pointmaze_action_charts import action_blocks_for_chart
 from experiments.empirical_spectral_audit.train_pointmaze_learned_adapter_panel import (
     HORIZONS,
     _project,
@@ -60,12 +61,16 @@ def _load_adapter(checkpoint: Path, device: str) -> tuple[torch.nn.Module, dict[
     payload = torch.load(checkpoint, map_location=device, weights_only=False)
     training = dict(payload["adapter_training"])
     rank = int(payload["rank"])
-    action_dim = 4 * 10
     architecture = str(payload["architecture"])
     task_effect = architecture in {"task_effect_mlp", "task_effect_linear", "task_effect_lowrank_mlp"}
     output_dim = len(HORIZONS) if task_effect else rank * len(HORIZONS)
     history_windows = int(training.get("history_windows", 1))
-    input_dim = rank * history_windows + action_dim
+    declared_input = training.get("x_mean")
+    input_dim = (
+        len(np.asarray(declared_input))
+        if declared_input is not None
+        else rank * history_windows + 4 * 10
+    )
     if training.get("feature_mode") == "train_action_pca4":
         input_dim = rank + len(np.asarray(training["action_basis"]))
     model = _model_class(architecture)(input_dim, output_dim).to(device)
@@ -95,9 +100,12 @@ def _external_features(
     pca_mean: np.ndarray,
     pca_basis: np.ndarray,
     action_blocks: np.ndarray,
+    action_feature_chart: str = "raw",
 ) -> np.ndarray:
     source = np.asarray([_project(row["source_latent"], pca_mean, pca_basis) for row in rows], dtype=np.float32)
-    return np.concatenate([source, np.asarray(action_blocks, dtype=np.float32).reshape(len(rows), -1)], axis=1)
+    actions = np.asarray(action_blocks, dtype=np.float32)
+    actions = action_blocks_for_chart(rows, actions, action_feature_chart)
+    return np.concatenate([source, actions.reshape(len(rows), -1)], axis=1)
 
 
 def _intervention_action_blocks(action: np.ndarray) -> np.ndarray:
@@ -280,6 +288,7 @@ def evaluate(
     if len(rows) < 4:
         raise ValueError("external export has fewer than four root-disjoint source roots")
     model, payload = _load_adapter(checkpoint, device)
+    action_feature_chart = str(payload.get("adapter_training", {}).get("action_feature_chart", "raw"))
     pca_mean = np.asarray(payload["pca_mean"], dtype=np.float64)
     pca_basis = np.asarray(payload["pca_basis"], dtype=np.float64)
     readouts = _fit_readouts(fit["enriched_records"])
@@ -304,7 +313,13 @@ def evaluate(
         predicted_fan = {h: [] for h in HORIZONS}
         actual_fan = _simulate_effects(rows, fan_actions)
         for fan_index in range(3):
-            x = _external_features(rows, pca_mean, pca_basis, np.repeat(blocks[fan_index][None], len(rows), axis=0))
+            x = _external_features(
+                rows,
+                pca_mean,
+                pca_basis,
+                np.repeat(blocks[fan_index][None], len(rows), axis=0),
+                action_feature_chart,
+            )
             prediction = _predict(model, x, int(pca_basis.shape[0]), device, payload["adapter_training"])
             for h in HORIZONS:
                 decoder, center, target_center = readouts[h]
@@ -335,7 +350,7 @@ def evaluate(
     observed_blocks = np.asarray([row["action_blocks_raw"] for row in rows], dtype=np.float32)
     observed_predicted = _predict(
         model,
-        _external_features(rows, pca_mean, pca_basis, observed_blocks),
+        _external_features(rows, pca_mean, pca_basis, observed_blocks, action_feature_chart),
         int(pca_basis.shape[0]),
         device,
         payload["adapter_training"],
@@ -363,6 +378,7 @@ def evaluate(
                 "action_support_repair": "all four model action blocks populated; diagonal directions avoid exact zero coordinates",
                 "simulator_state_used_for": "offline intervention labels only",
                 "model_runtime_input": "source latent derived from RGB plus action fan",
+                "model_action_feature_chart": action_feature_chart,
             },
         },
         "planning_consequence": planning,

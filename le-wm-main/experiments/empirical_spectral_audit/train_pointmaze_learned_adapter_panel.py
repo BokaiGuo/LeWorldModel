@@ -37,6 +37,7 @@ if str(ROOT) not in __import__("sys").path:
     __import__("sys").path.insert(0, str(ROOT))
 
 from experiments.empirical_spectral_audit.enriched_record_schema import make_payload
+from experiments.empirical_spectral_audit.pointmaze_action_charts import action_blocks_for_chart
 
 
 HORIZONS = (1, 2, 4)
@@ -185,8 +186,14 @@ def _features(
         # standardized while JEPA is already in [-1, 1]).  The raw blocks are
         # the shared physical action chart and are the only valid cross-model
         # input for this matched audit.
-        action_key = "action_blocks_raw" if action_feature_chart == "raw" else "action_blocks_normalized"
-        actions.append(np.asarray(row[action_key], dtype=np.float64).reshape(-1))
+        if action_feature_chart in {"goal_relative", "hybrid"}:
+            transformed = action_blocks_for_chart(
+                [row], np.asarray([row["action_blocks_raw"]], dtype=np.float32), action_feature_chart
+            )[0]
+            actions.append(np.asarray(transformed, dtype=np.float64).reshape(-1))
+        else:
+            action_key = "action_blocks_raw" if action_feature_chart == "raw" else "action_blocks_normalized"
+            actions.append(np.asarray(row[action_key], dtype=np.float64).reshape(-1))
         source_state = np.asarray(row["source_state_raw"], dtype=np.float64)
         states.append(source_state)
         for h in HORIZONS:
@@ -340,6 +347,7 @@ def _fit(
     distill_target: np.ndarray | None = None,
     distillation_weight: float = 0.0,
     history_windows: int = 1,
+    action_feature_chart: str = "raw",
 ) -> tuple[nn.Module, dict[str, Any]]:
     _seed(seed)
     task_effect_mode = architecture in {"task_effect_mlp", "task_effect_linear", "task_effect_lowrank_mlp"}
@@ -514,6 +522,7 @@ def _fit(
         "distillation_weight": float(distillation_weight),
         "history_windows": int(history_windows),
         "context_dimension": int(context_dim),
+        "action_feature_chart": str(action_feature_chart),
     }
     if lowrank_action_mode:
         training["feature_mode"] = "train_action_pca4"
@@ -931,9 +940,9 @@ def main() -> None:
     parser.add_argument("--stages", type=int, nargs="+", default=[5, 10, 25, 50, 75])
     parser.add_argument(
         "--action-feature-chart",
-        choices=("raw", "export"),
+        choices=("raw", "export", "goal_relative", "hybrid"),
         default="raw",
-        help="Use shared raw physical action coordinates (formal default) or each export's native normalized chart (exploratory only).",
+        help="Use shared raw physical coordinates, a goal-relative physical chart, or each export's native normalized chart.",
     )
     parser.add_argument(
         "--history-windows",
@@ -1039,7 +1048,11 @@ def main() -> None:
     for base_name, source_path in source_items:
         payload = payloads[base_name]
         environment = str(payload["environment"])
-        action_distribution = f"{environment.lower()}_observed_shared_v1"
+        action_distribution = (
+            f"{environment.lower()}_goal_relative_shared_v1"
+            if args.action_feature_chart == "goal_relative"
+            else f"{environment.lower()}_observed_shared_v1"
+        )
         rows = sorted(payload["enriched_records"], key=lambda row: (int(row["episode_id"]), int(row.get("window_start", 0))))
         if args.max_rows is not None:
             if args.max_rows < 24:
@@ -1113,6 +1126,7 @@ def main() -> None:
                         task_direction=direction,
                         task_loss_weight=args.task_loss_weight,
                         history_windows=args.history_windows,
+                        action_feature_chart=args.action_feature_chart,
                     )
                     reference_prediction = _predict(
                         reference_model, x_train, pca_basis.shape[0], args.device, reference_training
@@ -1137,6 +1151,7 @@ def main() -> None:
                         task_direction=direction,
                         task_loss_weight=args.task_loss_weight,
                         history_windows=args.history_windows,
+                        action_feature_chart=args.action_feature_chart,
                         spectral_target=(
                             reference_spectral_targets.get((seed, stage))
                             if args.match_spectrum_to_mlp and architecture != "mlp"
