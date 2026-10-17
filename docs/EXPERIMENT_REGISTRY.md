@@ -401,6 +401,19 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   offline RGB mechanism audit and has not been promoted to online Cube
   planning.
 
+- Cube macro-ranking online transfer diagnostic (2026-10-17):
+  `experiments/run_live_cube_rgb_macro_ranker.py` was added to test the short
+  macro ranker with RGB-only current/previous frames, rendered goal, and
+  previous action. A reset-distribution smoke selected the zero macro and
+  obtained `0/4`; three receding macros also obtained `0/4`. Matching the
+  offline action duration (`action_block=1`) did not change this (`0/4`). A
+  calibration/test run with the same frozen RGB approach prelude still
+  obtained `0/4` and selected the zero macro. Thus the offline `93.75%`
+  ranking result does not transfer from guided contact branches to an online
+  reset distribution. The remaining failure is an RGB approach/contact-state
+  observability gap, not merely macro duration. The runner is retained as a
+  fail-closed diagnostic and no online Cube gain is claimed.
+
 - Full TwoRoom CUDA latent/planning alignment is complete. The phase-1
   artifact is `results/tworoom_full_spectral_cuda_20261015/full_latents/`
   (`1,592,619` collected samples; `200,000` rich rows retained), and phase 2
