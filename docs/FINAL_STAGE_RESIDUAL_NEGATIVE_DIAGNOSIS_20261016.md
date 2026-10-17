@@ -1,5 +1,30 @@
 # TwoRoom final-stage residual 负结果诊断与 action-support 修复（2026-10-16）
 
+## PointMaze action-basis 审计修正（2026-10-17）
+
+上传前的输入隔离审计发现，新增的
+`frozen_latent_action_basis` feature mode 在 `_features` 的条件分支中错误落入
+`latent_plus_state_action` 路径，将 privileged `source_state_raw` 拼接到了输入。
+因此，开发 panel 上此前记录的 action-basis 正结果全部降级为无效 exploratory
+artifact，不能用于支持 frozen-latent transfer、HTSC useful release 或规划主张。
+
+代码已经修复为仅使用 frozen source latent 与 16 维、保序且
+outcome-independent 的动作基底，并新增输入宽度和 privileged-state 不泄漏测试。
+同时新增独立 external evaluator，强制：
+
+- development 与 external roots 完全不重叠；
+- external records 全部标记为 `external_outcome`；
+- 每个 root 具有相同 candidate IDs；
+- development 与 external panel 使用完全相同的 world-action sequences；
+- fitting 只读取 development train labels，风险 bound 只读取 development
+  calibration roots。
+
+冻结协议为
+`le-wm-main/experiments/decision_benchmark/protocols/pointmaze_action_basis_external_v1.json`。
+下一次有效裁决必须先用修复后的实现重跑 development panel，再在从未查看的
+PointMaze episodes `1900--1999` 上执行独立 GPU 评估。该结果产生前，正式状态为
+`implementation repaired; confirmatory evidence pending`。
+
 ## 结论先行
 
 本轮 CUDA 闭环复核没有证明 final-stage residual 能带来稳定规划收益。它确实改变了 CEM 的候选代价和最终动作，但在两个全新的 32-root panel 上，逐 episode success 向量与 frozen Gaussian baseline 完全一致。

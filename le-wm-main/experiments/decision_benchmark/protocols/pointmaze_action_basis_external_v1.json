@@ -1,0 +1,66 @@
+{
+  "schema": "pointmaze_action_basis_external_protocol.v1",
+  "status": "frozen_before_external_outcome_generation",
+  "scientific_role": "independent adjudication of the exploratory order-preserving action-basis repair",
+  "code_revision": "the immutable Git commit containing this protocol; record its SHA in every run manifest",
+  "development": {
+    "candidate_bank": "results/htsc_preprocessing_repair_20261016/shared_world_bank_rank32",
+    "roots": "previously inspected development roots only",
+    "fit_split": "train",
+    "calibration_split": "calibration"
+  },
+  "external_outcome": {
+    "episode_start_inclusive": 1900,
+    "episode_end_exclusive": 2000,
+    "split_assignment": "external_outcome_v1",
+    "required_root_disjointness": true,
+    "visual_source": "dataset_matched_renderer",
+    "renderer_calibration_start_inclusive": 1800,
+    "renderer_calibration_end_exclusive": 1816,
+    "visual_boundary": "calibration-only dataset-matched rendered RGB from recorded simulator states; not untouched raw sensor RGB",
+    "outcome_use": "evaluation only; forbidden for fitting, normalization, calibration, thresholding, model selection, or protocol revision"
+  },
+  "candidate_protocol": {
+    "candidate_family": "paired_order_v2",
+    "shared_world_action_bank": true,
+    "candidate_count": 16,
+    "steps": 20,
+    "required_bank_match": "candidate IDs and complete action sequences must exactly match the development bank"
+  },
+  "adapter": {
+    "feature_mode": "frozen_latent_action_basis",
+    "latent_rank": 32,
+    "action_basis": {
+      "width": 16,
+      "components": [
+        "four temporal-bin means",
+        "global mean",
+        "signed temporal moment",
+        "per-axis energy",
+        "per-axis total variation"
+      ]
+    },
+    "seeds": [8411, 8412, 8413, 8414, 8415],
+    "epochs": 300,
+    "device": "cuda",
+    "cpu_fallback": false,
+    "alpha": 0.1,
+    "bootstrap_samples": 2000
+  },
+  "primary_conjunction": {
+    "bank_only_paired_gain_ci_lower_gt": 0.0,
+    "shuffled_prediction_paired_gain_ci_lower_gt": 0.0,
+    "no_dynamics_paired_gain_ci_lower_gt": 0.0,
+    "new_candidate_paired_gain_ci_lower_gt": 0.0,
+    "matched_order_paired_gain_ci_lower_gt": 0.0,
+    "epsilon": 0.25,
+    "calibration_bound_lte": 0.25,
+    "release_rate_gte": 0.75,
+    "empirical_violation_rate_lte": 0.1
+  },
+  "decision_rule": {
+    "pass": "all primary conjunction clauses pass on roots 1900-1999 without protocol modification",
+    "fail": "retain the independent negative result and localize the failed clause; the same roots cannot be reused as confirmatory data after revision"
+  },
+  "claim_boundary": "Passing establishes an external fixed-bank realized-state consequence for an intervention-supervised latent/action adapter. It does not establish frozen-predictor dynamics, adaptive CEM, untouched raw-RGB planning, universal world modeling, or a universal commutator certificate."
+}

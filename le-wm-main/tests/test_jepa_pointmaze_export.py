@@ -6,6 +6,7 @@ import torch
 from experiments.theory_spectral_transfer.run_jepa_wm_pointmaze_temporal_eval import (
     build_pointmaze_datasets,
     canonical_pooled_latent,
+    rendered_observation,
 )
 
 
@@ -44,3 +45,20 @@ def test_pointmaze_export_leaves_visual_transform_to_model_encode(tmp_path) -> N
         },
     ]
     assert observations.transform is None
+
+
+def test_rendered_observation_stays_raw_and_uses_selected_states() -> None:
+    class FakeRenderer:
+        def render(self, state):
+            value = int(state[0])
+            return torch.full((4, 5, 3), value, dtype=torch.uint8).numpy()
+
+    states = torch.tensor(
+        [[0.0, 1.0, 2.0, 3.0], [10.0, 11.0, 12.0, 13.0], [20.0, 21.0, 22.0, 23.0]]
+    )
+    observation = rendered_observation(FakeRenderer(), states, [2, 1])
+
+    assert observation["visual"].shape == (2, 3, 4, 5)
+    assert observation["visual"].dtype == torch.float32
+    assert observation["visual"][0].unique().tolist() == [20.0]
+    assert torch.equal(observation["proprio"], states[[2, 1]])

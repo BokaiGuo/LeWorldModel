@@ -30,6 +30,32 @@ from experiments.decision_benchmark.task_contrast import (
 SEEDS = (8411, 8412, 8413, 8414, 8415)
 
 
+def action_sequence_basis(sequence: np.ndarray, bins: int = 4) -> np.ndarray:
+    """Compress an action sequence without discarding temporal order.
+
+    The flat-action MLP can memorize the small set of candidate templates.
+    This fixed, outcome-independent basis instead exposes coarse impulse timing,
+    signed temporal moments, energy, and variation.  Four segment means retain
+    the paired-order intervention used by the benchmark while reducing the
+    20-step PointMaze sequence from 40 to 16 action features.
+    """
+
+    actions = np.asarray(sequence, dtype=np.float64)
+    if actions.ndim != 2 or actions.shape[1] != 2:
+        raise ValueError("action sequence must have shape [steps, 2]")
+    if bins < 2 or actions.shape[0] < bins:
+        raise ValueError("action sequence basis requires at least one step per bin")
+    segments = np.stack(
+        [chunk.mean(axis=0) for chunk in np.array_split(actions, bins)], axis=0
+    ).reshape(-1)
+    time = np.linspace(-1.0, 1.0, actions.shape[0], dtype=np.float64)[:, None]
+    temporal_moment = np.mean(time * actions, axis=0)
+    mean = np.mean(actions, axis=0)
+    energy = np.mean(actions**2, axis=0)
+    variation = np.mean(np.abs(np.diff(actions, axis=0)), axis=0)
+    return np.concatenate([segments, mean, temporal_moment, energy, variation])
+
+
 class EffectMLP(nn.Module):
     def __init__(self, input_dim: int) -> None:
         super().__init__()
@@ -63,6 +89,7 @@ def _features(
 ) -> tuple[np.ndarray, np.ndarray, list[str], np.ndarray]:
     if feature_mode not in {
         "frozen_latent_action",
+        "frozen_latent_action_basis",
         "history_latent_action",
         "privileged_state_action",
         "latent_plus_state_action",
@@ -73,10 +100,15 @@ def _features(
         if row.get("source_latent_model") is None:
             raise ValueError("candidate record lacks source_latent_model; regenerate the bank")
         source = np.asarray(row["source_latent_model"], dtype=np.float64)
-        action = np.asarray(row["action_sequence"], dtype=np.float64).reshape(-1)
+        action_sequence = np.asarray(row["action_sequence"], dtype=np.float64)
+        action = (
+            action_sequence_basis(action_sequence)
+            if feature_mode == "frozen_latent_action_basis"
+            else action_sequence.reshape(-1)
+        )
         realized = np.asarray(arrays[_array_key(row["realized_terminal_state_ref"])], dtype=np.float64)
         source_state = np.asarray(row["source_state_raw"], dtype=np.float64)
-        if feature_mode == "frozen_latent_action":
+        if feature_mode in {"frozen_latent_action", "frozen_latent_action_basis"}:
             context = source
         elif feature_mode == "history_latent_action":
             if row.get("source_history_model") is None:
@@ -666,6 +698,7 @@ def run(
             "labels": "offline simulator terminal XY effect",
             "runtime_input": {
                 "frozen_latent_action": "frozen source latent plus complete action sequence",
+                "frozen_latent_action_basis": "frozen source latent plus fixed order-preserving action-sequence basis",
                 "history_latent_action": "causal frozen latent history up to the decision point plus complete action sequence",
                 "privileged_state_action": "privileged source simulator state plus complete action sequence (diagnostic upper bound only)",
                 "latent_plus_state_action": "frozen source latent plus privileged source simulator state plus complete action sequence (diagnostic upper bound only)",
@@ -695,7 +728,7 @@ def main() -> None:
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument(
         "--feature-mode",
-        choices=("frozen_latent_action", "history_latent_action", "privileged_state_action", "latent_plus_state_action"),
+        choices=("frozen_latent_action", "frozen_latent_action_basis", "history_latent_action", "privileged_state_action", "latent_plus_state_action"),
         default="frozen_latent_action",
     )
     args = parser.parse_args()

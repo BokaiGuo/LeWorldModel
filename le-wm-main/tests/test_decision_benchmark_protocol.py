@@ -30,6 +30,9 @@ def test_candidate_bank_changes_sequences_not_duration_and_split_is_root_level()
     assert [_split_for_index(i, "distance_balanced_v1") for i in range(5)] == [
         "outcome", "train", "train", "calibration", "train"
     ]
+    assert [_split_for_index(i, "external_outcome_v1") for i in range(5)] == [
+        "external_outcome"
+    ] * 5
 
 
 def test_hash_random_split_is_exact_deterministic_and_order_invariant():

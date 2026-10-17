@@ -168,6 +168,8 @@ def _split_for_index(index: int, assignment: str = "legacy_v1") -> str:
         # root from each ordered block for outcome prevents a support collapse
         # caused by assigning all near-goal roots to train/calibration.
         return ("outcome", "train", "train", "calibration", "train")[index % 5]
+    if assignment == "external_outcome_v1":
+        return "external_outcome"
     raise ValueError(f"unsupported split assignment: {assignment}")
 
 
@@ -474,7 +476,7 @@ def generate(
         "instance_count": len(source_rows),
         "split_instance_counts": {
             split: len({item["instance_id"] for item in all_records if item["split"] == split})
-            for split in ("train", "calibration", "outcome")
+            for split in sorted({str(item["split"]) for item in all_records})
         },
         "arrays": str(arrays_path.resolve()),
         "candidate_dataset": str((output / "candidate_dataset.json").resolve()),
@@ -500,7 +502,7 @@ def main() -> None:
     parser.add_argument(
         "--split-assignment",
         default="legacy_v1",
-        choices=("legacy_v1", "distance_balanced_v1", "hash_random_v1", "checkpoint_protocol_v1"),
+        choices=("legacy_v1", "distance_balanced_v1", "hash_random_v1", "checkpoint_protocol_v1", "external_outcome_v1"),
     )
     parser.add_argument("--source-window-start", type=int, default=0)
     parser.add_argument("--history-windows", type=int, default=1)

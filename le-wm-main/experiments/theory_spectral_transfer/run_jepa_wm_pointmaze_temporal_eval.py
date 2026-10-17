@@ -16,6 +16,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 import yaml
 
@@ -55,6 +56,17 @@ def parse_args() -> argparse.Namespace:
                    help="Declared action protocol used for matched-model strata.")
     p.add_argument("--save-enriched-records", action="store_true",
                    help="Save action/state/source-latent records for external metrics.")
+    p.add_argument(
+        "--visual-source",
+        choices=("dataset", "dataset_matched_renderer"),
+        default="dataset",
+        help=(
+            "Use stored RGB episodes or render states with the calibration-only "
+            "dataset-matched RGB renderer used by online PointMaze planning."
+        ),
+    )
+    p.add_argument("--renderer-calibration-start", type=int, default=1800)
+    p.add_argument("--renderer-calibration-end", type=int, default=1816)
     args = p.parse_args()
     if args.windows_per_episode < 1 or args.window_stride < 1:
         p.error("windows-per-episode and window-stride must be positive")
@@ -141,6 +153,19 @@ def build_pointmaze_datasets(dataset_cls, dataset_root: Path):
     return stats_dataset, observation_dataset
 
 
+def rendered_observation(renderer, states: torch.Tensor, frame_ids: list[int]) -> dict[str, torch.Tensor]:
+    """Build raw 0--255 CHW observations from simulator states.
+
+    No image transform is applied here.  As with stored dataset observations,
+    ``model.encode`` remains the sole owner of visual preprocessing.
+    """
+
+    selected = torch.as_tensor(states)[frame_ids].detach().cpu()
+    images = np.stack([renderer.render(state.numpy()) for state in selected], axis=0)
+    visual = torch.from_numpy(images).permute(0, 3, 1, 2).to(torch.float32)
+    return {"visual": visual, "proprio": selected.to(torch.float32)}
+
+
 def main() -> None:
     args = parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -184,6 +209,27 @@ def main() -> None:
     stats_dataset, dataset = build_pointmaze_datasets(
         PointMazeDataset, args.dataset_root
     )
+    renderer = None
+    renderer_calibration_episodes: list[int] = []
+    if args.visual_source == "dataset_matched_renderer":
+        from experiments.run_live_pointmaze_planning import (
+            DatasetMatchedRenderer,
+            fit_visual_calibration,
+            load_episode,
+        )
+
+        renderer_calibration_episodes = list(range(
+            int(args.renderer_calibration_start), int(args.renderer_calibration_end)
+        ))
+        if not renderer_calibration_episodes:
+            raise ValueError("renderer calibration range must be non-empty")
+        calibration = fit_visual_calibration(
+            args.dataset_root, renderer_calibration_episodes
+        )
+        calibration_images, _ = load_episode(
+            args.dataset_root, renderer_calibration_episodes[0]
+        )
+        renderer = DatasetMatchedRenderer.from_episode(calibration_images, calibration)
     preprocessor = Preprocessor(
         stats_dataset.action_mean,
         stats_dataset.action_std,
@@ -241,8 +287,11 @@ def main() -> None:
             obs_batch = []
             for episode, window_start in window_batch:
                 frame_ids = [window_start + 5 * i for i in range(context_len + max_h)]
-                obs, _, _, _, _ = dataset.get_frames(episode, frame_ids)
-                obs["visual"] = obs["visual"] * 255.0
+                if renderer is None:
+                    obs, _, _, _, _ = dataset.get_frames(episode, frame_ids)
+                    obs["visual"] = obs["visual"] * 255.0
+                else:
+                    obs = rendered_observation(renderer, dataset.states[episode], frame_ids)
                 obs_batch.append(obs)
             obs = {k: torch.stack([item[k] for item in obs_batch]).to(device) for k in obs_batch[0]}
             encoded = model.encode(obs)
@@ -373,6 +422,13 @@ def main() -> None:
             "split_mode": args.split_mode,
             "visual_preprocessing": "raw_0_255_then_single_model_encode_transform",
             "preprocessing_owner": "model.encode",
+            "visual_source": args.visual_source,
+            "renderer_calibration_episodes": renderer_calibration_episodes,
+            "renderer_boundary": (
+                "calibration-only dataset-matched rendering from recorded simulator states; "
+                "not untouched raw sensor RGB"
+                if renderer is not None else None
+            ),
             "checkpoint_epoch": int(checkpoint.get("epoch", -1)),
             "checkpoint_sha256": sha256_file(args.checkpoint),
             "dataset_archive_sha256": sha256_file(args.dataset_root.parent.parent / "point_maze.zip"),
