@@ -1109,6 +1109,20 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   the matched 24-block comparison recorded below and are not used for a
   finite-horizon claim.
 
+- PointMaze planner-budget repair (2026-10-17): the matched 24-block panel
+  established a shared fixed-bank ceiling of `23/32` for both the RGB
+  visual-dynamics policy and the privileged one-step candidate oracle. An
+  expanded-bank exact planner remained `23/32` at 24 blocks, but reached
+  `32/32` with a predeclared 40-block execution budget (mean final distance
+  `0.1141`). With the same 40-block budget, RGB visual-dynamics,
+  effect-adapter, and effect-adapter+HTSC each reached `32/32` on roots
+  `1900--1931`. On unopened roots `1932--1963`, all three again reached
+  `32/32`; visual-dynamics had the lowest mean final distance (`0.1411`
+  versus `0.1536` and `0.1613`). This repairs the earlier budget-induced
+  negative result but does not show an HTSC gain over the strong visual
+  baseline. The default PointMaze budget is now 40 blocks. Full boundary and
+  artifacts: `docs/POINTMAZE_BUDGET_REPAIR_20261017.md`.
+
 - World-fixed action-bank repair and bilinear decision adapter (2026-10-16):
   canonical Bank-only/No-dynamics/Shuffled controls showed that the old
   `+0.1090` indexed-action gain was a goal-relative bank shortcut. A shared
