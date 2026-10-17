@@ -94,7 +94,10 @@ def parse_args() -> argparse.Namespace:
         help="optional disjoint comma-separated episodes used only to select gate tolerance",
     )
     parser.add_argument("--max-test-episodes", type=int, default=None)
-    parser.add_argument("--max-blocks", type=int, default=12)
+    parser.add_argument(
+        "--max-blocks", type=int, default=40,
+        help="closed-loop execution budget; 40 is the calibrated PointMaze budget",
+    )
     parser.add_argument("--directions", type=int, default=8)
     parser.add_argument("--magnitudes", type=float, nargs="+", default=[0.25, 0.50, 0.75, 1.00])
     parser.add_argument("--probe-blocks", type=int, default=1)
@@ -119,6 +122,10 @@ def parse_args() -> argparse.Namespace:
         help="maximum calibrated fixed-bank regret bound for exploratory HTSC release",
     )
     parser.add_argument(
+        "--effect-visual-tolerance", type=float, default=0.10,
+        help="maximum visual-dynamics regret allowed for the consistency gate",
+    )
+    parser.add_argument(
         "--projection-min-alpha", type=float, default=0.25,
         help="minimum retained WM-action fraction for wm_rgb_projected_guarded",
     )
@@ -131,6 +138,7 @@ def parse_args() -> argparse.Namespace:
             "random", "visual_greedy", "visual_dynamics", "wm_rgb",
             "wm_rgb_guarded", "wm_rgb_projected", "wm_rgb_projected_guarded",
             "effect_adapter_rgb", "effect_adapter_rgb_htsc",
+            "effect_adapter_rgb_htsc_consistency",
             "ground_truth_candidate_oracle",
             "perfect_dynamics_mpc",
         ),
@@ -941,6 +949,7 @@ def choose_action(
     oracle_beam_width: int = 8,
     effect_policy: OnlineEffectPolicy | None = None,
     effect_regret_tolerance: float = 0.25,
+    effect_visual_tolerance: float = 0.10,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     current_center = green_center(current_rgb)
     goal_center = green_center(goal_rgb)
@@ -1008,7 +1017,10 @@ def choose_action(
             action_mean, action_std, target,
         )
         index = int(np.argmin(scores))
-    elif method in {"effect_adapter_rgb", "effect_adapter_rgb_htsc"}:
+    elif method in {
+        "effect_adapter_rgb", "effect_adapter_rgb_htsc",
+        "effect_adapter_rgb_htsc_consistency",
+    }:
         if effect_policy is None:
             raise ValueError(f"{method} requires --effect-policy-checkpoint")
         effect_report = effect_policy_candidate_scores(
@@ -1052,7 +1064,7 @@ def choose_action(
             "predicted_terminal": np.asarray(effect_report["terminals"])[effect_index].tolist(),
         })
         index = effect_index
-        if method == "effect_adapter_rgb_htsc" and not released:
+        if method in {"effect_adapter_rgb_htsc", "effect_adapter_rgb_htsc_consistency"} and not released:
             dynamics_scores = visual_dynamics_scores(
                 current, velocity, target, actions, dynamics, kp, kv,
             )
@@ -1067,6 +1079,23 @@ def choose_action(
                     ) else "effect_policy_regret_bound_failed"
                 ),
             })
+        elif method == "effect_adapter_rgb_htsc_consistency":
+            dynamics_scores = visual_dynamics_scores(
+                current, velocity, target, actions, dynamics, kp, kv,
+            )
+            dynamics_index = int(np.argmin(dynamics_scores))
+            dynamics_regret = float(dynamics_scores[effect_index] - dynamics_scores[dynamics_index])
+            gate_info.update({
+                "dynamics_selected_index": dynamics_index,
+                "dynamics_regret_of_effect": dynamics_regret,
+                "effect_visual_tolerance": float(effect_visual_tolerance),
+            })
+            if dynamics_regret > float(effect_visual_tolerance):
+                index = dynamics_index
+                gate_info.update({
+                    "fallback_used": True,
+                    "fallback_reason": "effect_visual_consistency_failed",
+                })
         scores = effect_scores
     elif method == "wm_rgb_guarded":
         wm_scores = model_candidate_scores(
@@ -1179,6 +1208,7 @@ def run_episode(
     fixed_renderer: DatasetMatchedRenderer | None = None,
     effect_policy: OnlineEffectPolicy | None = None,
     effect_regret_tolerance: float = 0.25,
+    effect_visual_tolerance: float = 0.10,
 ) -> dict[str, Any]:
     if fixed_renderer is None:
         images, states = load_episode(dataset_root, episode)
@@ -1233,6 +1263,7 @@ def run_episode(
                 oracle_depth=oracle_depth, oracle_beam_width=oracle_beam_width,
                 effect_policy=effect_policy,
                 effect_regret_tolerance=effect_regret_tolerance,
+                effect_visual_tolerance=effect_visual_tolerance,
             )
         except ValueError as exc:
             detector_failures += 1
@@ -1414,7 +1445,10 @@ def main() -> None:
         model, calibration, dataset_root, calibration_episodes,
         args.calibration_frames, args.batch_size,
     )
-    effect_methods = {"effect_adapter_rgb", "effect_adapter_rgb_htsc"}
+    effect_methods = {
+        "effect_adapter_rgb", "effect_adapter_rgb_htsc",
+        "effect_adapter_rgb_htsc_consistency",
+    }
     requested_effect_methods = effect_methods & set(args.methods)
     if requested_effect_methods and args.effect_policy_checkpoint is None:
         raise ValueError(
@@ -1445,6 +1479,7 @@ def main() -> None:
                 fixed_renderer=test_renderer,
                 effect_policy=effect_policy,
                 effect_regret_tolerance=args.effect_regret_tolerance,
+                effect_visual_tolerance=args.effect_visual_tolerance,
             ) for index, episode in enumerate(gate_calibration_episodes)]
             tolerance_candidates.append({
                 "tolerance": float(tolerance),
@@ -1474,6 +1509,7 @@ def main() -> None:
                 fixed_renderer=test_renderer,
                 effect_policy=effect_policy,
                 effect_regret_tolerance=args.effect_regret_tolerance,
+                effect_visual_tolerance=args.effect_visual_tolerance,
             ))
     aggregates = {method: _aggregate([row for row in rows if row["method"] == method]) for method in methods}
     privileged_methods = [method for method in methods if method in PRIVILEGED_METHODS]
@@ -1519,6 +1555,7 @@ def main() -> None:
                 else str(args.effect_policy_checkpoint.resolve())
             ),
             "effect_regret_tolerance": float(args.effect_regret_tolerance),
+            "effect_visual_tolerance": float(args.effect_visual_tolerance),
             "effect_policy_gate_boundary": (
                 None if effect_policy is None else
                 "exploratory online support-and-bound gate; fixed-bank calibration does "

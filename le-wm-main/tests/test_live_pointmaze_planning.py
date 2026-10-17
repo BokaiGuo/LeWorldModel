@@ -198,6 +198,84 @@ def test_guarded_world_model_falls_back_when_dynamics_regret_exceeds_tolerance(m
     assert gate["fallback_reason"] == "wm_action_outside_calibration_dynamics_tolerance"
 
 
+def test_effect_consistency_gate_falls_back_on_visual_disagreement(monkeypatch) -> None:
+    """A released effect rank must still abstain when visual dynamics rejects it."""
+
+    def marker(x: int, y: int) -> np.ndarray:
+        image = np.zeros((16, 16, 3), dtype=np.uint8)
+        image[y - 1 : y + 2, x - 1 : x + 2] = [20, 180, 20]
+        return image
+
+    current_rgb = marker(2, 2)
+    goal_rgb = marker(10, 10)
+    identity = np.asarray([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+    calibration = VisualCalibration(
+        pixel_to_position=identity,
+        state_to_pixel=identity,
+        pixel_delta_to_velocity=identity,
+        position_rmse=np.zeros(2),
+        velocity_rmse=np.zeros(2),
+        calibration_episodes=(0,),
+    )
+    dynamics = VisualDynamicsCalibration(
+        position_delta_weights=np.zeros((5, 2)),
+        velocity_weights=np.zeros((5, 2)),
+        position_delta_rmse=np.zeros(2),
+        velocity_rmse=np.zeros(2),
+        calibration_episodes=(0,),
+    )
+
+    class Policy:
+        latent_support = {"threshold": 1.0}
+        action_support = {"threshold": 1.0}
+        regret_calibration = {"status": "ok", "bound": 0.01}
+
+    monkeypatch.setattr(
+        "experiments.run_live_pointmaze_planning.effect_policy_candidate_scores",
+        lambda *args, **kwargs: {
+            "costs": np.asarray([0.0] + [1.0] * 7),
+            "effects": np.zeros((8, 2)),
+            "terminals": np.zeros((8, 2)),
+            "action_support_distances": np.zeros(8),
+            "latent_support_distance": 0.0,
+        },
+    )
+    monkeypatch.setattr(
+        "experiments.run_live_pointmaze_planning.visual_dynamics_scores",
+        lambda *args, **kwargs: np.asarray([1.0, 0.0] + [2.0] * 6),
+    )
+
+    _action, decision = choose_action(
+        "effect_adapter_rgb_htsc_consistency",
+        None,
+        None,
+        current_rgb,
+        goal_rgb,
+        [current_rgb, current_rgb],
+        [np.zeros(4), np.zeros(4)],
+        calibration,
+        np.zeros(2),
+        np.ones(2),
+        8,
+        [0.25],
+        dynamics,
+        None,
+        "direct",
+        0.8,
+        0.2,
+        0.0,
+        np.random.default_rng(0),
+        effect_policy=Policy(),
+        effect_visual_tolerance=0.10,
+    )
+
+    gate = decision["action_transfer_gate"]
+    assert gate["effect_policy_released"] is True
+    assert gate["fallback_used"] is True
+    assert gate["fallback_reason"] == "effect_visual_consistency_failed"
+    assert decision["selected_index"] == 1
+
+
 def test_action_projection_keeps_identical_supported_endpoint() -> None:
     dynamics = VisualDynamicsCalibration(
         position_delta_weights=np.asarray(
