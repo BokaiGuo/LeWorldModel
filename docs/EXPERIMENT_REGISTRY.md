@@ -390,6 +390,17 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   ties the baseline. This closes the candidate-support-only explanation and
   leaves goal-conditioned contact action ranking as the primary Cube boundary.
 
+- Cube goal-conditioned macro-ranking follow-up (2026-10-17): a root-disjoint
+  RGB macro audit tested a 25-candidate bank with 8 directions, three approach
+  durations, and 40-step macros. It underperformed the predeclared short
+  contact protocol (`mean regret=0.0202 m`, oracle agreement `53.1%`). A fresh
+  40-calibration/32-held-out replication of the short 20-step, 4-direction
+  bank reduced regret to `0.00258 m` and raised oracle agreement to `93.75%`.
+  This makes contact phase and macro duration an identifiable design condition,
+  not evidence that larger candidate banks are better. The result is an
+  offline RGB mechanism audit and has not been promoted to online Cube
+  planning.
+
 - Full TwoRoom CUDA latent/planning alignment is complete. The phase-1
   artifact is `results/tworoom_full_spectral_cuda_20261015/full_latents/`
   (`1,592,619` collected samples; `200,000` rich rows retained), and phase 2
