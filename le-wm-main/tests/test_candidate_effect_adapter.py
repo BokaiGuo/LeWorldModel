@@ -53,3 +53,25 @@ def test_frozen_latent_action_basis_does_not_include_privileged_state() -> None:
     assert np.allclose(features[0, :3], [1.0, 2.0, 3.0])
     assert not np.isin([100.0, 200.0, 300.0, 400.0], features).any()
     assert np.allclose(effects, [[1.0, 1.0]])
+
+
+def test_history_latent_action_basis_uses_history_without_privileged_state() -> None:
+    records = [{
+        "instance_id": "root",
+        "source_latent_model": [3.0, 4.0],
+        "source_history_model": [1.0, 2.0, 3.0, 4.0],
+        "source_state_raw": [100.0, 200.0, 300.0, 400.0],
+        "goal_raw": [0.0, 0.0],
+        "action_sequence": np.zeros((20, 2)).tolist(),
+        "realized_terminal_state_ref": "arrays.npz::terminal",
+    }]
+    arrays = {"terminal": np.asarray([101.0, 201.0, 300.0, 400.0])}
+
+    features, effects, _, _ = _features(
+        records, arrays, feature_mode="history_latent_action_basis"
+    )
+
+    assert features.shape == (1, 4 + 16)
+    assert np.allclose(features[0, :4], [1.0, 2.0, 3.0, 4.0])
+    assert not np.isin([100.0, 200.0, 300.0, 400.0], features).any()
+    assert np.allclose(effects, [[1.0, 1.0]])

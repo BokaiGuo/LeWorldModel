@@ -31,6 +31,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from experiments.decision_benchmark.fit_pointmaze_online_effect_policy import (
+    OnlineEffectPolicy,
+)
+
 GOAL_STATE = np.asarray([1.2, 1.2], dtype=np.float64)
 MARKER_RADIUS = 9
 FRAME_STRIDE = 5
@@ -62,6 +66,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", type=Path, default=PROJECT_ROOT.parent)
     parser.add_argument("--dataset-root", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument(
+        "--effect-policy-checkpoint",
+        type=Path,
+        default=None,
+        help="frozen train/calibration-only action-effect ensemble for repaired policies",
+    )
     parser.add_argument("--dinov2-source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--calibration-start", type=int, default=1800)
@@ -105,6 +115,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kv", type=float, default=0.20)
     parser.add_argument("--wm-dynamics-tolerance", type=float, default=0.10)
     parser.add_argument(
+        "--effect-regret-tolerance", type=float, default=0.25,
+        help="maximum calibrated fixed-bank regret bound for exploratory HTSC release",
+    )
+    parser.add_argument(
         "--projection-min-alpha", type=float, default=0.25,
         help="minimum retained WM-action fraction for wm_rgb_projected_guarded",
     )
@@ -116,6 +130,7 @@ def parse_args() -> argparse.Namespace:
         choices=(
             "random", "visual_greedy", "visual_dynamics", "wm_rgb",
             "wm_rgb_guarded", "wm_rgb_projected", "wm_rgb_projected_guarded",
+            "effect_adapter_rgb", "effect_adapter_rgb_htsc",
             "ground_truth_candidate_oracle",
             "perfect_dynamics_mpc",
         ),
@@ -702,6 +717,30 @@ def model_candidate_scores(
     return distances[:, 0] * 0.25 + distances[:, 1] * 0.25 + distances[:, 2] * 0.50
 
 
+def effect_policy_candidate_scores(
+    model: Any,
+    policy: OnlineEffectPolicy,
+    context_images: list[np.ndarray],
+    context_proprios: list[np.ndarray],
+    current: np.ndarray,
+    target: np.ndarray,
+    actions: np.ndarray,
+) -> dict[str, Any]:
+    """Score repeated-pulse candidates from current RGB without state access."""
+
+    context = _make_context(context_images, context_proprios)
+    with torch.no_grad():
+        encoded = model.encode(context)
+        pooled = np.stack([
+            _pool_visual(encoded["visual"][:, index]).detach().cpu().numpy()[0]
+            for index in range(len(context_images))
+        ])
+    projection = policy.project_history(pooled)
+    report = policy.score(projection, current, target, actions)
+    report["source_projection"] = projection
+    return report
+
+
 def visual_dynamics_scores(
     current: np.ndarray,
     velocity: np.ndarray,
@@ -900,6 +939,8 @@ def choose_action(
     runtime: LegacyPointMazeRuntime | None = None,
     oracle_depth: int = 4,
     oracle_beam_width: int = 8,
+    effect_policy: OnlineEffectPolicy | None = None,
+    effect_regret_tolerance: float = 0.25,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     current_center = green_center(current_rgb)
     goal_center = green_center(goal_rgb)
@@ -967,6 +1008,66 @@ def choose_action(
             action_mean, action_std, target,
         )
         index = int(np.argmin(scores))
+    elif method in {"effect_adapter_rgb", "effect_adapter_rgb_htsc"}:
+        if effect_policy is None:
+            raise ValueError(f"{method} requires --effect-policy-checkpoint")
+        effect_report = effect_policy_candidate_scores(
+            model, effect_policy, context_images, context_proprios,
+            current, target, actions,
+        )
+        effect_scores = np.asarray(effect_report["costs"], dtype=np.float64)
+        effect_index = int(np.argmin(effect_scores))
+        latent_distance = float(effect_report["latent_support_distance"])
+        action_distance = float(effect_report["action_support_distances"][effect_index])
+        latent_threshold = float(effect_policy.latent_support["threshold"])
+        action_threshold = float(effect_policy.action_support["threshold"])
+        calibration = effect_policy.regret_calibration
+        bound = calibration.get("bound")
+        state_support_passed = latent_distance <= latent_threshold
+        action_support_passed = action_distance <= action_threshold
+        bound_passed = (
+            calibration.get("status") == "ok"
+            and bound is not None
+            and float(bound) <= float(effect_regret_tolerance)
+        )
+        released = bool(state_support_passed and action_support_passed and bound_passed)
+        gate_info.update({
+            "effect_selected_index": effect_index,
+            "effect_policy_released": released,
+            "state_support_passed": bool(state_support_passed),
+            "state_support_distance": latent_distance,
+            "state_support_threshold": latent_threshold,
+            "action_support_passed": bool(action_support_passed),
+            "action_support_distance": action_distance,
+            "action_support_threshold": action_threshold,
+            "calibrated_regret_bound": None if bound is None else float(bound),
+            "effect_regret_tolerance": float(effect_regret_tolerance),
+            "calibration_status": calibration.get("status"),
+            "candidate_bank_mode": "rgb_state_conditioned_repeated_pulse",
+            "certificate_boundary": (
+                "exploratory support-and-bound gate; the calibrated bound is for the "
+                "development fixed bank and does not certify this state-conditioned bank"
+            ),
+            "predicted_effect": np.asarray(effect_report["effects"])[effect_index].tolist(),
+            "predicted_terminal": np.asarray(effect_report["terminals"])[effect_index].tolist(),
+        })
+        index = effect_index
+        if method == "effect_adapter_rgb_htsc" and not released:
+            dynamics_scores = visual_dynamics_scores(
+                current, velocity, target, actions, dynamics, kp, kv,
+            )
+            dynamics_index = int(np.argmin(dynamics_scores))
+            index = dynamics_index
+            gate_info.update({
+                "dynamics_selected_index": dynamics_index,
+                "fallback_used": True,
+                "fallback_reason": (
+                    "effect_policy_support_failed" if not (
+                        state_support_passed and action_support_passed
+                    ) else "effect_policy_regret_bound_failed"
+                ),
+            })
+        scores = effect_scores
     elif method == "wm_rgb_guarded":
         wm_scores = model_candidate_scores(
             model, readout, context_images, context_proprios, actions,
@@ -1076,6 +1177,8 @@ def run_episode(
     oracle_depth: int = 4,
     oracle_beam_width: int = 8,
     fixed_renderer: DatasetMatchedRenderer | None = None,
+    effect_policy: OnlineEffectPolicy | None = None,
+    effect_regret_tolerance: float = 0.25,
 ) -> dict[str, Any]:
     if fixed_renderer is None:
         images, states = load_episode(dataset_root, episode)
@@ -1128,6 +1231,8 @@ def run_episode(
                 directions, magnitudes, dynamics, maze_map, planner_map, kp, kv,
                 wm_dynamics_tolerance, rng, projection_min_alpha, runtime=runtime,
                 oracle_depth=oracle_depth, oracle_beam_width=oracle_beam_width,
+                effect_policy=effect_policy,
+                effect_regret_tolerance=effect_regret_tolerance,
             )
         except ValueError as exc:
             detector_failures += 1
@@ -1196,6 +1301,10 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if "action_transfer_gate" in trace
     ]
     fallback_count = sum(bool(item.get("fallback_used")) for item in gate_decisions)
+    effect_decisions = [
+        item for item in gate_decisions if item.get("effect_selected_index") is not None
+    ]
+    effect_released = sum(bool(item.get("effect_policy_released")) for item in effect_decisions)
     render_errors = [
         float(row["renderer_initial_mean_abs_error"])
         for row in rows
@@ -1215,6 +1324,10 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "gate_decisions": len(gate_decisions),
         "gate_fallback_rate": float(fallback_count / len(gate_decisions)) if gate_decisions else 0.0,
+        "effect_gate_decisions": len(effect_decisions),
+        "effect_release_rate": (
+            float(effect_released / len(effect_decisions)) if effect_decisions else None
+        ),
     }
 
 
@@ -1242,6 +1355,8 @@ def main() -> None:
     args = parse_args()
     if not 0.0 <= float(args.projection_min_alpha) <= 1.0:
         raise ValueError("projection-min-alpha must be in [0, 1]")
+    if float(args.effect_regret_tolerance) < 0.0:
+        raise ValueError("effect-regret-tolerance must be non-negative")
     device = require_cuda()
     dataset_root = args.dataset_root.resolve()
     calibration_episodes = parse_episode_list(args.calibration_episodes, "calibration episodes")
@@ -1299,6 +1414,18 @@ def main() -> None:
         model, calibration, dataset_root, calibration_episodes,
         args.calibration_frames, args.batch_size,
     )
+    effect_methods = {"effect_adapter_rgb", "effect_adapter_rgb_htsc"}
+    requested_effect_methods = effect_methods & set(args.methods)
+    if requested_effect_methods and args.effect_policy_checkpoint is None:
+        raise ValueError(
+            f"methods {sorted(requested_effect_methods)} require --effect-policy-checkpoint"
+        )
+    effect_policy = None
+    if args.effect_policy_checkpoint is not None:
+        print("[PointMaze live] loading frozen action-effect ensemble on CUDA")
+        effect_policy = OnlineEffectPolicy.load(
+            args.effect_policy_checkpoint.resolve(), device,
+        )
     selected_tolerance = float(args.wm_dynamics_tolerance)
     gate_calibration_report: dict[str, Any] | None = None
     if gate_calibration_episodes is not None:
@@ -1316,6 +1443,8 @@ def main() -> None:
                 args.seed + 100000 + index, args.projection_min_alpha,
                 args.oracle_depth, args.oracle_beam_width,
                 fixed_renderer=test_renderer,
+                effect_policy=effect_policy,
+                effect_regret_tolerance=args.effect_regret_tolerance,
             ) for index, episode in enumerate(gate_calibration_episodes)]
             tolerance_candidates.append({
                 "tolerance": float(tolerance),
@@ -1343,6 +1472,8 @@ def main() -> None:
                 args.seed + index, args.projection_min_alpha,
                 args.oracle_depth, args.oracle_beam_width,
                 fixed_renderer=test_renderer,
+                effect_policy=effect_policy,
+                effect_regret_tolerance=args.effect_regret_tolerance,
             ))
     aggregates = {method: _aggregate([row for row in rows if row["method"] == method]) for method in methods}
     privileged_methods = [method for method in methods if method in PRIVILEGED_METHODS]
@@ -1383,6 +1514,16 @@ def main() -> None:
             "success_radius": args.success_radius,
             "test_visual_source": args.test_visual_source,
             "test_rgb_files_required": args.test_visual_source == "stored_episode",
+            "effect_policy_checkpoint": (
+                None if args.effect_policy_checkpoint is None
+                else str(args.effect_policy_checkpoint.resolve())
+            ),
+            "effect_regret_tolerance": float(args.effect_regret_tolerance),
+            "effect_policy_gate_boundary": (
+                None if effect_policy is None else
+                "exploratory online support-and-bound gate; fixed-bank calibration does "
+                "not provide coverage for the state-conditioned repeated-pulse bank"
+            ),
             "gate_calibration": gate_calibration_report,
         },
         "calibration": {

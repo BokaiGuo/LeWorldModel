@@ -91,6 +91,7 @@ def _features(
         "frozen_latent_action",
         "frozen_latent_action_basis",
         "history_latent_action",
+        "history_latent_action_basis",
         "privileged_state_action",
         "latent_plus_state_action",
     }:
@@ -103,14 +104,14 @@ def _features(
         action_sequence = np.asarray(row["action_sequence"], dtype=np.float64)
         action = (
             action_sequence_basis(action_sequence)
-            if feature_mode == "frozen_latent_action_basis"
+            if feature_mode in {"frozen_latent_action_basis", "history_latent_action_basis"}
             else action_sequence.reshape(-1)
         )
         realized = np.asarray(arrays[_array_key(row["realized_terminal_state_ref"])], dtype=np.float64)
         source_state = np.asarray(row["source_state_raw"], dtype=np.float64)
         if feature_mode in {"frozen_latent_action", "frozen_latent_action_basis"}:
             context = source
-        elif feature_mode == "history_latent_action":
+        elif feature_mode in {"history_latent_action", "history_latent_action_basis"}:
             if row.get("source_history_model") is None:
                 raise ValueError("candidate record lacks source_history_model; regenerate the bank")
             context = np.asarray(row["source_history_model"], dtype=np.float64)
@@ -143,8 +144,37 @@ def _fit_predict(
     epochs: int,
     device_name: str = "auto",
 ) -> tuple[np.ndarray, dict[str, Any]]:
+    model, metadata = fit_effect_model(
+        train_x, train_y, seed=seed, epochs=epochs, device_name=device_name,
+    )
+    prediction = predict_effect_model(model, metadata, eval_x)
+    return prediction, metadata
+
+
+def fit_effect_model(
+    train_x: np.ndarray,
+    train_y: np.ndarray,
+    *,
+    seed: int,
+    epochs: int,
+    device_name: str = "auto",
+) -> tuple[EffectMLP, dict[str, Any]]:
+    """Fit one deterministic effect predictor and retain deployable state.
+
+    The original offline evaluator returned predictions only, which made the
+    learned repair impossible to exercise in the online planner.  Keeping the
+    model and train-only normalization here preserves the exact fitting path
+    while allowing a separately frozen deployment artifact.
+    """
+
     _seed(seed)
     device = _resolve_device(device_name)
+    train_x = np.asarray(train_x, dtype=np.float32)
+    train_y = np.asarray(train_y, dtype=np.float32)
+    if train_x.ndim != 2 or train_y.ndim != 2 or len(train_x) != len(train_y):
+        raise ValueError("train_x and train_y must be aligned rank-two arrays")
+    if train_y.shape[1] != 2 or not np.isfinite(train_x).all() or not np.isfinite(train_y).all():
+        raise ValueError("effect training arrays must be finite with two output dimensions")
     x_mean = train_x.mean(axis=0)
     x_scale = np.maximum(train_x.std(axis=0), 1e-3)
     y_mean = train_y.mean(axis=0)
@@ -158,18 +188,38 @@ def _fit_predict(
         loss = torch.mean((model(x) - y) ** 2)
         loss.backward()
         optimizer.step()
-    with torch.inference_mode():
-        pred = model(torch.as_tensor(
-            (eval_x - x_mean) / x_scale, dtype=torch.float32, device=device,
-        )).cpu().numpy()
-    pred = pred * y_scale + y_mean
-    return pred, {
+    return model, {
         "x_mean": x_mean.tolist(), "x_scale": x_scale.tolist(),
         "y_mean": y_mean.tolist(), "y_scale": y_scale.tolist(),
         "epochs": int(epochs),
+        "seed": int(seed),
+        "input_dim": int(train_x.shape[1]),
         "parameter_count": int(sum(p.numel() for p in model.parameters())),
         "device": str(device),
     }
+
+
+def predict_effect_model(
+    model: EffectMLP,
+    metadata: dict[str, Any],
+    values: np.ndarray,
+) -> np.ndarray:
+    """Run one fitted effect model with its train-only normalization."""
+
+    array = np.asarray(values, dtype=np.float32)
+    if array.ndim != 2 or array.shape[1] != int(metadata["input_dim"]):
+        raise ValueError("effect-model input width does not match its frozen metadata")
+    x_mean = np.asarray(metadata["x_mean"], dtype=np.float32)
+    x_scale = np.asarray(metadata["x_scale"], dtype=np.float32)
+    y_mean = np.asarray(metadata["y_mean"], dtype=np.float32)
+    y_scale = np.asarray(metadata["y_scale"], dtype=np.float32)
+    device = next(model.parameters()).device
+    with torch.inference_mode():
+        normalized = torch.as_tensor(
+            (array - x_mean) / x_scale, dtype=torch.float32, device=device,
+        )
+        prediction = model(normalized).detach().cpu().numpy()
+    return prediction * y_scale + y_mean
 
 
 def _bootstrap(values: np.ndarray, roots: list[str], seed: int, samples: int = 1000) -> dict[str, float]:
@@ -700,6 +750,7 @@ def run(
                 "frozen_latent_action": "frozen source latent plus complete action sequence",
                 "frozen_latent_action_basis": "frozen source latent plus fixed order-preserving action-sequence basis",
                 "history_latent_action": "causal frozen latent history up to the decision point plus complete action sequence",
+                "history_latent_action_basis": "causal frozen latent history plus fixed order-preserving action-sequence basis",
                 "privileged_state_action": "privileged source simulator state plus complete action sequence (diagnostic upper bound only)",
                 "latent_plus_state_action": "frozen source latent plus privileged source simulator state plus complete action sequence (diagnostic upper bound only)",
             }[feature_mode],
@@ -728,7 +779,7 @@ def main() -> None:
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument(
         "--feature-mode",
-        choices=("frozen_latent_action", "frozen_latent_action_basis", "history_latent_action", "privileged_state_action", "latent_plus_state_action"),
+        choices=("frozen_latent_action", "frozen_latent_action_basis", "history_latent_action", "history_latent_action_basis", "privileged_state_action", "latent_plus_state_action"),
         default="frozen_latent_action",
     )
     args = parser.parse_args()

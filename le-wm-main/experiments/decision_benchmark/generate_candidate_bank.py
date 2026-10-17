@@ -83,6 +83,17 @@ def _candidate_sequences(
             sequence[switch:] = perpendicular * magnitude
             sequences.append(np.clip(sequence, -1.0, 1.0))
         sequences.append(np.zeros((steps, 2), dtype=np.float64))
+    elif family == "runtime_repeated_pulse_v1":
+        # Match the online planner exactly: eight goal-relative directions at
+        # four magnitudes, each held for the full 20-step prediction window.
+        # The planner executes only the first five-step block before observing
+        # again, but training the complete repeated pulse removes the action-
+        # family shift that caused the first online HTSC gate to reject ~80% of
+        # otherwise useful action-effect decisions.
+        for magnitude in (0.25, 0.5, 0.75, 1.0):
+            for angle in np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False):
+                direction = np.cos(angle) * direct + np.sin(angle) * perpendicular
+                sequences.append(constant(direction, magnitude))
     elif family == "paired_order_v2":
         # Hard pairs preserve the same cumulative action while changing its
         # temporal order.  A goal-direction dot product therefore cannot
@@ -497,7 +508,15 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--max-instances", type=int, default=40)
     parser.add_argument("--device", default="cpu")
-    parser.add_argument("--candidate-family", default="paired_order_v2", choices=("paired_order_v2", "goal_directed_mixture_v1"))
+    parser.add_argument(
+        "--candidate-family",
+        default="paired_order_v2",
+        choices=(
+            "paired_order_v2",
+            "goal_directed_mixture_v1",
+            "runtime_repeated_pulse_v1",
+        ),
+    )
     parser.add_argument("--source-selection", default="sorted_episode", choices=("sorted_episode", "nearest_goal", "reachable_goal"))
     parser.add_argument(
         "--split-assignment",

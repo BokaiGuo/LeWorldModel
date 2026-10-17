@@ -108,3 +108,17 @@ def test_candidate_bank_frames_are_mutually_exclusive():
             np.asarray([0.0, 0.0]), np.asarray([1.0, 1.0]), 16, 20, 7000,
             canonical_action_frame=True, world_action_frame=True,
         )
+
+
+def test_runtime_repeated_pulse_bank_matches_online_action_shape():
+    sequences = _candidate_sequences(
+        np.asarray([0.4, 2.0]), np.asarray([1.2, 1.2]),
+        count=32, steps=20, seed=7000,
+        family="runtime_repeated_pulse_v1",
+        canonical_action_frame=True,
+    )
+
+    assert sequences.shape == (32, 20, 2)
+    assert np.allclose(sequences, sequences[:, :1, :])
+    magnitudes = np.linalg.norm(sequences[:, 0], axis=1).reshape(4, 8)
+    assert np.allclose(magnitudes, np.asarray([0.25, 0.5, 0.75, 1.0])[:, None])
