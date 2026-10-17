@@ -17,6 +17,7 @@
     "visual_source": "dataset_matched_renderer",
     "renderer_calibration_start_inclusive": 1800,
     "renderer_calibration_end_exclusive": 1816,
+    "renderer_calibration_frames": 768,
     "visual_boundary": "calibration-only dataset-matched rendered RGB from recorded simulator states; not untouched raw sensor RGB",
     "outcome_use": "evaluation only; forbidden for fitting, normalization, calibration, thresholding, model selection, or protocol revision"
   },

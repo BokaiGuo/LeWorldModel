@@ -67,6 +67,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--renderer-calibration-start", type=int, default=1800)
     p.add_argument("--renderer-calibration-end", type=int, default=1816)
+    p.add_argument(
+        "--renderer-calibration-frames",
+        type=int,
+        default=768,
+        help="Maximum calibration RGB frames, matching the frozen online-planning default.",
+    )
     args = p.parse_args()
     if args.windows_per_episode < 1 or args.window_stride < 1:
         p.error("windows-per-episode and window-stride must be positive")
@@ -224,7 +230,9 @@ def main() -> None:
         if not renderer_calibration_episodes:
             raise ValueError("renderer calibration range must be non-empty")
         calibration = fit_visual_calibration(
-            args.dataset_root, renderer_calibration_episodes
+            args.dataset_root,
+            renderer_calibration_episodes,
+            int(args.renderer_calibration_frames),
         )
         calibration_images, _ = load_episode(
             args.dataset_root, renderer_calibration_episodes[0]
@@ -424,6 +432,9 @@ def main() -> None:
             "preprocessing_owner": "model.encode",
             "visual_source": args.visual_source,
             "renderer_calibration_episodes": renderer_calibration_episodes,
+            "renderer_calibration_frames": (
+                int(args.renderer_calibration_frames) if renderer is not None else None
+            ),
             "renderer_boundary": (
                 "calibration-only dataset-matched rendering from recorded simulator states; "
                 "not untouched raw sensor RGB"

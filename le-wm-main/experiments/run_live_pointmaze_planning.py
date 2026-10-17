@@ -91,6 +91,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--calibration-frames", type=int, default=768)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--success-radius", type=float, default=0.25)
+    parser.add_argument(
+        "--test-visual-source",
+        choices=("stored_episode", "dataset_matched_renderer"),
+        default="stored_episode",
+        help=(
+            "Use each test episode's stored RGB or one renderer fitted only "
+            "from calibration RGB; the latter supports roots without stored RGB."
+        ),
+    )
     parser.add_argument("--planner-map", choices=("rgb_maze", "direct"), default="rgb_maze")
     parser.add_argument("--kp", type=float, default=0.80)
     parser.add_argument("--kv", type=float, default=0.20)
@@ -149,6 +158,15 @@ def load_episode(root: Path, episode: int) -> tuple[np.ndarray, np.ndarray]:
     images = torch.load(_episode_path(root, episode), map_location="cpu", weights_only=True)
     states = torch.load(root / "states.pth", map_location="cpu", weights_only=True)[episode]
     return np.asarray(images.numpy(), dtype=np.uint8), np.asarray(states.numpy(), dtype=np.float64)
+
+
+def load_episode_states(root: Path, episode: int) -> np.ndarray:
+    """Load environment states without requiring a test RGB artifact."""
+
+    states = torch.load(root / "states.pth", map_location="cpu", weights_only=True)
+    if episode < 0 or episode >= int(states.shape[0]):
+        raise ValueError(f"episode {episode} is outside the recorded state dataset")
+    return np.asarray(states[episode].numpy(), dtype=np.float64)
 
 
 def green_center(image: np.ndarray) -> tuple[float, float]:
@@ -1057,13 +1075,26 @@ def run_episode(
     projection_min_alpha: float = 0.25,
     oracle_depth: int = 4,
     oracle_beam_width: int = 8,
+    fixed_renderer: DatasetMatchedRenderer | None = None,
 ) -> dict[str, Any]:
-    images, states = load_episode(dataset_root, episode)
-    renderer = DatasetMatchedRenderer.from_episode(images, calibration)
+    if fixed_renderer is None:
+        images, states = load_episode(dataset_root, episode)
+        renderer = DatasetMatchedRenderer.from_episode(images, calibration)
+        initial_reference = images[0]
+        renderer_source = "stored_test_episode_rgb"
+    else:
+        states = load_episode_states(dataset_root, episode)
+        renderer = fixed_renderer
+        initial_reference = None
+        renderer_source = "calibration_only_dataset_matched_renderer"
     runtime = LegacyPointMazeRuntime(states[0])
     current_rgb = renderer.render(runtime.state)
     goal_rgb = renderer.render(np.r_[GOAL_STATE, [0.0, 0.0]])
-    initial_render_error = renderer.source_reconstruction_error(runtime.state, images[0])
+    initial_render_error = (
+        None
+        if initial_reference is None
+        else renderer.source_reconstruction_error(runtime.state, initial_reference)
+    )
     center = green_center(current_rgb)
     proprio = np.concatenate([calibration.position(center), calibration.velocity((0.0, 0.0))])
     reset_state = runtime.state.copy()
@@ -1150,6 +1181,7 @@ def run_episode(
             "simulator_state_used_for": "environment stepping and held-out evaluation only",
             "rgb_velocity_probe_blocks": int(probe_blocks),
             "rgb_static_map": planner_map == "rgb_maze",
+            "renderer_source": renderer_source,
         },
     }
 
@@ -1164,6 +1196,11 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if "action_transfer_gate" in trace
     ]
     fallback_count = sum(bool(item.get("fallback_used")) for item in gate_decisions)
+    render_errors = [
+        float(row["renderer_initial_mean_abs_error"])
+        for row in rows
+        if row.get("renderer_initial_mean_abs_error") is not None
+    ]
     return {
         "episodes": len(rows),
         "success_rate": float(np.mean([row["success"] for row in rows])),
@@ -1173,7 +1210,9 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_planning_start_distance": float(np.mean([row["planning_start_distance"] for row in rows])),
         "mean_blocks": float(np.mean([row["blocks_executed"] for row in rows])),
         "detector_failure_rate": float(np.mean([row["detector_failures"] > 0 for row in rows])),
-        "renderer_initial_mean_abs_error": float(np.mean([row["renderer_initial_mean_abs_error"] for row in rows])),
+        "renderer_initial_mean_abs_error": (
+            float(np.mean(render_errors)) if render_errors else None
+        ),
         "gate_decisions": len(gate_decisions),
         "gate_fallback_rate": float(fallback_count / len(gate_decisions)) if gate_decisions else 0.0,
     }
@@ -1227,14 +1266,27 @@ def main() -> None:
         ) | (set(gate_calibration_episodes) & set(test_episodes))
         if gate_overlap:
             raise ValueError(f"gate calibration overlaps another split: {sorted(gate_overlap)}")
-    for episode in calibration_episodes + test_episodes + (gate_calibration_episodes or []):
+    for episode in calibration_episodes:
         _episode_path(dataset_root, episode)
+    state_episode_count = int(torch.load(
+        dataset_root / "states.pth", map_location="cpu", weights_only=True
+    ).shape[0])
+    for episode in test_episodes + (gate_calibration_episodes or []):
+        if episode < 0 or episode >= state_episode_count:
+            raise ValueError(f"episode {episode} is outside the recorded state dataset")
+        if args.test_visual_source == "stored_episode":
+            _episode_path(dataset_root, episode)
     print("[PointMaze live] fitting RGB->proprio calibration on calibration roots only")
     calibration = fit_visual_calibration(dataset_root, calibration_episodes, args.calibration_frames)
     print("[PointMaze live] fitting calibration-only block dynamics and RGB maze occupancy")
     dynamics = fit_visual_dynamics_calibration(dataset_root, calibration_episodes)
     calibration_images, _calibration_states = load_episode(dataset_root, calibration_episodes[0])
     calibration_renderer = DatasetMatchedRenderer.from_episode(calibration_images, calibration)
+    test_renderer = (
+        calibration_renderer
+        if args.test_visual_source == "dataset_matched_renderer"
+        else None
+    )
     maze_map = RGBMazeMap.from_renderer(calibration_renderer) if args.planner_map == "rgb_maze" else None
     if maze_map is not None:
         print(f"[PointMaze live] RGB occupancy inferred {len(maze_map.free_cells)} free cells")
@@ -1263,6 +1315,7 @@ def main() -> None:
                 float(tolerance), args.max_blocks, args.success_radius,
                 args.seed + 100000 + index, args.projection_min_alpha,
                 args.oracle_depth, args.oracle_beam_width,
+                fixed_renderer=test_renderer,
             ) for index, episode in enumerate(gate_calibration_episodes)]
             tolerance_candidates.append({
                 "tolerance": float(tolerance),
@@ -1289,6 +1342,7 @@ def main() -> None:
                 selected_tolerance, args.max_blocks, args.success_radius,
                 args.seed + index, args.projection_min_alpha,
                 args.oracle_depth, args.oracle_beam_width,
+                fixed_renderer=test_renderer,
             ))
     aggregates = {method: _aggregate([row for row in rows if row["method"] == method]) for method in methods}
     privileged_methods = [method for method in methods if method in PRIVILEGED_METHODS]
@@ -1327,6 +1381,8 @@ def main() -> None:
             "runtime_state_access": bool(privileged_methods),
             "goal_state_for_environment_only": GOAL_STATE.tolist(),
             "success_radius": args.success_radius,
+            "test_visual_source": args.test_visual_source,
+            "test_rgb_files_required": args.test_visual_source == "stored_episode",
             "gate_calibration": gate_calibration_report,
         },
         "calibration": {

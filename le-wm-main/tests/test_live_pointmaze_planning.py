@@ -12,6 +12,7 @@ from experiments.run_live_pointmaze_planning import (
     choose_action,
     ground_truth_candidate_scores,
     green_center,
+    load_episode_states,
     parse_episode_list,
     perfect_dynamics_mpc_action,
     project_action_to_dynamics_support,
@@ -107,6 +108,19 @@ def test_depth_one_perfect_mpc_uses_observed_root_candidate_bank() -> None:
 def test_parse_episode_list_accepts_explicit_root_lists() -> None:
     assert parse_episode_list("1800, 1812,1899", "episodes") == [1800, 1812, 1899]
     assert parse_episode_list("", "episodes") is None
+
+
+def test_load_episode_states_does_not_require_test_rgb(tmp_path) -> None:
+    import torch
+
+    states = np.arange(3 * 4 * 4, dtype=np.float32).reshape(3, 4, 4)
+    torch.save(torch.from_numpy(states), tmp_path / "states.pth")
+
+    loaded = load_episode_states(tmp_path, 2)
+
+    assert np.array_equal(loaded, states[2])
+    with pytest.raises(ValueError, match="outside"):
+        load_episode_states(tmp_path, 3)
 
 
 @pytest.mark.parametrize("value", ["1800,1800", "-1,1800", "abc,1800"])

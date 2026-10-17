@@ -6,6 +6,7 @@ import torch
 from experiments.theory_spectral_transfer.run_jepa_wm_pointmaze_temporal_eval import (
     build_pointmaze_datasets,
     canonical_pooled_latent,
+    parse_args,
     rendered_observation,
 )
 
@@ -62,3 +63,22 @@ def test_rendered_observation_stays_raw_and_uses_selected_states() -> None:
     assert observation["visual"].dtype == torch.float32
     assert observation["visual"][0].unique().tolist() == [20.0]
     assert torch.equal(observation["proprio"], states[[2, 1]])
+
+
+def test_renderer_calibration_frame_budget_matches_online_default(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "pointmaze-export",
+            "--dataset-root", "dataset",
+            "--checkpoint", "checkpoint.pt",
+            "--output", "output.json",
+            "--visual-source", "dataset_matched_renderer",
+        ],
+    )
+
+    args = parse_args()
+
+    assert args.renderer_calibration_frames == 768

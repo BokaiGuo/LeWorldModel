@@ -1,0 +1,95 @@
+{
+  "schema": "pointmaze_external_action_effect_adjudication.v1",
+  "date": "2026-10-17",
+  "confirmatory_external": {
+    "roots": 100,
+    "root_range": "1900-1999",
+    "visual_source": "calibration-only dataset-matched renderer",
+    "untouched_raw_sensor_rgb": false,
+    "effect_rmse": 0.4842045307159424,
+    "outcome_regret": 0.04945870728397777,
+    "paired_regret_gains": {
+      "over_bank_only": {
+        "estimate": 0.03694460314431944,
+        "ci95": [0.015560458894216776, 0.058667990333786335]
+      },
+      "over_shuffled_prediction": {
+        "estimate": 0.07758437939900331,
+        "ci95": [0.05101442485796209, 0.10229055628831829]
+      },
+      "over_no_dynamics": {
+        "estimate": 0.14080807841559723,
+        "ci95": [0.1132861674759893, 0.16623237010058384]
+      },
+      "unseen_candidate_over_shuffled": {
+        "estimate": 0.07472231105578656,
+        "ci95": [0.05872255628808243, 0.0903336433250717]
+      },
+      "matched_order_over_bank_only": {
+        "estimate": 0.013848131163424758,
+        "ci95": [0.0048233017520547036, 0.023880182970818366]
+      }
+    },
+    "htsc_epsilon_0_25": {
+      "calibration_bound": 0.10790064048457937,
+      "support_passed": 54,
+      "released": 54,
+      "release_rate": 0.54,
+      "released_violation_rate": 0.018518518518518517,
+      "frozen_minimum_release_rate": 0.75,
+      "joint_gate_passed": false,
+      "failure_reason": "useful coverage below the frozen 0.75 threshold"
+    },
+    "adjudication": "confirmatory conjunction failed despite five positive ranking controls"
+  },
+  "exploratory_renderer_matched_repair": {
+    "external_roots_reused_after_failure_inspection": true,
+    "effect_rmse": 0.474502295255661,
+    "outcome_regret": 0.04398711302266309,
+    "support_passed": 90,
+    "release_rate_at_epsilon_0_25": 0.9,
+    "released_violation_rate": 0.022222222222222223,
+    "calibration_bound": 0.1437486254493876,
+    "adjudication": "cause-and-repair evidence only; not a new confirmatory test"
+  },
+  "online_planner_ceiling": {
+    "roots": 32,
+    "root_range": "1900-1931",
+    "max_blocks": 24,
+    "methods": {
+      "ground_truth_candidate_oracle": {
+        "successes": 23,
+        "success_rate": 0.71875,
+        "mean_final_distance": 0.29942281114204894
+      },
+      "perfect_dynamics_mpc": {
+        "successes": 22,
+        "success_rate": 0.6875,
+        "mean_final_distance": 0.31438253606855615
+      },
+      "visual_dynamics": {
+        "successes": 23,
+        "success_rate": 0.71875,
+        "mean_final_distance": 0.3073976865779279
+      },
+      "frozen_wm_rgb": {
+        "successes": 2,
+        "success_rate": 0.0625,
+        "mean_final_distance": 1.0370541378437457
+      }
+    },
+    "adjudication": "planner and action-bank reachability are adequate at 24 blocks; frozen world-model ranking remains the dominant failure"
+  },
+  "claim_boundary": [
+    "The positive external result is fixed-bank action ranking, not adaptive-CEM planning.",
+    "The visual source is a calibration-only dataset-matched renderer, not untouched raw sensor RGB.",
+    "The confirmatory HTSC useful-release conjunction failed.",
+    "The renderer-matched repair is exploratory because the external roots had already been inspected.",
+    "No result establishes a universal world model, universal commutator certificate, or repaired frozen predictor dynamics."
+  ],
+  "source_artifacts": [
+    "le-wm-main/results/htsc_preprocessing_repair_20261016/shared_world_effect_rank32_action_basis_external_1900_1999.json",
+    "le-wm-main/results/htsc_preprocessing_repair_20261016/shared_world_effect_rank32_action_basis_renderer_matched_external_exploratory.json",
+    "le-wm-main/results/htsc_preprocessing_repair_20261016/pointmaze_external_online_oracle_panel_1900_1931_blocks24.json"
+  ]
+}
