@@ -30,6 +30,15 @@ from scipy import ndimage
 import stable_worldmodel  # noqa: F401
 import torch
 
+
+# OGBench action[4] is an increment to the Robotiq driver joint.  Despite the
+# ``proprio/gripper_opening`` field name, the environment's Cube oracle uses
+# +1 to close/grasp and -1 to open/release.  Keep this explicit because using
+# the semantic name rather than the environment convention silently reverses
+# the carry protocol.
+GRIPPER_OPEN_ACTION = -1.0
+GRIPPER_CLOSE_ACTION = 1.0
+
 from experiments.audit_cube_rgb_observability import (
     _goal_position,
     _make_env,
@@ -329,7 +338,7 @@ def _run_episode(
     *, seed: int, task_id: int, pixel_mapping: np.ndarray | None,
     approach_model: dict[str, Any] | None,
     initial: dict[str, Any] | None,
-    descent_steps: int, approach_steps: int, approach_gain: float,
+    open_steps: int, descent_steps: int, approach_steps: int, approach_gain: float,
     approach_threshold: float, approach_min_steps: int,
     approach_controller: str, approach_world_gain: float,
     approach_task_models: dict[int, dict[str, Any]] | None,
@@ -442,6 +451,14 @@ def _run_episode(
                 if execute(action, phase):
                     break
 
+        # Reset starts with normalized gripper opening near zero. Open before
+        # descending so the later close command can establish a carry.
+        for _ in range(int(open_steps)):
+            action = np.zeros(5, dtype=np.float32)
+            action[4] = GRIPPER_OPEN_ACTION
+            if execute(action, "pre_open"):
+                break
+
         if approach_before_descend:
             run_rgb_approach(approach_steps, "rgb_approach_above")
 
@@ -459,10 +476,10 @@ def _run_episode(
             if execute(action, "post_descend"): break
         run_rgb_approach(post_descend_approach_steps, "post_descend_approach")
         for _ in range(int(grasp_lift_steps)):
-            action = np.zeros(5, dtype=np.float32); action[2] = 1.0; action[4] = 1.0
+            action = np.zeros(5, dtype=np.float32); action[2] = 1.0; action[4] = GRIPPER_CLOSE_ACTION
             if execute(action, "grasp_lift"): break
         for _ in range(int(close_steps)):
-            action = np.zeros(5, dtype=np.float32); action[4] = 1.0
+            action = np.zeros(5, dtype=np.float32); action[4] = GRIPPER_CLOSE_ACTION
             if execute(action, "close"): break
         # A close command can leave the gripper visually aligned but not
         # mechanically engaged.  This fixed RGB-only re-approach is a
@@ -493,7 +510,7 @@ def _run_episode(
             if execute(action, "post_close_reapproach"): break
         if lift_before_probes:
             for _ in range(int(lift_steps)):
-                action = np.zeros(5, dtype=np.float32); action[2] = 1.0; action[4] = 1.0
+                action = np.zeros(5, dtype=np.float32); action[2] = 1.0; action[4] = GRIPPER_CLOSE_ACTION
                 if execute(action, "lift"): break
 
         # Probe target RGB displacement in all four directions while holding.
@@ -503,7 +520,7 @@ def _run_episode(
                 before_block = _target_red_centroid(before)[:2]
                 action = np.zeros(5, dtype=np.float32)
                 action[:2] = float(probe_magnitude) * direction
-                action[4] = 1.0
+                action[4] = GRIPPER_CLOSE_ACTION
                 if execute(action, "effect_probe"): break
                 after_block = _target_red_centroid(np.asarray(obs, dtype=np.uint8))[:2]
                 if np.linalg.norm(before_block) > 0.0 and np.linalg.norm(after_block) > 0.0:
@@ -512,7 +529,7 @@ def _run_episode(
 
         if not lift_before_probes:
             for _ in range(int(lift_steps)):
-                action = np.zeros(5, dtype=np.float32); action[2] = 1.0; action[4] = 1.0
+                action = np.zeros(5, dtype=np.float32); action[2] = 1.0; action[4] = GRIPPER_CLOSE_ACTION
                 if execute(action, "lift"): break
 
         def run_regrasp() -> None:
@@ -528,18 +545,18 @@ def _run_episode(
                 return
             regrasp_count += 1
             for _ in range(3):
-                action = np.zeros(5, dtype=np.float32); action[4] = -1.0
+                action = np.zeros(5, dtype=np.float32); action[4] = GRIPPER_OPEN_ACTION
                 if execute(action, "regrasp_release"): return
             run_rgb_approach(regrasp_approach_steps, "regrasp_approach")
             for _ in range(int(regrasp_descend_steps)):
                 action = np.zeros(5, dtype=np.float32); action[2] = -1.0
                 if execute(action, "regrasp_descend"): return
             for _ in range(int(regrasp_close_steps)):
-                action = np.zeros(5, dtype=np.float32); action[4] = 1.0
+                action = np.zeros(5, dtype=np.float32); action[4] = GRIPPER_CLOSE_ACTION
                 if execute(action, "regrasp_close"): return
             for _ in range(int(regrasp_lift_steps)):
                 action = np.zeros(5, dtype=np.float32)
-                action[2] = 1.0; action[4] = 1.0
+                action[2] = 1.0; action[4] = GRIPPER_CLOSE_ACTION
                 if execute(action, "regrasp_lift"): return
             for direction in np.asarray(
                 [[1, 0], [-1, 0], [0, 1], [0, -1]], dtype=np.float32,
@@ -547,7 +564,7 @@ def _run_episode(
                 before = _target_red_centroid(np.asarray(obs, dtype=np.uint8))[:2]
                 action = np.zeros(5, dtype=np.float32)
                 action[:2] = float(probe_magnitude) * direction
-                action[4] = 1.0
+                action[4] = GRIPPER_CLOSE_ACTION
                 if execute(action, "regrasp_effect_probe"): return
                 after = _target_red_centroid(np.asarray(obs, dtype=np.uint8))[:2]
                 if np.linalg.norm(before) > 0.0 and np.linalg.norm(after) > 0.0:
@@ -684,7 +701,7 @@ def _run_episode(
                 and step_index % int(transport_lift_correction_period) == 0
             ):
                 action[2] = float(transport_lift_correction_gain)
-            action[4] = 1.0
+            action[4] = GRIPPER_CLOSE_ACTION
             before = np.asarray(obs, dtype=np.uint8).copy()
             if execute(action, "transport"): break
             after = np.asarray(obs, dtype=np.uint8)
@@ -769,7 +786,7 @@ def _run_episode(
                     if execute(relift, "transport_relift"): break
 
         for _ in range(int(lower_steps)):
-            action = np.zeros(5, dtype=np.float32); action[2] = -1.0; action[4] = 1.0
+            action = np.zeros(5, dtype=np.float32); action[2] = -1.0; action[4] = GRIPPER_CLOSE_ACTION
             lower_mapping, _lower_rank = _fit_effect(effect_actions, effect_deltas)
             if lower_mapping is not None and float(lower_transport_magnitude) > 0.0:
                 current = _target_red_centroid(np.asarray(obs, dtype=np.uint8))[:2]
@@ -783,7 +800,7 @@ def _run_episode(
                         action[:2] = lower_action
             if execute(action, "lower"): break
         for _ in range(int(release_steps)):
-            action = np.zeros(5, dtype=np.float32); action[4] = -1.0
+            action = np.zeros(5, dtype=np.float32); action[4] = GRIPPER_OPEN_ACTION
             if execute(action, "release"): break
         final = _step_label(info, env)
         success = bool(final["block_goal_distance_m"] is not None and final["block_goal_distance_m"] <= float(goal_threshold))
@@ -820,6 +837,10 @@ def main() -> None:
     parser.add_argument("--calibration-roots", type=int, default=8)
     parser.add_argument("--tasks", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     parser.add_argument("--descent-steps", type=int, default=15)
+    parser.add_argument(
+        "--open-steps", type=int, default=5,
+        help="fixed gripper-opening prelude before descent; action[4]=-1",
+    )
     parser.add_argument("--approach-steps", type=int, default=64)
     parser.add_argument("--approach-gain", type=float, default=0.25)
     parser.add_argument("--approach-threshold", type=float, default=0.05)
@@ -914,7 +935,10 @@ def main() -> None:
     approach_task_models = None
     approach_report = None
     if args.approach_controller in {"world", "hybrid", "adaptive"}:
-        if source_payload is not None and "calibration_initial_conditions" in source_payload:
+        if (
+            source_payload is not None
+            and source_payload.get("calibration_initial_conditions")
+        ):
             calibration_initials = _restore_initial_conditions(
                 source_payload["calibration_initial_conditions"]
             )
@@ -978,7 +1002,7 @@ def main() -> None:
         seed=int(test_initials[i]["seed"]), task_id=int(test_initials[i]["task_id"]),
         pixel_mapping=local_pixel_mappings[i], approach_model=approach_model,
         initial=test_initials[i],
-        descent_steps=args.descent_steps,
+        open_steps=args.open_steps, descent_steps=args.descent_steps,
         approach_steps=args.approach_steps, approach_gain=args.approach_gain,
         approach_threshold=args.approach_threshold,
         approach_min_steps=args.approach_min_steps,

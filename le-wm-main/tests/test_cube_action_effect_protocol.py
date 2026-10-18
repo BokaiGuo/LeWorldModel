@@ -1,10 +1,19 @@
 import pytest
 
 from experiments.run_live_cube_rgb_pick_place import (
+    GRIPPER_CLOSE_ACTION,
+    GRIPPER_OPEN_ACTION,
     _fit_effect,
     _inverse_effect_action,
     _validate_effect_probe_protocol,
 )
+
+
+def test_cube_gripper_increment_semantics_match_ogbench():
+    # OGBench's Cube oracle uses +1 to close/grasp and -1 to open/release;
+    # the state field name ``gripper_opening`` is not the physical direction.
+    assert GRIPPER_OPEN_ACTION == -1.0
+    assert GRIPPER_CLOSE_ACTION == 1.0
 
 
 def test_effect_transport_requires_post_lift_probes():

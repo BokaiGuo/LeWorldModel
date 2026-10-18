@@ -1218,3 +1218,27 @@ also rules out the stronger claim that local paired identification alone
 repairs multi-step orientation transfer.  The active bottleneck is now the
 task-level composition/readout of several local effects, not local action
 effect observability.
+
+## Cube gripper protocol repair and v14 CUDA/EGL audit — 2026-10-18
+
+The Cube macro protocol was repaired after tracing an apparent carry failure to
+two interface/protocol issues. The OGBench Cube action convention is explicit
+in the implementation now: `action[4]=+1` closes/grasp the gripper and
+`action[4]=-1` opens/releases it, despite the potentially misleading
+`proprio/gripper_opening` field name. The RGB-only sequence now performs a
+fixed open prelude, high-height RGB XY approach, descent, close, lift, and
+only then effect probing. Empty calibration replay payloads also no longer
+silently replace the requested test roots.
+
+The corrected v14 protocol was executed on the host RTX 5060 Ti with
+PyTorch `2.12.0+cu130`, CUDA allocation, and MuJoCo EGL rendering all passing.
+It used the same eight paired held-out roots as the v6 chart and fit on CUDA.
+The result remains negative: contact rate `0.875`, success `0/8`, and mean
+final block-goal distance `0.17216 m`. Per-step traces keep the block at
+`z≈0.01996 m` during lift/transport, so contact is not carry. The effect map
+was therefore not promoted to a successful transport controller.
+
+This narrows the next diagnosis to the physical RGB-to-pinch alignment and
+lift/carry interface, rather than gripper sign or calibration replay. The
+result is a valid negative boundary artifact; it does not support stable Cube
+pose closure, frozen-LeWM online planning, or a universal world-model claim.
