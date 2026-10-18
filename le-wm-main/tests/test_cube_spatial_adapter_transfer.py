@@ -35,3 +35,14 @@ def test_eight_action_protocol_leaves_unprobed_candidates_for_ranking():
     np.testing.assert_array_equal(probe, [0, 2, 4])
     np.testing.assert_array_equal(held, [1, 3, 5, 6, 7])
     assert not set(probe.tolist()).intersection(held.tolist())
+
+
+def test_local_probe_map_fails_closed_on_quantization_scale_effects():
+    mapping, report = _fit_local_probe_map(
+        np.asarray([[1.0, 0.0], [0.0, 1.0]]),
+        np.asarray([[1.0e-4, 0.0], [0.0, 1.0e-4]]),
+        min_effect_norm=5.0e-4,
+    )
+    assert mapping is None
+    assert report["status"] == "unstable_or_weak_probe_map"
+    assert report["probe_effect_norm"] == 1.0e-4

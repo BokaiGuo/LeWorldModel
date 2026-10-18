@@ -20,6 +20,9 @@ import torch
 from experiments.train_cube_multiview_spatial_adapter import SpatialAdapter
 
 
+DEFAULT_MIN_PROBE_EFFECT = 5.0e-4
+
+
 def _pairwise_agreement(true_scores: np.ndarray, predicted_scores: np.ndarray) -> float:
     pairs = []
     for i in range(len(true_scores)):
@@ -79,7 +82,14 @@ def _probe_and_held_indices(action_bank: np.ndarray) -> tuple[np.ndarray, np.nda
     return probe, held
 
 
-def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dict[str, object]:
+def evaluate(
+    npz_path: Path,
+    checkpoint_path: Path,
+    device: str = "cuda",
+    min_probe_effect: float = DEFAULT_MIN_PROBE_EFFECT,
+) -> dict[str, object]:
+    if not np.isfinite(float(min_probe_effect)) or float(min_probe_effect) < 0.0:
+        raise ValueError("min_probe_effect must be finite and non-negative")
     data = np.load(npz_path)
     test_features = np.asarray(data["test_features"], dtype=np.float32)
     test_targets = np.asarray(data["test_targets"], dtype=np.float32)
@@ -135,10 +145,13 @@ def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dic
     local_top1, chart_top1, global_top1 = [], [], []
     local_pairwise, chart_pairwise, global_pairwise = [], [], []
     residuals, gate_failures, gate_reasons = [], 0, {}
+    support_top1, support_pairwise = [], []
     for start in range(0, len(test_targets), group_size):
         probe = start + probe_positions
         held = start + held_positions
-        mapping, diagnostics = _fit_local_probe_map(actions[probe], test_targets[probe])
+        mapping, diagnostics = _fit_local_probe_map(
+            actions[probe], test_targets[probe], min_effect_norm=float(min_probe_effect),
+        )
         if mapping is None:
             gate_failures += 1
             reason = str(diagnostics.get("status", "unknown"))
@@ -159,6 +172,9 @@ def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dic
         local_pairwise.append(_pairwise_agreement(true_scores, local_scores))
         chart_pairwise.append(_pairwise_agreement(true_scores, chart_scores))
         global_pairwise.append(_pairwise_agreement(true_scores, global_scores))
+        if mapping is not None:
+            support_top1.append(int(np.argmax(local_scores) == np.argmax(true_scores)))
+            support_pairwise.append(_pairwise_agreement(true_scores, local_scores))
     reports["verified_local_unprobed_candidates"] = {
         "groups": len(local_top1),
         "probe_actions": candidate_actions[probe_positions].tolist(),
@@ -169,6 +185,15 @@ def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dic
         "gate_failures": int(gate_failures),
         "gate_reasons": gate_reasons,
         "reprobe_or_fallback_rate": float(gate_failures / max(len(local_top1), 1)),
+        "minimum_probe_effect_norm": float(min_probe_effect),
+        "support_eligible_groups": int(len(support_top1)),
+        "support_coverage": float(len(support_top1) / max(len(local_top1), 1)),
+        "support_conditioned_top1_agreement": (
+            float(np.mean(support_top1)) if support_top1 else None
+        ),
+        "support_conditioned_pairwise_agreement": (
+            float(np.mean(support_pairwise)) if support_pairwise else None
+        ),
     }
     reports["fixed_action_chart_unprobed_candidates"] = {
         "top1_agreement": float(np.mean(chart_top1)),
@@ -189,6 +214,7 @@ def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dic
             "held_candidate_outcomes_used_for_selection": False,
             "probe_outcomes_used_for_local_update": True,
             "probe_candidates_excluded_from_ranking": True,
+            "minimum_probe_effect_norm": float(min_probe_effect),
         },
         "adapter": reports["adapter"],
         "zero_baseline": reports["zero_baseline"],
@@ -212,11 +238,18 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    parser.add_argument(
+        "--min-probe-effect", type=float, default=DEFAULT_MIN_PROBE_EFFECT,
+        help="fail-closed threshold for mean observed probe effect norm",
+    )
     args = parser.parse_args()
     if args.device == "cuda":
         from experiments.gpu_preflight import require_cuda_allocation
         require_cuda_allocation("cuda")
-    report = evaluate(args.data, args.checkpoint, args.device)
+    report = evaluate(
+        args.data, args.checkpoint, args.device,
+        min_probe_effect=float(args.min_probe_effect),
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))

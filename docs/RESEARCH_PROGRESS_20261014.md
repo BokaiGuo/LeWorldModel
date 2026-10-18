@@ -1383,3 +1383,20 @@ unstable contact/action-effect support, not by predictor RMSE alone. The next
 formal intervention must therefore gate on RGB contact support and report
 coverage, probe residual, and held-candidate ranking jointly. No planner or
 carry claim is opened by either smoke result.
+
+## Pulse-horizon and support-gate follow-up — 2026-10-19
+
+Changing the RGB contact-support panel from a 4-step to a 12-step XY pulse
+did not repair transfer. The 12-step panel increased observed effect scale
+(held-out effect RMSE `0.07062` versus zero baseline `0.11187`), but verified
+local held-candidate pairwise agreement fell to `0.603`, below the global
+adapter's `0.802`. This indicates that a longer pulse crosses changing
+contact modes; it is not a safe substitute for a verified short pulse.
+
+The evaluator now uses a predeclared minimum mean probe-effect norm of
+`5e-4` and reports support coverage separately from ranking. On the 8-root/
+4-held-out contact panel, the gate rejected 2/4 roots (`support_coverage =
+0.50`). On the two eligible roots, local ranking reached pairwise agreement
+`0.80`; unconditional ranking remained only `0.614`. This is the desired
+fail-closed behavior: the method identifies where local verification is
+usable, but it does not convert partial support into a global planning claim.
