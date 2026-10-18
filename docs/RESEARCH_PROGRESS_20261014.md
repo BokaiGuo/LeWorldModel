@@ -1400,3 +1400,20 @@ The evaluator now uses a predeclared minimum mean probe-effect norm of
 `0.80`; unconditional ranking remained only `0.614`. This is the desired
 fail-closed behavior: the method identifies where local verification is
 usable, but it does not convert partial support into a global planning claim.
+
+## Calibrated RGB approach mapping intervention — 2026-10-19
+
+To test whether the remaining failure was only a camera/action-coordinate
+problem, the collector now optionally fits a 2-D RGB effector-action Jacobian
+on independent calibration roots (`seed + 100000`) and uses it for the
+approach phase. The mapping is recorded in the artifact and is never fitted on
+training or held-out outcome roots.
+
+The mapped approach+close smoke produced a full-rank mapping but a calibration
+fit RMSE of `0.00787`; its held-out effect RMSE was `0.02724` versus `0.03552`
+for the zero baseline. However, held-candidate local pairwise agreement was
+only `0.55`, with top-1 `0/2`, and was identical to the fixed/global controls
+on this small panel. Thus camera-coordinate calibration alone does not repair
+transfer. The remaining failure is root-specific contact/grasp state and
+within-mode action-effect nonlinearity. The mapping is retained as an
+isolated calibration option, but is not promoted as a positive planning result.

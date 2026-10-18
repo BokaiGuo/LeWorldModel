@@ -47,7 +47,10 @@ from experiments.audit_cube_rgb_observability import (
 )
 from experiments.gpu_preflight import require_cuda_allocation
 from experiments.run_cube_rgb_visual_servo import _capture_initial, _reset
-from experiments.run_live_cube_rgb_macro_ranker import _rgb_approach_action
+from experiments.run_live_cube_rgb_macro_ranker import (
+    _fit_rgb_pixel_action_mapping,
+    _rgb_approach_action,
+)
 from experiments.run_live_cube_rgb_pick_place import _target_red_area
 
 
@@ -94,6 +97,7 @@ def _step_pulse(env: gym.Env, action_xy: np.ndarray, steps: int) -> np.ndarray:
 def _prepare_contact(
     env: gym.Env, obs: np.ndarray, *, descent_steps: int,
     approach_steps: int, close_steps: int, approach_gain: float,
+    pixel_action_mapping: np.ndarray | None = None,
 ) -> np.ndarray:
     """Run the RGB-only approach/close prelude before an effect pulse."""
     for _ in range(int(descent_steps)):
@@ -103,7 +107,10 @@ def _prepare_contact(
         if terminated or truncated:
             return np.asarray(obs, dtype=np.uint8)
     for _ in range(int(approach_steps)):
-        action = _rgb_approach_action(np.asarray(obs, dtype=np.uint8), gain=float(approach_gain))
+        action = _rgb_approach_action(
+            np.asarray(obs, dtype=np.uint8), pixel_action_mapping,
+            gain=float(approach_gain),
+        )
         obs, _reward, terminated, truncated, _info = env.step(action)
         if terminated or truncated:
             return np.asarray(obs, dtype=np.uint8)
@@ -119,7 +126,7 @@ def _prepare_contact(
 def _paired_row(
     initial: dict[str, Any], *, descent_steps: int, pulse_steps: int,
     action_xy: np.ndarray, approach_steps: int, close_steps: int,
-    approach_gain: float,
+    approach_gain: float, pixel_action_mapping: np.ndarray | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Collect one root-paired RGB action-effect row."""
     env = _make_env()
@@ -128,7 +135,7 @@ def _paired_row(
         source = _prepare_contact(
             env, source, descent_steps=descent_steps,
             approach_steps=approach_steps, close_steps=close_steps,
-            approach_gain=approach_gain,
+            approach_gain=approach_gain, pixel_action_mapping=pixel_action_mapping,
         )
         source = np.asarray(source, dtype=np.uint8)
         source_features = _joint_features(env, source)
@@ -142,7 +149,7 @@ def _paired_row(
             candidate = _prepare_contact(
                 candidate_env, candidate, descent_steps=descent_steps,
                 approach_steps=approach_steps, close_steps=close_steps,
-                approach_gain=approach_gain,
+                approach_gain=approach_gain, pixel_action_mapping=pixel_action_mapping,
             )
             candidate_successor = _step_pulse(candidate_env, action_xy, pulse_steps)
             zero_features = _joint_features(env, zero_successor)
@@ -163,7 +170,7 @@ def _paired_row(
 def _collect(
     initials: list[dict[str, Any]], *, descent_steps: int, pulse_steps: int,
     approach_steps: int, close_steps: int, approach_gain: float,
-    action_bank: np.ndarray,
+    action_bank: np.ndarray, pixel_action_mapping: np.ndarray | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     features: list[np.ndarray] = []
     targets: list[np.ndarray] = []
@@ -174,6 +181,7 @@ def _collect(
                 initial, descent_steps=descent_steps, pulse_steps=pulse_steps,
                 action_xy=action, approach_steps=approach_steps,
                 close_steps=close_steps, approach_gain=approach_gain,
+                pixel_action_mapping=pixel_action_mapping,
             )
             features.append(feature)
             targets.append(target)
@@ -300,6 +308,11 @@ def main() -> None:
     parser.add_argument("--approach-steps", type=int, default=0)
     parser.add_argument("--close-steps", type=int, default=0)
     parser.add_argument("--approach-gain", type=float, default=1.0)
+    parser.add_argument(
+        "--approach-calibration-roots", type=int, default=8,
+        help="independent RGB roots used only to fit pixel-to-action mapping",
+    )
+    parser.add_argument("--approach-probe-steps", type=int, default=4)
     parser.add_argument("--direction-count", type=int, choices=(4, 8), default=4)
     parser.add_argument("--pulse-steps", type=int, default=4)
     parser.add_argument("--epochs-stage1", type=int, default=80)
@@ -313,6 +326,18 @@ def main() -> None:
     action_bank = _candidate_actions(args.direction_count)
     torch.manual_seed(int(args.seed))
     np.random.seed(int(args.seed))
+    pixel_action_mapping = None
+    approach_mapping_report: dict[str, Any] | None = None
+    if args.approach_steps > 0:
+        if args.approach_calibration_roots < 1 or args.approach_probe_steps < 1:
+            raise ValueError("approach calibration roots and probe steps must be positive")
+        pixel_action_mapping, approach_mapping_report = _fit_rgb_pixel_action_mapping(
+            seed=int(args.seed) + 100000,
+            tasks=[int(task) for task in args.tasks],
+            roots=int(args.approach_calibration_roots),
+            descent_steps=int(args.descent_steps),
+            probe_steps=int(args.approach_probe_steps),
+        )
     if args.data is not None:
         panel = np.load(args.data)
         train_features = np.asarray(panel["train_features"], dtype=np.float32)
@@ -335,13 +360,13 @@ def main() -> None:
             train_initials, descent_steps=args.descent_steps, pulse_steps=args.pulse_steps,
             approach_steps=args.approach_steps, close_steps=args.close_steps,
             approach_gain=args.approach_gain,
-            action_bank=action_bank,
+            action_bank=action_bank, pixel_action_mapping=pixel_action_mapping,
         )
         test_features, test_targets, test_desired = _collect(
             test_initials, descent_steps=args.descent_steps, pulse_steps=args.pulse_steps,
             approach_steps=args.approach_steps, close_steps=args.close_steps,
             approach_gain=args.approach_gain,
-            action_bank=action_bank,
+            action_bank=action_bank, pixel_action_mapping=pixel_action_mapping,
         )
     target_mean_np = np.mean(train_targets, axis=0, keepdims=True).astype(np.float32)
     target_scale_np = np.std(train_targets, axis=0, keepdims=True).astype(np.float32)
@@ -384,6 +409,9 @@ def main() -> None:
             "approach_steps": int(args.approach_steps),
             "close_steps": int(args.close_steps),
             "approach_gain": float(args.approach_gain),
+            "approach_calibration_roots": int(args.approach_calibration_roots),
+            "approach_probe_steps": int(args.approach_probe_steps),
+            "approach_mapping": approach_mapping_report,
             "data_reused": str(args.data) if args.data is not None else None,
             "target_normalization": "train_root_mean_and_std_per_effect_channel",
             "target_mean": target_mean_np.reshape(-1).tolist(),
