@@ -21,6 +21,7 @@ from experiments.train_cube_multiview_spatial_adapter import SpatialAdapter
 
 
 DEFAULT_MIN_PROBE_EFFECT = 5.0e-4
+DEFAULT_MAX_FRONT_CONTACT_DISTANCE = 5.0e-2
 
 
 def _pairwise_agreement(true_scores: np.ndarray, predicted_scores: np.ndarray) -> float:
@@ -87,9 +88,12 @@ def evaluate(
     checkpoint_path: Path,
     device: str = "cuda",
     min_probe_effect: float = DEFAULT_MIN_PROBE_EFFECT,
+    max_front_contact_distance: float = DEFAULT_MAX_FRONT_CONTACT_DISTANCE,
 ) -> dict[str, object]:
     if not np.isfinite(float(min_probe_effect)) or float(min_probe_effect) < 0.0:
         raise ValueError("min_probe_effect must be finite and non-negative")
+    if not np.isfinite(float(max_front_contact_distance)) or float(max_front_contact_distance) < 0.0:
+        raise ValueError("max_front_contact_distance must be finite and non-negative")
     data = np.load(npz_path)
     test_features = np.asarray(data["test_features"], dtype=np.float32)
     test_targets = np.asarray(data["test_targets"], dtype=np.float32)
@@ -145,13 +149,28 @@ def evaluate(
     local_top1, chart_top1, global_top1 = [], [], []
     local_pairwise, chart_pairwise, global_pairwise = [], [], []
     residuals, gate_failures, gate_reasons = [], 0, {}
+    contact_gate_failures = 0
+    contact_distances = []
     support_top1, support_pairwise = [], []
     for start in range(0, len(test_targets), group_size):
         probe = start + probe_positions
         held = start + held_positions
-        mapping, diagnostics = _fit_local_probe_map(
-            actions[probe], test_targets[probe], min_effect_norm=float(min_probe_effect),
-        )
+        contact_distance = float(np.linalg.norm(
+            test_features[start, :2] - test_features[start, 2:4],
+        ))
+        contact_distances.append(contact_distance)
+        if contact_distance > float(max_front_contact_distance):
+            mapping = None
+            diagnostics = {
+                "status": "rgb_contact_proxy_failed",
+                "front_contact_distance": contact_distance,
+                "max_front_contact_distance": float(max_front_contact_distance),
+            }
+            contact_gate_failures += 1
+        else:
+            mapping, diagnostics = _fit_local_probe_map(
+                actions[probe], test_targets[probe], min_effect_norm=float(min_probe_effect),
+            )
         if mapping is None:
             gate_failures += 1
             reason = str(diagnostics.get("status", "unknown"))
@@ -184,8 +203,12 @@ def evaluate(
         "probe_effect_rmse": float(np.mean(residuals)) if residuals else None,
         "gate_failures": int(gate_failures),
         "gate_reasons": gate_reasons,
+        "contact_gate_failures": int(contact_gate_failures),
+        "front_contact_distance_mean": float(np.mean(contact_distances)),
+        "front_contact_distance_values": contact_distances,
         "reprobe_or_fallback_rate": float(gate_failures / max(len(local_top1), 1)),
         "minimum_probe_effect_norm": float(min_probe_effect),
+        "maximum_front_contact_distance": float(max_front_contact_distance),
         "support_eligible_groups": int(len(support_top1)),
         "support_coverage": float(len(support_top1) / max(len(local_top1), 1)),
         "support_conditioned_top1_agreement": (
@@ -215,6 +238,7 @@ def evaluate(
             "probe_outcomes_used_for_local_update": True,
             "probe_candidates_excluded_from_ranking": True,
             "minimum_probe_effect_norm": float(min_probe_effect),
+            "maximum_front_contact_distance": float(max_front_contact_distance),
         },
         "adapter": reports["adapter"],
         "zero_baseline": reports["zero_baseline"],
@@ -242,6 +266,11 @@ def main() -> None:
         "--min-probe-effect", type=float, default=DEFAULT_MIN_PROBE_EFFECT,
         help="fail-closed threshold for mean observed probe effect norm",
     )
+    parser.add_argument(
+        "--max-front-contact-distance", type=float,
+        default=DEFAULT_MAX_FRONT_CONTACT_DISTANCE,
+        help="RGB front-view effector/object distance gate",
+    )
     args = parser.parse_args()
     if args.device == "cuda":
         from experiments.gpu_preflight import require_cuda_allocation
@@ -249,6 +278,7 @@ def main() -> None:
     report = evaluate(
         args.data, args.checkpoint, args.device,
         min_probe_effect=float(args.min_probe_effect),
+        max_front_contact_distance=float(args.max_front_contact_distance),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")

@@ -1417,3 +1417,19 @@ on this small panel. Thus camera-coordinate calibration alone does not repair
 transfer. The remaining failure is root-specific contact/grasp state and
 within-mode action-effect nonlinearity. The mapping is retained as an
 isolated calibration option, but is not promoted as a positive planning result.
+
+## Explicit RGB contact-proxy routing — 2026-10-19
+
+The source RGB chart reveals a stronger repairability separator than the
+camera Jacobian: front-view effector/object distance. The evaluator now
+requires this deployable proxy to be at most `0.05` before using the local
+probe map; otherwise it abstains before ranking and records
+`rgb_contact_proxy_failed`.
+
+On the 8-root/4-held-out contact panel, the gate rejected exactly the two
+roots whose front distances were `0.239` and `0.260`; the two accepted roots
+had distances `0.038` and `0.030`. Accepted-root local pairwise agreement was
+`0.80`, while support coverage was `0.50`. This converts the previous opaque
+negative result into an actionable routing rule: contact-unobservable roots
+must be approached/re-probed or rejected, and cannot be passed to the action
+ranker. It is a selective-transfer result, not yet a closed-loop carry result.
