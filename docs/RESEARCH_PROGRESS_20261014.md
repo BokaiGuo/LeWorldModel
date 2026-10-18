@@ -1354,3 +1354,32 @@ constant predictor under the current four-action, pre-contact pulse panel.
 The next data collection must move the probes into a verified contact phase
 (close/lift gate before XY probing) and expand the candidate bank; current
 closed-loop carry and pose closure remain unproven.
+
+## Eight-direction held-candidate audit and contact-support diagnosis — 2026-10-19
+
+The evaluator now reads the declared `candidate_actions` array from the data
+artifact instead of assuming four rows per root. The 8-direction protocol uses
+fixed probes at `+x`, `+y`, and `-x` (positions `[0, 2, 4]`) and ranks the five
+remaining diagonal/negative-direction candidates. Held candidate outcomes are
+never used for local fitting. This closes the previous evaluator/data-contract
+bug and is covered by a unit test.
+
+On the GPU smoke panel (8 train roots, 4 held-out roots, 8 actions, 4-step
+pulse, no approach/close), the adapter reduced held-out effect RMSE from
+`0.03672` to `0.00386`, but sign accuracy stayed unchanged (`0.46875` versus
+`0.46809`). On the five genuinely unprobed candidates, verified-local reached
+pairwise agreement `0.625` versus `0.325` for the global adapter, but top-1 was
+only `0.25` and the zero baseline remained `0.75`. The per-root audit showed
+two roots with zero or near-zero probe effect and two roots where the probe map
+was numerically stable but its held-out action direction was not transferable.
+
+A separate RGB approach+close smoke (2 train roots, 2 held-out roots) improved
+the transfer picture: verified-local pairwise agreement was `0.817` versus
+`0.254` for the global adapter and `0.724` for the zero baseline, with top-1
+`0.50` versus `0.0` and `0.5`. This is exploratory and underpowered, so it is
+not promoted to a formal positive claim. It does establish the actionable
+failure diagnosis: the negative result is caused primarily by missing or
+unstable contact/action-effect support, not by predictor RMSE alone. The next
+formal intervention must therefore gate on RGB contact support and report
+coverage, probe residual, and held-candidate ranking jointly. No planner or
+carry claim is opened by either smoke result.

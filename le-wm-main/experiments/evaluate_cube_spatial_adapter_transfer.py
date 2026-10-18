@@ -2,9 +2,10 @@
 
 This is an independent consequence of the saved root-disjoint action-effect
 panel.  It does not use simulator state, goal distance, or planning success.
-For each four-action root group, the score of a candidate is the displacement
-projected onto its own XY action direction.  The report compares the learned
-adapter against the train-only constant target baseline.
+For each declared candidate-bank group, the score of a candidate is the
+predicted displacement along the calibration-only RGB goal direction. The
+report compares the learned adapter against the train-only constant target
+baseline and a local probe-fitted action map.
 """
 
 from __future__ import annotations
@@ -36,7 +37,9 @@ def _score_rows(actions: np.ndarray, effects: np.ndarray) -> np.ndarray:
     return np.sum(actions * effects[:, :2], axis=1)
 
 
-def _fit_local_probe_map(actions: np.ndarray, effects: np.ndarray) -> tuple[np.ndarray | None, dict[str, float | int | str]]:
+def _fit_local_probe_map(
+    actions: np.ndarray, effects: np.ndarray, min_effect_norm: float = 1.0e-4,
+) -> tuple[np.ndarray | None, dict[str, float | int | str]]:
     """Fit an action-to-front-effect map from probe rows only."""
     x = np.asarray(actions, dtype=np.float64)
     y = np.asarray(effects[:, :2], dtype=np.float64)
@@ -46,9 +49,34 @@ def _fit_local_probe_map(actions: np.ndarray, effects: np.ndarray) -> tuple[np.n
     mapping, _, _, singular = np.linalg.lstsq(x, y, rcond=1.0e-6)
     condition = float(singular[0] / max(singular[-1], 1.0e-8))
     norm = float(np.linalg.norm(mapping, ord="fro"))
-    if not np.isfinite(mapping).all() or condition > 100.0 or norm < 1.0e-5:
-        return None, {"status": "unstable_probe_map", "rank": rank, "condition": condition, "mapping_norm": norm}
-    return mapping, {"status": "ok", "rank": rank, "condition": condition, "mapping_norm": norm}
+    effect_norm = float(np.mean(np.linalg.norm(y, axis=1)))
+    if not np.isfinite(mapping).all() or condition > 100.0 or norm < 1.0e-5 or effect_norm < float(min_effect_norm):
+        return None, {
+            "status": "unstable_or_weak_probe_map", "rank": rank,
+            "condition": condition, "mapping_norm": norm,
+            "probe_effect_norm": effect_norm, "min_effect_norm": float(min_effect_norm),
+        }
+    return mapping, {
+        "status": "ok", "rank": rank, "condition": condition,
+        "mapping_norm": norm, "probe_effect_norm": effect_norm,
+    }
+
+
+def _probe_and_held_indices(action_bank: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return fixed probe and held positions for the declared action bank."""
+    bank = np.asarray(action_bank, dtype=np.float64)
+    if bank.ndim != 2 or bank.shape[1] != 2:
+        raise ValueError(f"candidate action bank must have shape (n, 2), got {bank.shape}")
+    if len(bank) == 4:
+        probe = np.asarray([0, 2], dtype=np.int64)
+    elif len(bank) == 8:
+        # +x, +y, -x: rank-2 probes with five genuinely held candidates.
+        probe = np.asarray([0, 2, 4], dtype=np.int64)
+    else:
+        raise ValueError(f"unsupported candidate bank size: {len(bank)}")
+    probe_set = set(probe.tolist())
+    held = np.asarray([i for i in range(len(bank)) if i not in probe_set], dtype=np.int64)
+    return probe, held
 
 
 def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dict[str, object]:
@@ -58,6 +86,17 @@ def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dic
     train_targets = np.asarray(data["train_targets"], dtype=np.float32)
     test_desired = np.asarray(data["test_desired"], dtype=np.float32)
     actions = test_features[:, -2:]
+    candidate_actions = np.asarray(
+        data.get("candidate_actions", np.asarray(
+            [[0.5, 0.0], [-0.5, 0.0], [0.0, 0.5], [0.0, -0.5]],
+            dtype=np.float32,
+        )),
+        dtype=np.float32,
+    )
+    probe_positions, held_positions = _probe_and_held_indices(candidate_actions)
+    group_size = len(candidate_actions)
+    if len(test_targets) % group_size != 0:
+        raise ValueError("test panel row count is not divisible by candidate bank size")
     torch_device = torch.device(device)
     model = SpatialAdapter(input_dim=test_features.shape[1] - 2).to(torch_device)
     checkpoint = torch.load(checkpoint_path, map_location=torch_device, weights_only=True)
@@ -80,8 +119,8 @@ def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dic
     for name, effects in (("adapter", predicted), ("zero_baseline", constant)):
         top1 = []
         pairwise = []
-        for start in range(0, len(test_targets), 4):
-            stop = start + 4
+        for start in range(0, len(test_targets), group_size):
+            stop = start + group_size
             true_scores = _score_rows(actions[start:stop], test_targets[start:stop])
             predicted_scores = _score_rows(actions[start:stop], effects[start:stop])
             top1.append(int(np.argmax(true_scores) == np.argmax(predicted_scores)))
@@ -91,18 +130,19 @@ def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dic
             "top1_agreement": float(np.mean(top1)),
             "pairwise_agreement": float(np.mean(pairwise)),
         }
-    # Candidate order is [+x, -x, +y, -y].  Use the orthogonal [+x, +y]
-    # rows as fixed short probes; only [-x, -y] are ranked, so evaluated
+    # Use fixed short probes; only held candidates are ranked, so evaluated
     # candidate outcomes are not used to fit the local map.
     local_top1, chart_top1, global_top1 = [], [], []
     local_pairwise, chart_pairwise, global_pairwise = [], [], []
-    residuals, gate_failures = [], 0
-    for start in range(0, len(test_targets), 4):
-        probe = np.asarray([start, start + 2])
-        held = np.asarray([start + 1, start + 3])
+    residuals, gate_failures, gate_reasons = [], 0, {}
+    for start in range(0, len(test_targets), group_size):
+        probe = start + probe_positions
+        held = start + held_positions
         mapping, diagnostics = _fit_local_probe_map(actions[probe], test_targets[probe])
         if mapping is None:
             gate_failures += 1
+            reason = str(diagnostics.get("status", "unknown"))
+            gate_reasons[reason] = gate_reasons.get(reason, 0) + 1
             local_pred = chart_predicted[held]
         else:
             local_pred = actions[held] @ mapping
@@ -121,12 +161,13 @@ def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dic
         global_pairwise.append(_pairwise_agreement(true_scores, global_scores))
     reports["verified_local_unprobed_candidates"] = {
         "groups": len(local_top1),
-        "probe_actions": [[0.5, 0.0], [0.0, 0.5]],
-        "ranked_actions": [[-0.5, 0.0], [0.0, -0.5]],
+        "probe_actions": candidate_actions[probe_positions].tolist(),
+        "ranked_actions": candidate_actions[held_positions].tolist(),
         "top1_agreement": float(np.mean(local_top1)),
         "pairwise_agreement": float(np.mean(local_pairwise)),
         "probe_effect_rmse": float(np.mean(residuals)) if residuals else None,
         "gate_failures": int(gate_failures),
+        "gate_reasons": gate_reasons,
         "reprobe_or_fallback_rate": float(gate_failures / max(len(local_top1), 1)),
     }
     reports["fixed_action_chart_unprobed_candidates"] = {
@@ -138,10 +179,12 @@ def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dic
         "pairwise_agreement": float(np.mean(global_pairwise)),
     }
     return {
-        "schema": "cube_spatial_adapter_transfer.v1",
+        "schema": "cube_spatial_adapter_transfer.v2",
         "protocol": {
             "root_disjoint": True,
-            "candidate_bank": "four planar actions",
+            "candidate_bank": candidate_actions.tolist(),
+            "probe_positions": probe_positions.tolist(),
+            "held_positions": held_positions.tolist(),
             "ranking_score": "front RGB object delta projected onto calibration-only goal displacement",
             "held_candidate_outcomes_used_for_selection": False,
             "probe_outcomes_used_for_local_update": True,

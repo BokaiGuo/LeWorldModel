@@ -1,6 +1,11 @@
 import numpy as np
 
-from experiments.evaluate_cube_spatial_adapter_transfer import _fit_local_probe_map, _pairwise_agreement, _score_rows
+from experiments.evaluate_cube_spatial_adapter_transfer import (
+    _fit_local_probe_map,
+    _pairwise_agreement,
+    _probe_and_held_indices,
+    _score_rows,
+)
 
 
 def test_score_projects_effect_onto_candidate_action():
@@ -20,3 +25,13 @@ def test_local_probe_map_requires_two_action_directions():
     )
     np.testing.assert_allclose(mapping, [[2.0, 0.0], [0.0, 3.0]])
     assert report["status"] == "ok"
+
+
+def test_eight_action_protocol_leaves_unprobed_candidates_for_ranking():
+    bank = np.asarray(
+        [[np.cos(i * np.pi / 4), np.sin(i * np.pi / 4)] for i in range(8)]
+    )
+    probe, held = _probe_and_held_indices(bank)
+    np.testing.assert_array_equal(probe, [0, 2, 4])
+    np.testing.assert_array_equal(held, [1, 3, 5, 6, 7])
+    assert not set(probe.tolist()).intersection(held.tolist())
