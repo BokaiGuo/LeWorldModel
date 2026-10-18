@@ -225,6 +225,7 @@ def run(
         residual_start_iteration=np.asarray([int(stage)], dtype=np.int64),
         feature_family=np.asarray(["source_delta_action"]),
         action_frame=np.asarray(["raw"]),
+        support_scope=np.asarray(["full_cem_final_stage"]),
         goal_conditioning=np.asarray([goal_conditioning]),
         target_mode=np.asarray([target_mode]),
         success_penalty=np.asarray([float(success_penalty)], dtype=np.float64),

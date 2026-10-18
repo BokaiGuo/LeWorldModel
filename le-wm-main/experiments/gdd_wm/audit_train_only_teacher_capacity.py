@@ -4,7 +4,9 @@ This is a capacity diagnostic, not a teacher or planning result.  A linear
 action-summary model is fit on train roots, then both a fixed linear residual
 readout and one fixed shallow MLP residual readout are fit on the same
 train-only source/delta/action features.  The MLP is intentionally not tuned
-on calibration or outcome data and requires CUDA for an actual run. The
+on calibration or outcome data. CUDA is preferred, but an explicit CPU
+fallback is available when the runtime cannot initialize CUDA; the resolved
+device is recorded in the artifact. The
 explicit action-frame and target-mode controls make raw-coordinate and
 root-cost confounds auditable rather than silently folding them into the
 latent residual.
@@ -743,9 +745,24 @@ def run(
     require_multiple_contexts: bool = True,
     mlp_residual_start_iteration: int = 7,
     mlp_planner_call_index: int = 1,
+    fit_device: str = "auto",
 ) -> dict[str, Any]:
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required for this capacity audit; refusing CPU fallback")
+    if fit_device not in {"auto", "cpu", "cuda"}:
+        raise ValueError("fit_device must be one of: auto, cpu, cuda")
+    cuda_available = bool(torch.cuda.is_available())
+    if fit_device == "cuda" and not cuda_available:
+        raise RuntimeError("CUDA requested but torch.cuda.is_available() is false")
+    resolved_device = (
+        "cuda" if fit_device == "cuda" or (fit_device == "auto" and cuda_available)
+        else "cpu"
+    )
+    device = torch.device(resolved_device)
+    device_note = (
+        "requested_cuda_and_available" if fit_device == "cuda"
+        else "auto_cuda" if resolved_device == "cuda"
+        else "explicit_cpu" if fit_device == "cpu"
+        else "auto_cpu_cuda_unavailable"
+    )
     if mlp_residual_start_iteration < 0 or mlp_planner_call_index < 0:
         raise ValueError("MLP residual iteration/call gates must be nonnegative")
     rows, contexts, arrays = _load_context_rows(
@@ -765,6 +782,13 @@ def run(
         context_index = context_lookup[str(row["candidate_bank_context_id"])]
         key = _feature_key(row)
         key = key.split("::", 1)[-1] if "::" in key else key
+        if key not in arrays[context_index].files:
+            available_roles = sorted({name.split("::", 1)[0] for name in arrays[context_index].files})
+            raise ValueError(
+                "array artifact is missing the required predicted-latent key "
+                f"{key!r}; available roles are {available_roles}. "
+                "A realized-only array cannot be substituted for predicted dynamics."
+            )
         value = np.asarray(arrays[context_index][key], dtype=np.float64)
         features.append(_feature_vector(row, value, action_frame, goal_conditioning))
         action_feature = (
@@ -807,7 +831,6 @@ def run(
     )
     residual_train = train_target - action_pred[train_mask]
 
-    device = torch.device("cuda")
     shuffled_x = _shuffle_predicted_delta_within_cells(x, group_roots, latent_dimension)
     source_block = x[:, :latent_dimension]
     delta_block = x[:, latent_dimension : 2 * latent_dimension]
@@ -1458,7 +1481,7 @@ def run(
         readout_artifact = str(readout_path)
     report = {
         "schema": "gdd_wm_train_only_teacher_capacity_audit.v0.1",
-        "status": "completed_cuda_diagnostic",
+        "status": "completed_device_diagnostic",
         "protocol": {
             "fit_split": "train",
             "evaluation_split": "outcome",
@@ -1493,7 +1516,10 @@ def run(
                 ],
             },
             "family_or_capacity_selection": "not_performed",
-            "device": str(device),
+            "requested_device": fit_device,
+            "resolved_device": str(device),
+            "device_note": device_note,
+            "torch_cuda_available": cuda_available,
             "seed": seed,
             "root_bootstrap_draws": draws,
             "pair_margin": margin,
@@ -1541,6 +1567,10 @@ def main() -> int:
     )
     parser.add_argument("--mlp-residual-start-iteration", type=int, default=7)
     parser.add_argument("--mlp-planner-call-index", type=int, default=1)
+    parser.add_argument(
+        "--fit-device", choices=("auto", "cpu", "cuda"), default="auto",
+        help="device for train-only neural diagnostics; auto prefers CUDA and records CPU fallback",
+    )
     args = parser.parse_args()
     run(
         candidate_datasets=[Path(item) for item in args.candidate_dataset],
@@ -1557,6 +1587,7 @@ def main() -> int:
         require_multiple_contexts=not args.allow_single_context,
         mlp_residual_start_iteration=args.mlp_residual_start_iteration,
         mlp_planner_call_index=args.mlp_planner_call_index,
+        fit_device=args.fit_device,
     )
     return 0
 

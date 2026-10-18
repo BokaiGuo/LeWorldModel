@@ -455,6 +455,20 @@ def test_capacity_runtime_enables_final_stage_residual_at_start() -> None:
     torch.testing.assert_close(costs, torch.tensor([[0.0, 1.0, 2.5, 3.5]]))
 
 
+def test_capacity_runtime_applies_full_cem_final_stage_without_bank_mask() -> None:
+    artifact = _final_stage_artifact()
+    artifact["support_scope"] = "full_cem_final_stage"
+    model = CapacityReadoutCostModel(
+        _RankedBase(), artifact,
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    info = {"_cem_iteration": torch.tensor([[6, 7, 8, 7]], dtype=torch.int64)}
+    costs = model.get_cost(info, torch.zeros(1, 4, 5, 10))
+    # Full-trajectory calibration authorizes all proposals only at the
+    # declared final stage; earlier proposals remain exactly frozen-base.
+    torch.testing.assert_close(costs, torch.tensor([[0.0, 1.5, 2.5, 3.5]]))
+
+
 def test_capacity_runtime_fails_closed_without_support_metadata() -> None:
     model = CapacityReadoutCostModel(
         _RankedBase(), _final_stage_artifact(),

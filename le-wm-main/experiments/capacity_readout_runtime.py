@@ -84,6 +84,17 @@ def load_capacity_readout(path: Path) -> dict[str, torch.Tensor | bool | str | f
         artifact["gate_enabled"] = bool(gate)
         artifact["action_frame"] = action_frame
         artifact["feature_family"] = feature_family
+        artifact["support_scope"] = str(
+            np.asarray(data["support_scope"]).reshape(-1)[0]
+        ) if "support_scope" in data.files else "explicit_candidate_bank_only"
+        if artifact["support_scope"] not in (
+            "explicit_candidate_bank_only",
+            "full_cem_final_stage",
+        ):
+            raise ValueError(
+                "runtime capacity readout has unsupported support_scope: "
+                f"{artifact['support_scope']!r}"
+            )
         if "goal_conditioning" in data.files:
             artifact["goal_conditioning"] = str(
                 np.asarray(data["goal_conditioning"]).reshape(-1)[0]
@@ -466,6 +477,17 @@ class CapacityReadoutCostModel(torch.nn.Module):
         if action_frame not in ("raw", "proposal_relative"):
             raise ValueError(f"unsupported runtime action frame: {action_frame!r}")
         self.action_frame = action_frame
+        self.support_scope = str(
+            artifact.get("support_scope", "explicit_candidate_bank_only")
+        )
+        if self.support_scope not in (
+            "explicit_candidate_bank_only",
+            "full_cem_final_stage",
+        ):
+            raise ValueError(
+                "unsupported runtime capacity support_scope: "
+                f"{self.support_scope!r}"
+            )
         self.base_cost_correction = bool(artifact.get("base_cost_correction", False))
         self.action_correction_enabled = bool(artifact.get("action_correction_enabled", True))
         self.correction_multiplier = float(artifact.get("correction_multiplier", 1.0))
@@ -737,6 +759,7 @@ class CapacityReadoutCostModel(torch.nn.Module):
             (self.gate_enabled or self.bilinear_gate_enabled)
             and not self.mlp_no_dynamics_gate_enabled
             and "_candidate_bank_mask" not in info_dict
+            and self.support_scope != "full_cem_final_stage"
         ):
             return base_cost
         raw_candidates = (

@@ -41,6 +41,297 @@ from experiments.run_live_cube_action_adapter_planning import ActionNormalizer
 from stable_worldmodel.solver.utils import prepare_init_action
 
 
+def _rgb_red_centroid(image: np.ndarray) -> np.ndarray:
+    """Return the visible red marker centroid from one raw RGB frame."""
+    image = np.asarray(image)
+    if image.ndim == 3 and image.shape[0] in (1, 3, 4) and image.shape[-1] not in (1, 3, 4):
+        image = np.transpose(image, (1, 2, 0))
+    if image.ndim != 3 or image.shape[-1] < 3:
+        raise ValueError(f"expected one RGB frame, got shape {image.shape}")
+    red = image[..., 0].astype(np.float32)
+    green = image[..., 1].astype(np.float32)
+    blue = image[..., 2].astype(np.float32)
+    mask = (red > 160.0) & (red > 1.5 * green) & (red > 1.5 * blue)
+    yy, xx = np.nonzero(mask)
+    if len(xx) == 0:
+        return np.asarray([image.shape[1] / 2.0, image.shape[0] / 2.0], dtype=np.float32)
+    return np.asarray([xx.mean(), yy.mean()], dtype=np.float32)
+
+
+def _raw_frame(value: np.ndarray, index: int = 0) -> np.ndarray:
+    """Extract one current/goal RGB frame from World policy info."""
+    value = np.asarray(value)
+    if value.ndim == 5:
+        value = value[index, -1]
+    elif value.ndim == 4:
+        value = value[index]
+    return value
+
+
+def _rgb_reactive_action(current: np.ndarray, goal: np.ndarray) -> tuple[np.ndarray, str]:
+    """Pure-RGB one-pulse controller used only by the fallback gate.
+
+    It mirrors the separately audited reactive ceiling: when the markers are
+    separated across the visible wall, move toward the visible door first;
+    otherwise move toward the goal marker.  No simulator state is read.
+    """
+    source = _rgb_red_centroid(current)
+    target = _rgb_red_centroid(goal)
+    # Reuse the independently tested detector at runtime without importing it
+    # at module import time (that module imports this runner for the wrapper).
+    from experiments.audit_tworoom_rgb_reactive_controller import _door_point
+
+    door, vertical = _door_point(current)
+    side_gap = abs(float(target[0] - source[0])) if vertical else abs(float(target[1] - source[1]))
+    waypoint = target
+    phase = "goal"
+    if side_gap > 35.0 and np.linalg.norm(source - door) > 18.0:
+        waypoint = door
+        phase = "door"
+    delta = waypoint - source
+    norm = float(np.linalg.norm(delta))
+    if norm < 1.0e-6:
+        return np.zeros(2, dtype=np.float32), phase
+    return (delta / norm).astype(np.float32), phase
+
+
+class RGBReactivePolicy:
+    """Raw-RGB reactive baseline with the same World evaluation interface."""
+
+    def __init__(self):
+        self.env = None
+        self.calls = 0
+
+    def set_env(self, env):
+        self.env = env
+
+    def get_action(self, info_dict: dict, **kwargs) -> np.ndarray:
+        n_envs = self.env.num_envs
+        actions = np.zeros((n_envs, 2), dtype=np.float32)
+        for index in range(n_envs):
+            action, _ = _rgb_reactive_action(
+                _raw_frame(info_dict["pixels"], index),
+                _raw_frame(info_dict["goal"], index),
+            )
+            actions[index] = action
+        self.calls += n_envs
+        return actions
+
+
+class RiskGatedRGBPolicy:
+    """Use frozen LeWM, but veto strongly conflicting actions with RGB evidence.
+
+    The gate is deliberately frozen before held-out evaluation: a model action
+    is replaced only when its 2-D direction has cosine below ``conflict_cos``
+    with the one-pulse RGB direction, or when its norm is below
+    ``model_min_norm``.  The next environment observation is consumed by the
+    next call, so this is an online action-effect re-observation protocol.
+    """
+
+    def __init__(self, base_policy, conflict_cos: float = 0.0,
+                 model_min_norm: float = 0.08,
+                 use_effect_map: bool = False):
+        self.base_policy = base_policy
+        self.conflict_cos = float(conflict_cos)
+        self.model_min_norm = float(model_min_norm)
+        self.use_effect_map = bool(use_effect_map)
+        self.env = None
+        self.gate_calls = 0
+        self.fallback_count = 0
+        self.phases: list[str] = []
+        self.cosines: list[float] = []
+        self.effect_actions_by_env: list[list[np.ndarray]] = []
+        self.effect_deltas_by_env: list[list[np.ndarray]] = []
+        self.effect_actions_by_env_phase: list[dict[str, list[np.ndarray]]] = []
+        self.effect_deltas_by_env_phase: list[dict[str, list[np.ndarray]]] = []
+        self.previous_frames: list[np.ndarray | None] = []
+        self.previous_actions: list[np.ndarray | None] = []
+        self.previous_phases: list[str | None] = []
+        self.gate_calls_by_env: list[int] = []
+        self.fallback_counts_by_env: list[int] = []
+        self.phase_counts_by_env: list[dict[str, int]] = []
+
+    def set_env(self, env):
+        self.env = env
+        self.base_policy.set_env(env)
+        self.previous_frames = [None for _ in range(int(env.num_envs))]
+        self.previous_actions = [None for _ in range(int(env.num_envs))]
+        self.effect_actions_by_env = [[] for _ in range(int(env.num_envs))]
+        self.effect_deltas_by_env = [[] for _ in range(int(env.num_envs))]
+        self.effect_actions_by_env_phase = [
+            {"door": [], "goal": []} for _ in range(int(env.num_envs))
+        ]
+        self.effect_deltas_by_env_phase = [
+            {"door": [], "goal": []} for _ in range(int(env.num_envs))
+        ]
+        self.gate_calls_by_env = [0 for _ in range(int(env.num_envs))]
+        self.fallback_counts_by_env = [0 for _ in range(int(env.num_envs))]
+        self.phase_counts_by_env = [
+            {"door": 0, "goal": 0} for _ in range(int(env.num_envs))
+        ]
+        self.previous_phases = [None for _ in range(int(env.num_envs))]
+
+    def _effect_histories(
+        self, env_index: int, phase: str | None = None,
+    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        if phase is None:
+            return self.effect_actions_by_env[env_index], self.effect_deltas_by_env[env_index]
+        if phase not in {"door", "goal"}:
+            raise ValueError(f"unknown TwoRoom phase: {phase}")
+        return (
+            self.effect_actions_by_env_phase[env_index][phase],
+            self.effect_deltas_by_env_phase[env_index][phase],
+        )
+
+    def _effect_map(
+        self, env_index: int, phase: str | None = None,
+    ) -> tuple[np.ndarray | None, int]:
+        actions_history, deltas_history = self._effect_histories(env_index, phase)
+        if len(actions_history) < 4:
+            return None, 0
+        actions = np.asarray(actions_history, dtype=np.float64)
+        deltas = np.asarray(deltas_history, dtype=np.float64)
+        rank = int(np.linalg.matrix_rank(actions))
+        if rank < 2 or not np.isfinite(actions).all() or not np.isfinite(deltas).all():
+            return None, rank
+        mapping, _, _, _ = np.linalg.lstsq(actions, deltas, rcond=1.0e-6)
+        return mapping.astype(np.float32) if np.isfinite(mapping).all() else None, rank
+
+    def _effect_map_quality(
+        self, env_index: int, phase: str | None = None,
+    ) -> dict[str, Any]:
+        """Return a frozen support/conditioning gate for a local effect map."""
+        actions_history, deltas_history = self._effect_histories(env_index, phase)
+        diagnostics: dict[str, Any] = {
+            "rows": int(len(actions_history)),
+            "rank": 0,
+            "condition_number": None,
+            "normalized_residual": None,
+            "usable": False,
+            "reason": "insufficient_rows",
+        }
+        # Four rows are enough to fit a map but not enough for a stable
+        # deployment decision.  Six rows and rank-two support are a frozen
+        # minimum; the remaining gates are dimensionless and outcome-free.
+        if len(actions_history) < 6:
+            return diagnostics
+        actions = np.asarray(actions_history, dtype=np.float64)
+        deltas = np.asarray(deltas_history, dtype=np.float64)
+        rank = int(np.linalg.matrix_rank(actions))
+        diagnostics["rank"] = rank
+        if rank < 2 or not np.isfinite(actions).all() or not np.isfinite(deltas).all():
+            diagnostics["reason"] = "rank_or_finite_support_failed"
+            return diagnostics
+        condition = float(np.linalg.cond(actions))
+        mapping, _, _, _ = np.linalg.lstsq(actions, deltas, rcond=1.0e-6)
+        residual = actions @ mapping - deltas
+        normalized_residual = float(
+            np.linalg.norm(residual) / max(np.linalg.norm(deltas), 1.0e-6)
+        )
+        diagnostics["condition_number"] = condition
+        diagnostics["normalized_residual"] = normalized_residual
+        if not np.isfinite(condition) or condition > 100.0:
+            diagnostics["reason"] = "ill_conditioned_support"
+            return diagnostics
+        if not np.isfinite(normalized_residual) or normalized_residual > 0.75:
+            diagnostics["reason"] = "effect_map_residual_too_large"
+            return diagnostics
+        diagnostics["usable"] = True
+        diagnostics["reason"] = "support_and_fit_quality_passed"
+        return diagnostics
+
+    def get_action(self, info_dict: dict, **kwargs) -> np.ndarray:
+        model_actions = np.asarray(self.base_policy.get_action(info_dict, **kwargs), dtype=np.float32)
+        if model_actions.ndim == 1:
+            model_actions = model_actions[None, :]
+        output = model_actions.copy()
+        terminated = np.asarray(
+            info_dict.get("terminated", np.zeros(len(output), dtype=bool)),
+            dtype=bool,
+        ).reshape(-1)
+        needs_flush = np.asarray(
+            info_dict.get("_needs_flush", np.zeros(len(output), dtype=bool)),
+            dtype=bool,
+        ).reshape(-1)
+        for index in range(len(output)):
+            if needs_flush[index]:
+                self.previous_frames[index] = None
+                self.previous_actions[index] = None
+                self.previous_phases[index] = None
+            if self.previous_frames[index] is not None and self.previous_actions[index] is not None:
+                previous_source = _rgb_red_centroid(self.previous_frames[index])
+                current_source = _rgb_red_centroid(_raw_frame(info_dict["pixels"], index))
+                delta = current_source - previous_source
+                action_xy = np.asarray(self.previous_actions[index], dtype=np.float32)[:2]
+                if np.isfinite(delta).all() and np.isfinite(action_xy).all():
+                    self.effect_actions_by_env[index].append(action_xy.copy())
+                    self.effect_deltas_by_env[index].append(delta.astype(np.float32))
+                    previous_phase = self.previous_phases[index] or "goal"
+                    self.effect_actions_by_env_phase[index][previous_phase].append(action_xy.copy())
+                    self.effect_deltas_by_env_phase[index][previous_phase].append(delta.astype(np.float32))
+        self.gate_calls += int(np.sum(~terminated & np.isfinite(output[:, :2]).all(axis=1)))
+        for index in range(len(output)):
+            # WorldModelPolicy intentionally returns NaN for already terminated
+            # envs.  They are ignored by the evaluator and must not pollute the
+            # diagnostic cosine distribution.
+            if terminated[index] or not np.isfinite(output[index, :2]).all():
+                continue
+            self.gate_calls_by_env[index] += 1
+            reactive, phase = _rgb_reactive_action(
+                _raw_frame(info_dict["pixels"], index),
+                _raw_frame(info_dict["goal"], index),
+            )
+            model_xy = output[index, :2]
+            model_norm = float(np.linalg.norm(model_xy))
+            reactive_norm = float(np.linalg.norm(reactive))
+            cosine = float(np.dot(model_xy, reactive) / max(model_norm * reactive_norm, 1.0e-8))
+            fallback = model_norm < self.model_min_norm or cosine < self.conflict_cos
+            effect_map, effect_rank = self._effect_map(index, phase)
+            effect_quality = self._effect_map_quality(index, phase)
+            if self.use_effect_map and effect_map is not None and effect_quality["usable"]:
+                predicted_effect = model_xy @ effect_map
+                # The reactive vector is the desired local image-space
+                # direction.  Reject a model action whose observed local
+                # action-effect map predicts non-progress, even if its raw
+                # action direction appears plausible.
+                if float(np.dot(predicted_effect, reactive)) <= 0.0:
+                    fallback = True
+            self.cosines.append(cosine)
+            self.phases.append(phase)
+            self.phase_counts_by_env[index][phase] += 1
+            if fallback:
+                output[index, :2] = reactive
+                self.fallback_count += 1
+                self.fallback_counts_by_env[index] += 1
+            self.previous_frames[index] = _raw_frame(info_dict["pixels"], index).copy()
+            self.previous_actions[index] = output[index].copy()
+            self.previous_phases[index] = phase
+        # Keep a small diagnostic snapshot on the policy; this is not used for
+        # action choice and is exported by the runner for mechanism analysis.
+        self.effect_map_rows = [len(history) for history in self.effect_actions_by_env]
+        self.effect_map_phase = [
+            self.previous_phases[index] for index in range(len(output))
+        ]
+        self.effect_map_rank = [
+            self._effect_map(index, self.previous_phases[index])[1]
+            if self.previous_phases[index] is not None else 0
+            for index in range(len(output))
+        ]
+        self.effect_map_quality = [
+            self._effect_map_quality(index, self.previous_phases[index])
+            if self.previous_phases[index] is not None
+            else {"rows": 0, "rank": 0, "usable": False, "reason": "no_phase_observation"}
+            for index in range(len(output))
+        ]
+        self.effect_map = [
+            None
+            if self.previous_phases[index] is None or self._effect_map(index, self.previous_phases[index])[0] is None
+            else self._effect_map(index, self.previous_phases[index])[0].tolist()
+            for index in range(len(output))
+        ]
+        return output
+
+
 class TwoRoomGoalAliasWrapper(gym.Wrapper):
     """Provide TwoRoom's rendered target as ``info['goal']``."""
 
@@ -80,7 +371,12 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
     def __init__(self, *args, candidate_bank: torch.Tensor,
                  candidate_bank_iterations: int | None = None,
                  record_candidate_trace: bool = False,
-                 final_action_selection: str = "mean", **kwargs):
+                 final_action_selection: str = "mean",
+                 vision_goal_bank: bool = False,
+                 vision_door_bank: bool = False,
+                 action_mean: np.ndarray | None = None,
+                 action_std: np.ndarray | None = None,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         if candidate_bank.ndim != 3:
             raise ValueError("candidate_bank must have shape [bank, horizon, action_dim]")
@@ -96,6 +392,15 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
         if final_action_selection not in {"mean", "best"}:
             raise ValueError("final_action_selection must be 'mean' or 'best'")
         self.final_action_selection = final_action_selection
+        self.vision_goal_bank = bool(vision_goal_bank)
+        self.vision_door_bank = bool(vision_door_bank)
+        if self.vision_door_bank and not self.vision_goal_bank:
+            raise ValueError("vision_door_bank requires vision_goal_bank")
+        if self.vision_goal_bank:
+            if action_mean is None or action_std is None:
+                raise ValueError("vision_goal_bank requires action statistics")
+            self.action_mean = np.asarray(action_mean, dtype=np.float32)
+            self.action_std = np.asarray(action_std, dtype=np.float32)
 
     @torch.inference_mode()
     def solve(self, info_dict: dict, init_action: torch.Tensor | None = None) -> dict:
@@ -143,8 +448,26 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
                     or _step < self.candidate_bank_iterations
                 )
                 active_bank = bank if use_bank else bank[:0]
-                gaussian_count = self.num_samples - 1 - active_bank.shape[0]
-                bank_batch = active_bank.unsqueeze(0).expand(current_bs, -1, -1, -1)
+                if self.vision_goal_bank and use_bank:
+                    if "pixels" not in info_dict or "goal" not in info_dict:
+                        raise KeyError("vision_goal_bank requires transformed pixels and goal inputs")
+                    bank_builder = (
+                        _vision_door_candidate_bank if self.vision_door_bank
+                        else _vision_goal_candidate_bank
+                    )
+                    bank_batch = bank_builder(
+                        info_dict["pixels"][start_idx:end_idx],
+                        info_dict["goal"][start_idx:end_idx],
+                        horizon=self.horizon,
+                        action_block=self.action_dim // 2,
+                        action_mean=self.action_mean,
+                        action_std=self.action_std,
+                    ).to(device=self.device, dtype=self.dtype)
+                    bank_count = bank_batch.shape[1]
+                else:
+                    bank_count = active_bank.shape[0]
+                    bank_batch = active_bank.unsqueeze(0).expand(current_bs, -1, -1, -1)
+                gaussian_count = self.num_samples - 1 - bank_count
                 gaussian = torch.randn(
                     current_bs, gaussian_count, self.horizon, self.action_dim,
                     generator=self.torch_gen, device=self.device, dtype=self.dtype,
@@ -157,7 +480,7 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
                 bank_mask = torch.zeros(
                     current_bs, self.num_samples, dtype=torch.bool, device=self.device,
                 )
-                bank_mask[:, 1 : 1 + active_bank.shape[0]] = True
+                bank_mask[:, 1 : 1 + bank_count] = True
                 expanded_infos["_candidate_bank_mask"] = bank_mask
                 expanded_infos["_cem_iteration"] = torch.full(
                     (current_bs, self.num_samples), _step,
@@ -442,7 +765,28 @@ class LatentActionRankerCostModel(torch.nn.Module):
         ], dim=-1)
         scaled = (features - self.feature_mean.to(features)) / self.feature_scale.to(features)
         ones = torch.ones(*scaled.shape[:-1], 1, device=scaled.device, dtype=scaled.dtype)
-        return torch.cat([scaled, ones], dim=-1) @ self.coefficient.to(features)
+        ranker_cost = torch.cat([scaled, ones], dim=-1) @ self.coefficient.to(features)
+        bank_mask = info_dict.get("_candidate_bank_mask")
+        if bank_mask is None:
+            raise ValueError(
+                "latent_action_ranker requires an explicit candidate bank; "
+                "unrestricted Gaussian proposals are outside calibration support"
+            )
+        bank_mask = bank_mask.to(device=ranker_cost.device, dtype=torch.bool)
+        if bank_mask.shape != ranker_cost.shape:
+            raise ValueError("candidate_bank_mask shape does not match ranker costs")
+        bank_count = bank_mask.sum(dim=1, keepdim=True).clamp_min(1).to(base_cost.dtype)
+        mask_float = bank_mask.to(base_cost.dtype)
+        base_mean = (base_cost * mask_float).sum(dim=1, keepdim=True) / bank_count
+        base_scale = torch.sqrt(
+            (((base_cost - base_mean) * mask_float).square().sum(dim=1, keepdim=True) / bank_count)
+        ).clamp_min(1.0e-6)
+        ranker_mean = (ranker_cost * mask_float).sum(dim=1, keepdim=True) / bank_count
+        ranker_scale = torch.sqrt(
+            (((ranker_cost - ranker_mean) * mask_float).square().sum(dim=1, keepdim=True) / bank_count)
+        ).clamp_min(1.0e-6)
+        calibrated_ranker = (ranker_cost - ranker_mean) / ranker_scale * base_scale + base_mean
+        return torch.where(bank_mask, calibrated_ranker, base_cost)
 
 
 def _candidate_bank(
@@ -450,20 +794,39 @@ def _candidate_bank(
     action_std: np.ndarray,
     horizon: int,
     action_block: int,
+    variant: str = "legacy",
 ) -> torch.Tensor:
-    """Build fixed raw-action macro candidates, then normalize them."""
+    """Build fixed raw-action macro candidates, then normalize them.
+
+    ``legacy`` is the previously frozen 11-template bank.  ``angular16`` is
+    an explicit coverage intervention: 16 evenly spaced directions at two
+    magnitudes plus zero, using the same macro-action interface and CEM slot
+    budget.  It is deliberately selected without simulator state or outcomes.
+    """
     if action_mean.size != action_std.size or action_mean.size % action_block:
         raise ValueError("action statistics are incompatible with action_block")
     raw_dim = action_mean.size // action_block
     if raw_dim != 2:
         raise ValueError(f"TwoRoom candidate bank expects 2-D actions, got {raw_dim}")
-    directions = [(0.0, 0.0)]
-    for magnitude in (0.25, 0.50, 0.75):
-        directions.extend([
-            (magnitude, 0.0), (-magnitude, 0.0),
-            (0.0, magnitude), (0.0, -magnitude),
-        ])
-    directions.extend([(0.5, 0.5), (0.5, -0.5), (-0.5, 0.5), (-0.5, -0.5)])
+    if variant == "legacy":
+        directions = [(0.0, 0.0)]
+        for magnitude in (0.25, 0.50, 0.75):
+            directions.extend([
+                (magnitude, 0.0), (-magnitude, 0.0),
+                (0.0, magnitude), (0.0, -magnitude),
+            ])
+        directions.extend([(0.5, 0.5), (0.5, -0.5), (-0.5, 0.5), (-0.5, -0.5)])
+    elif variant in {"angular16", "vision_goal16", "vision_door16"}:
+        directions = [(0.0, 0.0)]
+        angle_count = 16 if variant == "angular16" else 8
+        angles = np.linspace(0.0, 2.0 * np.pi, angle_count, endpoint=False)
+        for magnitude in (0.50, 0.75):
+            directions.extend([
+                (float(magnitude * np.cos(angle)), float(magnitude * np.sin(angle)))
+                for angle in angles
+            ])
+    else:
+        raise ValueError(f"unknown TwoRoom candidate-bank variant: {variant}")
     sequences: list[np.ndarray] = []
     for dx, dy in directions:
         frame = np.asarray([dx, dy], dtype=np.float32)
@@ -471,6 +834,221 @@ def _candidate_bank(
         normalized_block = (block - action_mean) / np.maximum(action_std, 1e-6)
         sequences.append(np.tile(normalized_block[None, :], (horizon, 1)))
     return torch.as_tensor(np.stack(sequences), dtype=torch.float32)
+
+
+def _red_centroid(image: torch.Tensor) -> torch.Tensor:
+    """Estimate the red agent marker centroid from a normalized RGB image."""
+    if image.ndim == 5:
+        image = image[:, -1]
+    if image.ndim != 4 or image.shape[1] < 3:
+        raise ValueError("expected image batch [batch, channels, height, width]")
+    red, green, blue = image[:, 0], image[:, 1], image[:, 2]
+    mask = (red - green > 1.0) & (red - blue > 1.0)
+    height, width = mask.shape[-2:]
+    yy = torch.arange(height, device=image.device, dtype=image.dtype).view(1, height, 1)
+    xx = torch.arange(width, device=image.device, dtype=image.dtype).view(1, 1, width)
+    weights = mask.to(image.dtype)
+    mass = weights.sum(dim=(-2, -1))
+    safe_mass = mass.clamp_min(1.0)
+    x = (weights * xx).sum(dim=(-2, -1)) / safe_mass
+    y = (weights * yy).sum(dim=(-2, -1)) / safe_mass
+    return torch.stack([x, y], dim=-1)
+
+
+def _vision_goal_candidate_bank(
+    pixels: torch.Tensor,
+    goal: torch.Tensor,
+    *,
+    horizon: int,
+    action_block: int,
+    action_mean: np.ndarray,
+    action_std: np.ndarray,
+) -> torch.Tensor:
+    """Build root-local candidates from RGB red-marker displacement only.
+
+    This is a perception-side candidate proposal, not a simulator-state oracle:
+    it consumes the same transformed current/goal images as the policy.  The
+    fixed offsets hedge against walls while preserving a small CEM bank.
+    """
+    if pixels.ndim not in (4, 5) or goal.ndim not in (4, 5):
+        raise ValueError("vision goal bank expects transformed current and goal images")
+    current = _red_centroid(pixels)
+    target = _red_centroid(goal)
+    displacement = target - current
+    angles = torch.atan2(displacement[:, 1], displacement[:, 0])
+    offsets = torch.arange(8, device=pixels.device, dtype=pixels.dtype) * (2.0 * np.pi / 8.0)
+    angles = angles[:, None] + offsets[None, :]
+    magnitudes = (0.50, 0.75)
+    raw_frames = [torch.zeros((pixels.shape[0], 1, 2), device=pixels.device, dtype=pixels.dtype)]
+    for magnitude in magnitudes:
+        raw_frames.append(torch.stack([
+            magnitude * torch.cos(angles), magnitude * torch.sin(angles),
+        ], dim=-1))
+    frames = torch.cat(raw_frames, dim=1)
+    raw_dim = action_block * 2
+    raw = frames[:, :, None, :].expand(-1, -1, action_block, -1).reshape(
+        pixels.shape[0], frames.shape[1], raw_dim,
+    )
+    mean = torch.as_tensor(action_mean, device=pixels.device, dtype=pixels.dtype)
+    std = torch.as_tensor(action_std, device=pixels.device, dtype=pixels.dtype).clamp_min(1.0e-6)
+    normalized = (raw - mean) / std
+    return normalized[:, :, None, :].expand(-1, -1, horizon, -1).contiguous()
+
+
+def _longest_false_run(mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return start/end of the longest false run for each batch row."""
+    starts: list[int] = []
+    ends: list[int] = []
+    for row in mask.detach().cpu().numpy():
+        best_start, best_end = 0, 0
+        start = None
+        for index, value in enumerate(row.tolist() + [True]):
+            if not value and start is None:
+                start = index
+            elif value and start is not None:
+                if index - start > best_end - best_start:
+                    best_start, best_end = start, index
+                start = None
+        starts.append(best_start)
+        ends.append(best_end)
+    return (
+        torch.as_tensor(starts, device=mask.device, dtype=torch.float32),
+        torch.as_tensor(ends, device=mask.device, dtype=torch.float32),
+    )
+
+
+def _longest_true_run_within(mask: torch.Tensor, valid: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    starts: list[int] = []
+    ends: list[int] = []
+    for row, valid_row in zip(mask.detach().cpu().numpy(), valid.detach().cpu().numpy()):
+        indices = np.flatnonzero(valid_row)
+        best_start, best_end = 0, 0
+        if len(indices):
+            lo, hi = int(indices[0]), int(indices[-1])
+            start = None
+            for index in range(lo, hi + 2):
+                value = bool(row[index]) if index <= hi else False
+                if value and start is None:
+                    start = index
+                elif not value and start is not None:
+                    if index - start > best_end - best_start:
+                        best_start, best_end = start, index
+                    start = None
+        starts.append(best_start)
+        ends.append(best_end)
+    return (
+        torch.as_tensor(starts, device=mask.device, dtype=torch.float32),
+        torch.as_tensor(ends, device=mask.device, dtype=torch.float32),
+    )
+
+
+def _vision_door_point(pixels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Infer wall-door point and wall orientation from transformed RGB."""
+    frame = pixels[:, -1] if pixels.ndim == 5 else pixels
+    _, _, height, width = frame.shape
+    dark = frame.mean(dim=1) < -0.5
+    center_x, center_y = width // 2, height // 2
+    vertical_line = dark[:, :, max(0, center_x - 3):min(width, center_x + 4)].float().mean(dim=-1)
+    horizontal_line = dark[:, max(0, center_y - 3):min(height, center_y + 4), :].float().mean(dim=1)
+    is_vertical = vertical_line.mean(dim=-1) >= horizontal_line.mean(dim=-1)
+    vertical_dark = dark[:, :, center_x]
+    horizontal_dark = dark[:, center_y, :]
+    vertical_open = ~vertical_dark
+    horizontal_open = ~horizontal_dark
+    vertical_valid = vertical_dark.to(torch.int64).cumsum(dim=1) > 0
+    vertical_valid = vertical_valid & (torch.flip(vertical_dark, dims=[1]).to(torch.int64).cumsum(dim=1).flip(dims=[1]) > 0)
+    horizontal_valid = horizontal_dark.to(torch.int64).cumsum(dim=1) > 0
+    horizontal_valid = horizontal_valid & (torch.flip(horizontal_dark, dims=[1]).to(torch.int64).cumsum(dim=1).flip(dims=[1]) > 0)
+    v_start, v_end = _longest_true_run_within(vertical_open, vertical_valid)
+    h_start, h_end = _longest_true_run_within(horizontal_open, horizontal_valid)
+    door = torch.stack([
+        torch.where(is_vertical, torch.full_like(v_start, float(center_x)), (h_start + h_end) / 2.0),
+        torch.where(is_vertical, (v_start + v_end) / 2.0, torch.full_like(h_start, float(center_y))),
+    ], dim=-1)
+    return door, is_vertical
+
+
+class VisionGeometryCostModel:
+    """RGB-only task-geometry baseline for separating metric from latent ranking."""
+
+    def __init__(self, action_mean: np.ndarray, action_std: np.ndarray, action_block: int):
+        self.action_mean = np.asarray(action_mean, dtype=np.float32)
+        self.action_std = np.asarray(action_std, dtype=np.float32)
+        self.action_block = int(action_block)
+
+    @torch.inference_mode()
+    def get_cost(self, info_dict: dict, action_candidates: torch.Tensor) -> torch.Tensor:
+        pixels = info_dict["pixels"][:, 0]
+        goal = info_dict["goal"][:, 0]
+        current = _red_centroid(pixels)
+        target = _red_centroid(goal)
+        door, is_vertical = _vision_door_point(pixels)
+        raw_macro = action_candidates.reshape(
+            *action_candidates.shape[:3], self.action_block, 2,
+        )
+        mean = torch.as_tensor(self.action_mean, device=action_candidates.device, dtype=action_candidates.dtype)
+        std = torch.as_tensor(self.action_std, device=action_candidates.device, dtype=action_candidates.dtype)
+        raw_macro = (
+            raw_macro * std.reshape(1, 1, self.action_block, 2)
+            + mean.reshape(1, 1, self.action_block, 2)
+        ).mean(dim=3)
+        positions = current[:, None, None, :] + torch.cumsum(
+            raw_macro * (10.5 * self.action_block), dim=2,
+        )
+        final_distance = torch.linalg.vector_norm(
+            positions[:, :, -1] - target[:, None], dim=-1,
+        )
+        side_gap = torch.where(
+            is_vertical,
+            (target[:, 0] - current[:, 0]).abs(),
+            (target[:, 1] - current[:, 1]).abs(),
+        )
+        midpoint = positions[:, :, max(0, positions.shape[2] // 2 - 1)]
+        door_distance = torch.linalg.vector_norm(midpoint - door[:, None], dim=-1)
+        return torch.where(side_gap[:, None] > 35.0, door_distance + final_distance, final_distance)
+
+
+def _vision_door_candidate_bank(
+    pixels: torch.Tensor,
+    goal: torch.Tensor,
+    *,
+    horizon: int,
+    action_block: int,
+    action_mean: np.ndarray,
+    action_std: np.ndarray,
+) -> torch.Tensor:
+    """Build RGB-only two-stage candidates that explicitly traverse a visible door."""
+    if pixels.ndim not in (4, 5) or goal.ndim not in (4, 5):
+        raise ValueError("vision door bank expects transformed current and goal images")
+    current = _red_centroid(pixels)
+    target = _red_centroid(goal)
+    batch = pixels.shape[0]
+    door, _ = _vision_door_point(pixels)
+    door_direction = door - current
+    goal_direction = target - current
+    door_angle = torch.atan2(door_direction[:, 1], door_direction[:, 0])
+    goal_angle = torch.atan2(goal_direction[:, 1], goal_direction[:, 0])
+    offsets = torch.arange(8, device=pixels.device, dtype=pixels.dtype) * (2.0 * np.pi / 8.0)
+    stage_angles = door_angle[:, None] + offsets[None, :]
+    goal_angles = goal_angle[:, None] + offsets[None, :]
+    stage = torch.stack([0.75 * torch.cos(stage_angles), 0.75 * torch.sin(stage_angles)], dim=-1)
+    second = torch.stack([0.75 * torch.cos(goal_angles), 0.75 * torch.sin(goal_angles)], dim=-1)
+    direct = torch.stack([0.50 * torch.cos(goal_angles), 0.50 * torch.sin(goal_angles)], dim=-1)
+    split = max(1, horizon // 2)
+    staged = torch.cat([
+        stage[:, :, None, :].expand(-1, -1, split, -1),
+        second[:, :, None, :].expand(-1, -1, horizon - split, -1),
+    ], dim=2)
+    zero = torch.zeros((batch, 1, horizon, 2), device=pixels.device, dtype=pixels.dtype)
+    direct = direct[:, :, None, :].expand(-1, -1, horizon, -1)
+    raw_frames = torch.cat([zero, staged, direct], dim=1)
+    raw_dim = action_block * 2
+    raw = raw_frames[:, :, :, None, :].expand(-1, -1, -1, action_block, -1).reshape(
+        batch, raw_frames.shape[1], horizon, raw_dim,
+    )
+    mean = torch.as_tensor(action_mean, device=pixels.device, dtype=pixels.dtype).view(1, 1, 1, -1)
+    std = torch.as_tensor(action_std, device=pixels.device, dtype=pixels.dtype).clamp_min(1.0e-6).view(1, 1, 1, -1)
+    return (raw - mean) / std
 
 
 def _load_spectral_basis(path: Path, dimension: int) -> torch.Tensor:
@@ -534,6 +1112,8 @@ def _planning_policy(args, device: str, action_mean: np.ndarray, action_std: np.
     model = load_compatible_pretrained(args.policy, device=device).eval()
     model.requires_grad_(False)
     model.interpolate_pos_encoding = True
+    if args.cost_metric == "vision_geometry":
+        model = VisionGeometryCostModel(action_mean, action_std, args.action_block)
     # TwoRoom's frozen checkpoint was trained with a fixed action-token block.
     # Reject incompatible short blocks before CEM starts; otherwise the failure
     # appears deep inside Conv1d as an opaque channel-mismatch exception.
@@ -574,6 +1154,8 @@ def _planning_policy(args, device: str, action_mean: np.ndarray, action_std: np.
     elif args.cost_metric == "latent_action_ranker":
         if args.ranker_artifact is None:
             raise ValueError("--ranker-artifact is required for latent_action_ranker")
+        if not args.candidate_bank:
+            raise ValueError("latent_action_ranker requires --candidate-bank for support gating")
         coefficient, feature_mean, feature_scale = _load_latent_action_ranker(
             Path(args.ranker_artifact)
         )
@@ -631,8 +1213,13 @@ def _planning_policy(args, device: str, action_mean: np.ndarray, action_std: np.
     if args.candidate_bank:
         solver_kwargs["candidate_bank"] = _candidate_bank(
             action_mean, action_std, args.horizon, args.action_block,
+            variant=args.candidate_bank_variant,
         )
         solver_kwargs["candidate_bank_iterations"] = args.candidate_bank_iterations
+        solver_kwargs["vision_goal_bank"] = args.candidate_bank_variant in {"vision_goal16", "vision_door16"}
+        solver_kwargs["vision_door_bank"] = args.candidate_bank_variant == "vision_door16"
+        solver_kwargs["action_mean"] = action_mean
+        solver_kwargs["action_std"] = action_std
     solver = solver_class(
         model=model,
         batch_size=1,
@@ -662,8 +1249,17 @@ def _planning_policy(args, device: str, action_mean: np.ndarray, action_std: np.
 def _run(args, policy_kind: str, action_mean: np.ndarray, action_std: np.ndarray):
     if policy_kind == "random":
         policy = swm.policy.RandomPolicy(seed=args.seed)
+    elif policy_kind == "reactive":
+        policy = RGBReactivePolicy()
     else:
         policy = _planning_policy(args, args.device, action_mean, action_std)
+        if policy_kind == "hybrid":
+            policy = RiskGatedRGBPolicy(
+                policy,
+                conflict_cos=args.hybrid_conflict_cos,
+                model_min_norm=args.hybrid_model_min_norm,
+                use_effect_map=args.hybrid_use_effect_map,
+            )
     world = swm.World(
         env_name="swm/TwoRoom-v1",
         num_envs=args.episodes,
@@ -692,6 +1288,42 @@ def _run(args, policy_kind: str, action_mean: np.ndarray, action_std: np.ndarray
         "episode_successes": successes.tolist(),
         "seeds": np.asarray(result["seeds"], dtype=np.int64).tolist(),
     }
+    if isinstance(policy, RiskGatedRGBPolicy):
+        output["risk_gate"] = {
+            "gate_calls": int(policy.gate_calls),
+            "fallback_count": int(policy.fallback_count),
+            "fallback_rate": float(policy.fallback_count / max(policy.gate_calls, 1)),
+            "conflict_cos": float(policy.conflict_cos),
+            "model_min_norm": float(policy.model_min_norm),
+            "use_effect_map": bool(policy.use_effect_map),
+            "effect_map_rows_by_env": list(getattr(policy, "effect_map_rows", [])),
+            "effect_map_phase_by_env": list(getattr(policy, "effect_map_phase", [])),
+            "effect_map_rank_by_env": list(getattr(policy, "effect_map_rank", [])),
+            "effect_map_quality_by_env": list(getattr(policy, "effect_map_quality", [])),
+            "effect_map": getattr(policy, "effect_map", None),
+            "by_env": [
+                {
+                    "gate_calls": int(calls),
+                    "fallback_count": int(fallbacks),
+                    "fallback_rate": float(fallbacks / max(calls, 1)),
+                    "phase_counts": dict(phases),
+                    "effect_map_rows": int(policy.effect_map_rows[index]),
+                    "effect_map_phase": policy.effect_map_phase[index],
+                    "effect_map_rank": int(policy.effect_map_rank[index]),
+                }
+                for index, (calls, fallbacks, phases) in enumerate(zip(
+                    policy.gate_calls_by_env,
+                    policy.fallback_counts_by_env,
+                    policy.phase_counts_by_env,
+                ))
+            ],
+            "phase_counts": {
+                "door": int(sum(phase == "door" for phase in policy.phases)),
+                "goal": int(sum(phase == "goal" for phase in policy.phases)),
+            },
+            "cosine_mean": float(np.mean(policy.cosines)) if policy.cosines else None,
+            "cosine_p10": float(np.percentile(policy.cosines, 10)) if policy.cosines else None,
+        }
     if "cem_trace" in result:
         output["cem_trace"] = result["cem_trace"]
     return output
@@ -727,6 +1359,10 @@ def main() -> None:
     parser.add_argument("--topk", type=int, default=8)
     parser.add_argument("--candidate-bank", action="store_true", help="inject a fixed TwoRoom macro-action bank into CEM")
     parser.add_argument(
+        "--candidate-bank-variant", choices=("legacy", "angular16", "vision_goal16", "vision_door16"), default="legacy",
+        help="fixed bank definition; angular16 is a predeclared coverage intervention",
+    )
+    parser.add_argument(
         "--candidate-bank-iterations", type=int, default=None,
         help="number of initial CEM iterations containing the fixed bank; None means every iteration",
     )
@@ -735,7 +1371,7 @@ def main() -> None:
         choices=(
             "euclidean", "spectral_top_32", "physical_readout",
             "action_conditioned_readout", "latent_action_ranker",
-            "capacity_safe_readout", "indexed_canonical_readout",
+            "capacity_safe_readout", "indexed_canonical_readout", "vision_geometry",
         ),
         default="euclidean",
     )
@@ -758,6 +1394,18 @@ def main() -> None:
     parser.add_argument(
         "--record-solver-trace", action="store_true",
         help="diagnostic only: record CEM actions/costs for solver comparison",
+    )
+    parser.add_argument(
+        "--hybrid-conflict-cos", type=float, default=0.0,
+        help="predeclared RGB fallback threshold; 0 means conflict >90 degrees",
+    )
+    parser.add_argument(
+        "--hybrid-model-min-norm", type=float, default=0.08,
+        help="predeclared minimum raw model action norm before RGB fallback",
+    )
+    parser.add_argument(
+        "--hybrid-use-effect-map", action="store_true",
+        help="use an online RGB action-to-marker-displacement map as an additional fallback gate",
     )
     args = parser.parse_args()
     if args.device.startswith("cuda") and not torch.cuda.is_available():
@@ -806,11 +1454,18 @@ def main() -> None:
         )
     random_result = _canonicalize(_run(args, "random", action_mean, action_std))
     planning_result = _canonicalize(_run(args, "planning", action_mean, action_std))
+    reactive_result = _canonicalize(_run(args, "reactive", action_mean, action_std))
+    hybrid_result = _canonicalize(_run(args, "hybrid", action_mean, action_std))
     if random_result["seeds"] != planning_result["seeds"]:
         raise RuntimeError("random and planning did not evaluate the same seed set")
+    if any(result["seeds"] != random_result["seeds"] for result in (reactive_result, hybrid_result)):
+        raise RuntimeError("paired policies did not evaluate the same seed set")
     random_success = np.asarray(random_result["episode_successes"], dtype=np.int64)
     planning_success = np.asarray(planning_result["episode_successes"], dtype=np.int64)
+    reactive_success = np.asarray(reactive_result["episode_successes"], dtype=np.int64)
+    hybrid_success = np.asarray(hybrid_result["episode_successes"], dtype=np.int64)
     paired_delta = planning_success - random_success
+    paired_hybrid_delta = hybrid_success - planning_success
     payload = {
         "schema": "live_tworoom_planning.v1",
         "protocol": {
@@ -825,12 +1480,29 @@ def main() -> None:
             "receding_horizon": args.receding_horizon,
             "action_block": args.action_block,
             "candidate_bank": bool(args.candidate_bank),
-            "candidate_bank_definition": "zero, axis-aligned magnitudes 0.25/0.50/0.75, and four diagonals" if args.candidate_bank else None,
+            "candidate_bank_definition": (
+                "zero, axis-aligned magnitudes 0.25/0.50/0.75, and four diagonals"
+                if args.candidate_bank and args.candidate_bank_variant == "legacy"
+                else "zero plus 16 directions at magnitudes 0.50 and 0.75"
+                if args.candidate_bank_variant == "angular16"
+                else "RGB red-marker goal-relative zero plus 8 offsets at magnitudes 0.50 and 0.75"
+                if args.candidate_bank_variant == "vision_goal16"
+                else "RGB visible-door then goal two-stage candidates"
+                if args.candidate_bank else None
+            ),
+            "candidate_bank_variant": args.candidate_bank_variant if args.candidate_bank else None,
             "candidate_bank_iterations": args.candidate_bank_iterations,
             "residual_support_scope": (
                 "predeclared_candidate_bank_only" if args.candidate_bank else "all_candidates"
             ),
             "cost_metric": args.cost_metric,
+            "hybrid_gate": {
+                "conflict_cos": args.hybrid_conflict_cos,
+                "model_min_norm": args.hybrid_model_min_norm,
+                "use_effect_map": bool(args.hybrid_use_effect_map),
+                "decision_rule": "fallback if model norm < threshold or cosine(model, RGB reactive) < threshold",
+                "runtime_inputs": "raw current RGB and raw rendered RGB goal only; no simulator state",
+            },
             "spectral_basis": str(args.spectral_basis) if args.spectral_basis else None,
             "readout_artifact": str(args.readout_artifact) if args.readout_artifact else None,
             "goal_readout_artifact": str(args.goal_readout_artifact) if args.goal_readout_artifact else None,
@@ -856,6 +1528,8 @@ def main() -> None:
         },
         "random": random_result,
         "frozen_lewm": planning_result,
+        "rgb_reactive": reactive_result,
+        "hybrid_rgb_fallback": hybrid_result,
         "paired": {
             "seed_order": random_result["seeds"],
             "delta_lewm_minus_random": paired_delta.tolist(),
@@ -863,6 +1537,11 @@ def main() -> None:
             "losses": int(np.sum(paired_delta < 0)),
             "ties": int(np.sum(paired_delta == 0)),
             "success_rate_delta": float(paired_delta.mean()),
+            "hybrid_minus_frozen_lewm": paired_hybrid_delta.tolist(),
+            "hybrid_wins": int(np.sum(paired_hybrid_delta > 0)),
+            "hybrid_losses": int(np.sum(paired_hybrid_delta < 0)),
+            "hybrid_ties": int(np.sum(paired_hybrid_delta == 0)),
+            "hybrid_success_rate_delta": float(paired_hybrid_delta.mean()),
         },
         "claim_boundary": "Independent live TwoRoom RGB planning consequence; not a universal world-model claim.",
     }

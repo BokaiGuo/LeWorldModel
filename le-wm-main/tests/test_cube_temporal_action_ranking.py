@@ -63,7 +63,7 @@ def test_macro_features_include_rgb_action_frame_interactions():
         "previous_action": np.zeros(5, dtype=np.float32),
     }
     features = macro_features([branch], _macro_bank(), "cpu")
-    assert features.shape == (5, 43)
+    assert features.shape == (5, 47)
     assert torch.isfinite(features).all()
     assert not torch.allclose(features[1, -6:], features[3, -6:])
 

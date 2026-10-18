@@ -1,7 +1,7 @@
 """Run fail-closed D2 projection-only geometry distillation.
 
-The runner deliberately refuses to train when the D1 teacher audit is not
-passed.  A valid feature table is an NPZ with string ``keys`` matching
+The runner deliberately refuses to train when the D1 teacher audit or the
+train-only repairability gate is not passed.  A valid feature table is an NPZ with string ``keys`` matching
 ``instance_id::teacher_set_id::candidate_id`` and float ``features`` and
 ``goal_features`` arrays of shape ``[records, dimension]``.  Prediction and
 independent planning audits are separate JSON gates; they are never inferred
@@ -85,11 +85,16 @@ def _load_feature_table(path: Path, *, expected_dataset_sha256: str) -> dict[str
     return {"keys": keys, "features": features, "goal_features": goals, "metadata": metadata}
 
 
-def _gate(path: Path | None, name: str) -> dict[str, Any]:
+def _gate(
+    path: Path | None,
+    name: str,
+    accepted_statuses: set[str] | None = None,
+) -> dict[str, Any]:
     if path is None:
         return {"name": name, "status": "missing", "passed": False, "source": None}
     payload = _load_json(path)
-    passed = bool(payload.get("passed", False) or payload.get("status") in {"passed", "certified"})
+    statuses = {"passed", "certified"} if accepted_statuses is None else accepted_statuses
+    passed = bool(payload.get("passed", False) or payload.get("status") in statuses)
     return {"name": name, "status": str(payload.get("status", "missing")), "passed": passed, "source": str(path)}
 
 
@@ -205,6 +210,7 @@ def run(
     feature_table_path: Path | None = None,
     prediction_audit_path: Path | None = None,
     planning_audit_path: Path | None = None,
+    repairability_audit_path: Path | None = None,
     projection_rank: int = 2, epochs: int = 200, learning_rate: float = 0.05,
     margin: float = 1.0e-3, temperature: float = 0.1, ridge: float = 1.0e-4,
 ) -> dict[str, Any]:
@@ -216,6 +222,7 @@ def run(
             "dataset": str(dataset_path),
             "d1_report": str(d1_path),
             "feature_table": None if feature_table_path is None else str(feature_table_path),
+            "repairability_audit": None if repairability_audit_path is None else str(repairability_audit_path),
             "projection_type": "linear_train_only",
             "dynamics_frozen": True,
             "teacher_runtime_forbidden": True,
@@ -228,6 +235,11 @@ def run(
         },
         "gates": {
             "d1": {"status": d1.get("status"), "passed": d1.get("status") == "passed"},
+            "repairability": _gate(
+                repairability_audit_path,
+                "repairability",
+                accepted_statuses={"permitted_predicted_dynamics"},
+            ),
             "prediction_preservation": _gate(prediction_audit_path, "prediction_preservation"),
             "independent_planning_consequence": _gate(planning_audit_path, "independent_planning_consequence"),
         },
@@ -237,6 +249,17 @@ def run(
         report["reason"] = "D1 teacher stability/execution gate is not passed; projection training was not executed"
         output_path.mkdir(parents=True, exist_ok=True)
         (output_path / "d2_projection_distillation.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return report
+    if not report["gates"]["repairability"]["passed"]:
+        report["status"] = "blocked_repairability_gate"
+        report["reason"] = (
+            "D1 passed but no train-only predicted-dynamics repairability authorization "
+            "was supplied; D2 projection training was not executed"
+        )
+        output_path.mkdir(parents=True, exist_ok=True)
+        (output_path / "d2_projection_distillation.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         return report
     if feature_table_path is None:
         report["status"] = "blocked_missing_student_features"
@@ -298,6 +321,7 @@ def main() -> int:
     parser.add_argument("--feature-table", type=Path, default=None)
     parser.add_argument("--prediction-audit", type=Path, default=None)
     parser.add_argument("--planning-audit", type=Path, default=None)
+    parser.add_argument("--repairability-audit", type=Path, default=None)
     parser.add_argument("--projection-rank", type=int, default=2)
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--learning-rate", type=float, default=0.05)
@@ -308,12 +332,16 @@ def main() -> int:
     report = run(
         dataset_path=args.dataset, d1_path=args.d1_report, output_path=args.output,
         feature_table_path=args.feature_table, prediction_audit_path=args.prediction_audit,
-        planning_audit_path=args.planning_audit, projection_rank=args.projection_rank,
+        planning_audit_path=args.planning_audit, repairability_audit_path=args.repairability_audit,
+        projection_rank=args.projection_rank,
         epochs=args.epochs, learning_rate=args.learning_rate, margin=args.margin,
         temperature=args.temperature, ridge=args.ridge,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 0 if report["status"] in {"completed_diagnostic", "blocked_d1_gate", "blocked_missing_student_features"} else 2
+    return 0 if report["status"] in {
+        "completed_diagnostic", "blocked_d1_gate", "blocked_repairability_gate",
+        "blocked_missing_student_features",
+    } else 2
 
 
 if __name__ == "__main__":

@@ -41,6 +41,8 @@ def test_d2_requires_independent_prediction_and_planning_gates(tmp_path):
     payload = _write_dataset(dataset)
     d1 = tmp_path / "d1.json"
     d1.write_text(json.dumps({"schema": "d1", "status": "passed"}))
+    repairability = tmp_path / "repairability.json"
+    repairability.write_text(json.dumps({"status": "permitted_predicted_dynamics"}))
     table = tmp_path / "features.npz"
     keys = np.asarray([
         f"{row['instance_id']}::{row['teacher_set_id']}::{row['candidate_id']}"
@@ -63,10 +65,29 @@ def test_d2_requires_independent_prediction_and_planning_gates(tmp_path):
         goal_features=np.zeros_like(features),
         metadata_json=np.asarray(json.dumps(metadata, sort_keys=True)),
     )
-    report = run(dataset_path=dataset, d1_path=d1, output_path=tmp_path / "out", feature_table_path=table)
+    report = run(
+        dataset_path=dataset, d1_path=d1, output_path=tmp_path / "out",
+        feature_table_path=table, repairability_audit_path=repairability,
+    )
     assert report["status"] == "completed_diagnostic"
     assert report["permission"]["status"] == "rejected_missing_independent_gate"
     assert report["metrics"]["held_out"]["outcome"]["fitted_projection"]["comparable_pairs"] > 0
+
+
+def test_d2_blocks_when_repairability_gate_falls_back(tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _write_dataset(dataset)
+    d1 = tmp_path / "d1.json"
+    d1.write_text(json.dumps({"schema": "d1", "status": "passed"}))
+    repairability = tmp_path / "repairability.json"
+    repairability.write_text(json.dumps({"status": "fallback_action_only"}))
+    output = tmp_path / "out"
+    report = run(
+        dataset_path=dataset, d1_path=d1, output_path=output,
+        repairability_audit_path=repairability,
+    )
+    assert report["status"] == "blocked_repairability_gate"
+    assert report["gates"]["repairability"]["passed"] is False
 
 
 def test_d2_rejects_feature_table_with_wrong_dataset_provenance(tmp_path):
@@ -74,6 +95,8 @@ def test_d2_rejects_feature_table_with_wrong_dataset_provenance(tmp_path):
     payload = _write_dataset(dataset)
     d1 = tmp_path / "d1.json"
     d1.write_text(json.dumps({"schema": "d1", "status": "passed"}))
+    repairability = tmp_path / "repairability.json"
+    repairability.write_text(json.dumps({"status": "permitted_predicted_dynamics"}))
     table = tmp_path / "features.npz"
     keys = np.asarray([
         f"{row['instance_id']}::{row['teacher_set_id']}::{row['candidate_id']}"
@@ -96,7 +119,10 @@ def test_d2_rejects_feature_table_with_wrong_dataset_provenance(tmp_path):
         metadata_json=np.asarray(json.dumps(metadata, sort_keys=True)),
     )
     with pytest.raises(ValueError, match="provenance.dataset_sha256"):
-        run(dataset_path=dataset, d1_path=d1, output_path=tmp_path / "out", feature_table_path=table)
+        run(
+            dataset_path=dataset, d1_path=d1, output_path=tmp_path / "out",
+            feature_table_path=table, repairability_audit_path=repairability,
+        )
 
 
 def test_projection_rank_cannot_exceed_train_sample_count():

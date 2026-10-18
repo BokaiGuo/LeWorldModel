@@ -6,6 +6,15 @@
 
 | 入口/目录 | 责任 | 状态 |
 | --- | --- | --- |
+| `docs/FINITE_HORIZON_TRANSFER_RISK_THEOREM_20261018.md` | fixed-support finite-horizon transfer-risk bound, estimability gates, and explicit counterexamples | theory foundation / local theorem; not a universal certificate |
+| `le-wm-main/experiments/audit_cube_planner_ceiling.py` | privileged fixed/expanded candidate-bank reachability ceiling from the cached RGB-prelude decision state; cycle-aware oracle stop; factorized approach/push support family | implemented / CPU exploratory artifact; GPU confirmation pending |
+| `le-wm-main/experiments/audit_cube_planner_ceiling.py --resume` | per-root atomic checkpoint and stage-level progress for the long paired ceiling; prevents interrupted host runs from discarding completed roots | implemented / resume-safe; scientific artifact still requires host CUDA run |
+| `le-wm-main/experiments/summarize_cube_failure_cause.py` | joins ceiling and paired RGB artifacts into predeclared support/contact/transfer failure classes; expanded support now prevents fixed-bank masking | implemented / attribution-only / classifier regression covered |
+| `le-wm-main/experiments/run_cube_diagnostic_bundle.py` | locks ceiling, RGB panel, and failure attribution to one seed/root/task protocol | implemented / CUDA fail-closed; CPU exploratory only |
+| `le-wm-main/scripts/run_cube_gpu_repair_panel.sh` | host entry point: CUDA preflight, factorized/goal-conditioned ceiling, RGB paired panel, and failure attribution | implemented / host execution required / no CPU fallback |
+| `le-wm-main/experiments/gpu_preflight.py --render-smoke` | verifies real CUDA allocation plus the exact EGL/MuJoCo RGB render path before long visual panels | implemented / host-only verification |
+| `le-wm-main/experiments/run_live_cube_rgb_macro_panel.py --resume` | arm-level checkpoint reuse for the paired RGB panel | implemented / protocol-compatible resume only |
+| `le-wm-main/experiments/run_live_cube_rgb_macro_ranker.py --factorized-bank` | deployable finite bank with independent approach/push directions and phase-local action summaries | new predeclared support intervention; GPU held-out consequence pending |
 | `le-wm-main/experiments/run_unified_research_protocol.py` | geometry、memory、contact-control 和显式 claim workflow | 正在接入统一 runtime |
 | `le-wm-main/experiments/run_full_spectral_transfer.sh` | full-data spectral transfer 兼容入口 | 保留 CLI，逐步变薄 |
 | `le-wm-main/experiments/empirical_spectral_audit/` | learned latent 与 transfer diagnostics | active |
@@ -17,6 +26,7 @@
 | `le-wm-main/experiments/decision_benchmark/verify_rgb_successor.py` | dataset-matched realized RGB successor verification；legacy two-frame and history-conditioned temporal contracts | active / gated |
 | `le-wm-main/experiments/run_pusht_mode_aware_shared_candidate.py` | privileged PushT mode/action-effect controller；local observed-effect neighborhood and paired moment-sign probes | active / mechanism-only / pose gate failed |
 | `le-wm-main/experiments/run_live_tworoom_planning.py` | frozen RGB TwoRoom CEM versus paired random control | 4-panel, 32-episode CUDA aggregate completed; scoped positive consequence |
+| `le-wm-main/experiments/run_tworoom_effect_map_panel.py` | paired direction-gate versus root×phase-local RGB effect-map gate | CUDA fresh 32-root panel completed; `0/0/32` paired difference, no incremental planning gain |
 | `le-wm-main/experiments/run_live_tworoom_planning.py --candidate-bank` | predeclared action-support bank versus pure Gaussian CEM on frozen RGB TwoRoom | two fresh 32-root CUDA panels: `21/64` bank versus `15/64` Gaussian; support repair scoped to TwoRoom |
 | `le-wm-main/experiments/run_live_reacher_planning.py` | frozen RGB Reacher CEM versus paired random control | 4-panel, 32-episode CUDA/EGL aggregate completed; target-geometry scope retained |
 | `le-wm-main/experiments/audit_live_reacher_shared_candidate_ranking.py` | root-disjoint Reacher RGB shared-bank action ranking, terminal qpos error and regret | 32-root CUDA/EGL negative ranking boundary completed; contact metric not applicable |
@@ -31,6 +41,7 @@
 | `le-wm-main/experiments/gdd_wm/join_rgb_realized_refs.py` | provenance-safe join of dataset-matched realized RGB references into a copied candidate bank | audit utility / D1 still gated |
 | `le-wm-main/experiments/gdd_wm/audit_nonleaking_teacher_control.py` | train-only predicted-latent task-readout control for separating label leakage from transfer failure | diagnostic only / not D-JEPA or planning evidence |
 | `le-wm-main/experiments/gdd_wm/audit_transfer_sufficient_feature_families.py` | fixed train-only source/latent/action feature-family comparison | diagnostic only / no stable family yet |
+| `le-wm-main/experiments/gdd_wm/audit_repairability_gate.py` | train-only calibration/nonlinear cross-fit gate separating repairable predicted-dynamics signal from action-only fallback | 7-artifact cross-environment audit: 2/7 permitted, 5/7 fallback; held-out evidence remains diagnostic-only |
 | `le-wm-main/experiments/gdd_wm/audit_feature_family_panel.py` | cross-checkpoint wrapper for the fixed feature-family audit | diagnostic only / no family selection |
 | `le-wm-main/experiments/gdd_wm/audit_relative_action_effect_geometry.py` | train-root-centered interaction, low-rank, and pairwise action-effect controls | diagnostic only / no cross-bank positive interval |
 | `le-wm-main/experiments/gdd_wm/audit_relative_action_effect_panel.py` | five-bank paired root-bootstrap wrapper for relative-effect controls | diagnostic only / support/identifiability boundary |
@@ -414,6 +425,67 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   observability gap, not merely macro duration. The runner is retained as a
   fail-closed diagnostic and no online Cube gain is claimed.
 
+- Cube RGB probe-calibrated approach intervention (2026-10-17): the online
+  runner now uses a fixed descent phase, a four-direction RGB-only probe fit
+  for the local action-to-effector image Jacobian, and the physical red-object
+  component for approach error. The probe fit uses only successive RGB frames
+  and executed XY actions; simulator state remains evaluator-only. This is a
+  diagnostic intervention aimed at separating camera/action chart failure
+  from macro ranking failure. It has passed code-level tests but has no GPU
+  online outcome yet because the current isolated runtime cannot expose the
+  host CUDA device; no success claim is made.
+
+- Cube contact-phase diagnosis (2026-10-17, CPU logic diagnostics only): the
+  probe-calibrated runner reduced RGB approach error to about `0.011` but
+  initially observed no contact because the historical offline macro used the
+  wrong OGB-Cube gripper sign. The online intervention now uses `+1` for
+  close and records evaluator-only contact/distance traces. With the corrected
+  sign, contact was observed, but full-scale push pulses did not move the
+  block. A fixed `push_scale=0.25` produced local distance improvement in one
+  smoke (`0.2094` to minimum `0.1883 m`; three receding cycles reached
+  `0.1698 m`), while an eight-cycle smoke ended worse (`0.2446 m`). These are
+  single-root CPU diagnostics, not GPU or confirmatory planning results. They
+  localize the remaining failure to unstable within-contact action effect /
+  visual feedback, rather than approach visibility or gripper closure alone.
+
+- Cube RGB online effect-identification intervention (2026-10-18, CPU logic
+  diagnostics only): after contact, the runner can fit a local block-pixel
+  displacement map from executed push actions, but only after rank-2 support;
+  rank-1 histories fail closed and trigger one orthogonal support probe. In a
+  single three-cycle smoke this produced `11` valid adaptive pulses and
+  reduced distance from `0.2054` to `0.1522 m`. A five-cycle repetition still
+  ended at `0.2018 m` (minimum `0.1843 m`) with success `0/1`. The result is a
+  mechanism-level improvement and a reproducibility warning, not a stable
+  online planning gain; independent GPU roots are required before promotion.
+  The implementation passes the full repository regression suite (`899
+  passed, 3 skipped`); this is code integrity evidence, not a planning result.
+
+- Cube persistent-contact follow-up (2026-10-18, CPU logic diagnostics only):
+  re-running descend/close on every receding cycle was replaced by a
+  persistent-contact protocol that performs those phases only once. With
+  `push_scale=0.25` and RGB effect adaptation, one five-cycle smoke improved
+  final distance to `0.0889 m`, and one seven-cycle smoke to `0.0704 m`, both
+  with observed contact. A nine-cycle repetition returned to `0.2054 m`, so
+  the gain is strongly root/initial-contact dependent. This is a structural
+  improvement hypothesis, not stable online success; it must be evaluated on
+  independent GPU roots with fixed arms before entering the main claim.
+
+- Cube RGB progress gate (2026-10-18, CPU logic diagnostics only): a
+  fail-closed cycle gate now stops execution when the RGB block-goal error
+  increases beyond the frozen threshold. In one five-cycle run the gate did
+  not fire, RGB error decreased on every cycle, and final evaluator distance
+  reached `0.0846 m`; the ranker nevertheless selected the zero macro once.
+  This shows that zero-macro selection is not by itself a failure label and
+  that RGB progress is only a safety signal, not a task-success certificate.
+
+- Paired Cube RGB panel (2026-10-18):
+  `experiments/run_live_cube_rgb_macro_panel.py` freezes one seed/root split
+  and compares full-scale reclose, low-gain reclose, low-gain persistent
+  contact, and low-gain effect-adaptive arms. It refuses CPU fallback when
+  invoked with `--device cuda`, and writes per-arm artifacts plus a paired
+  summary. The panel is implemented and unit-tested but awaits host-GPU
+  execution; no arm is promoted from its exploratory CPU smoke result.
+
 - Full TwoRoom CUDA latent/planning alignment is complete. The phase-1
   artifact is `results/tworoom_full_spectral_cuda_20261015/full_latents/`
   (`1,592,619` collected samples; `200,000` rich rows retained), and phase 2
@@ -719,8 +791,9 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   `results/covariant_transfer_risk_control_audit_20261015/`.
 
 - `experiments/gdd_wm/train_projection_distillation.py` implements the D2
-  projection-only geometry interface with a hard D1 gate and separate
-  prediction/planning gates. Running it on the repeated-context PointMaze
+  projection-only geometry interface with hard D1 and train-only
+  repairability gates, plus separate prediction/planning gates. Running it on
+  the repeated-context PointMaze
   artifact correctly returns `blocked_d1_gate` and performs no training,
   because D1 remains `rejected_fail_closed` under the leaked offline-cost
   teacher. Registry status: D2 implementation complete, D2 evidence not
@@ -733,6 +806,14 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   outcome inputs, and frozen dynamics. Projection rank is also bounded by the
   train-record count. Legacy tables without these fields fail closed before
   fitting. Targeted tests: `4 passed`.
+
+- D2 repairability hardening (2026-10-18): projection distillation now
+  requires a `permitted_predicted_dynamics` artifact from
+  `audit_repairability_gate.py`; an `action_only` fallback blocks D2 before
+  feature fitting. This makes the TwoRoom negative result operational rather
+  than documentary and prevents a D1-passed but dynamics-unidentified model
+  from entering distillation. Updated projection tests cover both permitted
+  and fallback paths.
 
 - `experiments/gdd_wm/audit_teacher_candidate_packages.py` audited all 24
   existing candidate packages and found `0/24` eligible. The blockers are
@@ -1260,3 +1341,818 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   deployment-aligned `Repair but Abstain`; no learned-dynamics or online-planning
   claim. Detailed adjudication is in
   `docs/FINAL_STAGE_RESIDUAL_NEGATIVE_DIAGNOSIS_20261016.md`.
+
+- Cube RGB contact-phase isolation (2026-10-18, CPU exploratory): the legacy
+  `pre-descend -> RGB XY approach -> close` schedule produced contact on `0/3`
+  root-disjoint roots. A mechanism arm that adds `post-approach descend ->
+  close` produced contact on `1/3` with the 16-step approach window, and
+  `3/3` when the predeclared approach window was extended to 32 steps. This
+  repairs contact acquisition in the mechanism audit, but does not establish
+  successful pushing or pose closure; the longer approach also increased
+  final RGB XY error. The finding decomposes the negative result into a
+  phase-order/support bottleneck plus a residual within-contact transfer
+  bottleneck. Artifacts:
+  `results/cube_contact_phase_audit_cpu_exploratory_20261018_roots0_2` and
+  `results/cube_contact_phase_audit_cpu_exploratory_20261018_approach32_roots0_2`;
+  code: `experiments/audit_cube_contact_phase.py` and the optional
+  `--post-approach-descend-steps/--post-approach-close-steps` arm in
+  `experiments/run_live_cube_rgb_macro_ranker.py`.
+- Cube within-contact support-gate repair (2026-10-18, CPU exploratory): a
+  matched root with post-contact alignment reached contact but the old gate
+  kept executing a single rank-one effect direction because it only treated
+  small mapping norm as weak. The repaired gate forces an orthogonal probe
+  whenever the observed action history is rank deficient; the follow-up
+  artifact records `support_probe_forced=2` and rank-2 effect support, while
+  task success remains `0/1`. Thus the implementation defect is closed, but
+  the remaining failure is genuine within-contact transfer / task geometry,
+  not evidence of successful online planning. Artifact:
+  `results/cube_postcontact_ranker_cpu_exploratory_20261018_root0_nogate_rankprobe`.
+- Cube RGB pick-and-place transport diagnosis (2026-10-18, CPU exploratory;
+  PyTorch CUDA initialization was unavailable at run time): world-chart
+  approach repaired grasp/lift, but transport without vertical correction
+  still dropped the carried block (`0/1`, final distance `0.169 m` in a
+  matched recheck). Low-amplitude periodic lift (`+0.15` every 5 steps) and
+  sparse full lift (`+1.0` every 5 steps) both worsened transfer (`0.268 m`
+  and `0.322 m`), so z-correction is not a valid fix. Exposing the already
+  calibrated RGB effect map to the transport controller improved one
+  exploratory run to `0.138 m` (transport minimum `0.120 m`) but a same-seed
+  repeat produced `0.457 m`; therefore the gain is not stable and is not a
+  planning result. Lower-phase XY correction also failed (`0.304 m`, no
+  observed contact). The implementation now keeps chart/effect/hybrid
+  transport controllers and lower correction as explicit ablations, with
+  the default restored to chart. The remaining boundary is unstable
+  RGB-only within-carry transfer and reset/runtime variance, not contact
+  acquisition. Artifacts:
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_worldapproach_baseline_recheck`,
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_worldapproach_micro15p5`,
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_worldapproach_pulse1p5`,
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_effecthybrid`, and
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_effecthybrid_repeat`;
+  code: `experiments/run_live_cube_rgb_pick_place.py`.
+- Cube carry-state feedback and horizon/magnitude controls (2026-10-18, CPU
+  exploratory): on the same frozen root, RGB relative vertical feedback
+  correctly kept the carried block higher during transport (`block_z=0.284 m`
+  versus chart `0.218 m`), but final distance worsened to `0.139 m` at gain
+  1.0 and `0.136 m` at gain 0.5. A phase-aware re-lift at step 40 worsened
+  distance to `0.177 m`. Extending chart transport to 80 steps worsened it to
+  `0.167 m`; reducing the action magnitude to `0.1` for 80 steps was the best
+  mechanism result at `0.105 m`, still `0/1` success. Effect-conditioned
+  transport at the same low magnitude was `0.106 m`, so it did not improve
+  over chart. The new RGB carry feedback and re-lift controls are retained as
+  explicit ablations, but no controller is promoted: height observability is
+  not sufficient for stable within-carry XY transfer. Artifacts:
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_frozen_v2_verticalservo_gain1`,
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_frozen_v2_verticalservo_gain05`,
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_frozen_v2_relift40_steps80`,
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_frozen_v2_chart_steps80`,
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_frozen_v2_chart_mag01_steps80`,
+  and `results/live_cube_rgb_pick_place_cpu_20261018_root0_frozen_v2_effect_mag01_steps80`;
+  code: `experiments/run_live_cube_rgb_pick_place.py`.
+- Cube reset-variance and transport-controller control (2026-10-18, CPU
+  exploratory): repeated runs with the same nominal seed previously changed
+  the initial cube-goal geometry because the runtime did not freeze
+  `variation_values` and `qpos/qvel`. The pick-place runner now writes v2
+  artifacts with frozen calibration/test initial conditions and can replay
+  them exactly. On one frozen root, effect-hybrid transport reached final
+  distance `0.14486 m`; replaying the same calibration and initial state gave
+  `0.14535 m`, while the matched chart baseline gave `0.13092 m`. All were
+  `0/1` task success. Thus reset variance was an implementation confound,
+  but exposing the RGB effect map did not solve transfer and is currently
+  worse than chart on the matched root. Artifacts:
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_frozen_v2_effecthybrid`,
+  `results/live_cube_rgb_pick_place_cpu_20261018_root0_frozen_v2_effecthybrid_replay`,
+  and `results/live_cube_rgb_pick_place_cpu_20261018_root0_frozen_v2_chart_baseline`;
+  code: `experiments/run_live_cube_rgb_pick_place.py`.
+- Cube calibration-only approach fallback panel (2026-10-18, project
+  `.venv` CUDA-enabled runtime; MuJoCo dynamics remain CPU-bound): a fixed
+  50/50 blend of the world-coordinate approach chart and the RGB pixel
+  Jacobian was added as `--approach-controller hybrid`. On the same frozen
+  root-disjoint 3-root panel and the same close/transport protocol, world
+  chart was `0/3` with mean final distance `0.0925 m`, pixel-only was `0/3`
+  with `0.1721 m`, and hybrid was `1/3` with `0.0785 m`. This is a genuine
+  mechanism improvement over both controls but not a stable planning result;
+  the hybrid success is concentrated on one root and root 2 remains an
+  approach/contact-geometry failure. A fixed 32-step post-descend RGB
+  re-approach worsened hybrid to `0/3` and `0.1022 m`, so merely extending
+  the contact phase is not the remedy. Artifacts:
+  `results/cube_approach_fallback_panel_20261018/{world,pixel,hybrid,hybrid_postdesc32}.json`;
+  code: `experiments/run_live_cube_rgb_pick_place.py`.
+- Cube task-conditioned approach and readiness-gate follow-up (2026-10-18,
+  same frozen 3-root panel): fitting separate approach charts per task from
+  calibration roots only did not improve the fixed hybrid controller (`1/3`,
+  `0.0784 m`). A predeclared minimum of eight RGB approach steps removed the
+  false early-stop on the difficult root and reduced its final distance from
+  `0.1437 m` to `0.1102 m`; aggregate performance became `1/3`, `0.0674 m`.
+  Because success did not improve and the parameter was not selected from test
+  outcomes, this is an interface repair plus residual task-geometry boundary,
+  not stable online planning evidence. The new runtime flag is
+  `--approach-min-steps`; artifacts:
+  `results/cube_approach_fallback_panel_20261018/hybrid_task_conditioned.json`
+  and `hybrid_task_conditioned_min8.json`.
+- Cube contact-interface close-duration control (2026-10-18): with the
+  repaired fixed eight-step RGB readiness gate and task-conditioned hybrid
+  approach, reducing table-contact close duration from 15 to the predeclared
+  five-step control changed the frozen 3-root panel from mean `0.0674 m` to
+  `0.0652 m`, while success stayed `1/3` and the difficult root stayed above
+  threshold (`0.1053 m`). Thus the remaining error is not explained by close
+  dwell alone; it is within-contact action-effect transfer. Artifact:
+  `results/cube_approach_fallback_panel_20261018/hybrid_task_conditioned_min8_close5.json`.
+- Cube planner-reachability horizon intervention (2026-10-18): keeping the
+  approach, calibration, contact, and transport magnitude fixed, extending
+  the table-push transport horizon from 105 to a predeclared 180 steps changed
+  the frozen pilot panel from `1/3` success and `0.0652 m` mean distance to
+  `2/3` and `0.0435 m`. This confirms a genuine planner-reachability component
+  of the earlier negative result, but it is not a learned-dynamics result.
+  On a new independent 3-root panel with the frozen 180-step protocol,
+  performance was only `1/3`, contact `1/3`, and mean distance `0.1062 m`.
+  The positive pilot therefore does not establish cross-root stability.
+  Artifacts:
+  `results/cube_approach_fallback_panel_20261018/hybrid_task_conditioned_min8_close5_transport180.json`
+  and `independent_seed20261904_h180.json`.
+- Cube online/local-chart follow-ups (2026-10-18): an RGB-only non-progress
+  fallback raised independent-panel contact from `1/3` to `3/3` but left
+  success at `1/3` and worsened mean distance to `0.1237 m`; a reset-safe
+  per-root RGB Jacobian probe also left success at `1/3` and worsened mean
+  distance to `0.1259 m`. Lowering approach gain to `0.1` reduced contact to
+  `2/3` and worsened mean distance to `0.1653 m`. These controls separate
+  contact acquisition from usable action-effect transfer and are retained as
+  negative mechanism arms. Artifacts:
+  `independent_seed20261904_h180_adaptive.json`,
+  `independent_seed20261904_h180_localpixel.json`, and
+  `independent_seed20261904_h180_gain010.json`; code:
+  `experiments/run_live_cube_rgb_pick_place.py`.
+- Cube within-contact action-support intervention (2026-10-18): added
+  `greedy_effect`, which restricts transport actions to eight directions and
+  selects the direction with the largest observed RGB-effect projection toward
+  the goal, avoiding unconstrained pseudoinverse actions. On the independent
+  frozen panel it produced contact `2/3`, success `1/3`, and mean distance
+  `0.1715 m`, worse than the chart control (`0.1062 m`). Thus fixed action
+  support alone does not repair transfer; the useful effect is
+  mode-conditioned and cannot be inferred from a single global RGB map.
+  Artifact: `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h180_greedy_effect.json`;
+  code: `experiments/run_live_cube_rgb_pick_place.py`.
+- Cube post-close contact-mode intervention (2026-10-18): added a fixed
+  RGB-only re-approach after gripper close and before effect probes. On the
+  independent panel it raised contact from `1/3` to `2/3`, and improved one
+  difficult root (`0.1612 -> 0.1379 m`), but worsened another (`0.1308 ->
+  0.1663 m`); success remained `1/3` and mean distance was `0.1099 m`.
+  Therefore post-close re-approach is mode-dependent and cannot be enabled
+  unconditionally. Artifact:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h180_postclose8.json`;
+  code: `experiments/run_live_cube_rgb_pick_place.py`.
+- Cube RGB geometry gate for contact-mode selection (2026-10-18,
+  exploratory): close-phase RGB block-goal gaps on a diagnostic panel were
+  about `0.74 px` for the difficult far-geometry root and `0.28/0.27 px` for
+  the two visually near roots. The runner now supports
+  `--post-close-reapproach-pixel-threshold` and records the RGB gap in every
+  phase trace, so re-approach can be selected without task ID or privileged
+  contact. A h240 replay with threshold `0.5 px` produced `1/3` success and
+  `0.1148 m` mean distance; its phase trace confirms the gate selected
+  re-approach only for the near roots. An earlier unconditional h240 run was
+  `2/3`, but the difference was not stable under the same frozen initial
+  conditions, so neither result is promoted as a general method. Artifact:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_rgbgate05.json`;
+  code: `experiments/run_live_cube_rgb_pick_place.py`.
+- Cube calibration-device reproducibility repair (2026-10-18): two nominally
+  identical RGB-gate replays had silently used different chart-fit devices
+  (`cpu` versus `cuda`), producing `0.1148 m` versus `0.1590 m` mean distance.
+  The runner now exposes `--fit-device {auto,cpu,cuda}`, rejects an unavailable
+  forced CUDA device, and records the resolved device in the artifact. With
+  the same frozen initial conditions and explicit `--fit-device cpu`, two
+  repeats were `0.1644 m` and `0.1605 m`, both `1/3` success. This closes a
+  reproducibility confound but does not create a planning gain. Artifacts:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_rgbgate05_fixedcpu.json`
+  and `..._fixedcpu_repeat.json`; code:
+  `experiments/run_live_cube_rgb_pick_place.py`.
+- Cube grasp-interface timing controls (2026-10-18, fixed CPU replay): adding
+  three post-probe lift steps left task1/2 RGB effect probes effectively zero
+  and kept success at `1/3` (`0.1600 m` mean distance). Moving five lift steps
+  before close was worse (`0/3` success, contact `2/3`, `0.1962 m`). These
+  controls rule out simple height timing as the missing transfer mechanism;
+  evaluator finger contact is not equivalent to a block-effect contact mode.
+  Artifacts:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_rgbgate05_fixedcpu_lift3.json`
+  and `..._fixedcpu_grasplift5.json`.
+- Cube oracle phase-order repair (2026-10-18, fixed CPU independent panel):
+  the environment's official oracle uses above-block XY alignment, descent,
+  fine alignment, then close. The runner now exposes
+  `--approach-before-descend`; with a fixed 32-step post-descend fine
+  alignment and table-push transport, the independent 3-root panel reached
+  `2/3` success and `0.0935 m` mean distance (the 16-step fine-alignment
+  control was also `2/3`, `0.0988 m`). Task1 and task3 acquired measurable
+  block effect; task2 acquired finger contact but still had weak effect.
+  This is the first direct repair of the earlier pre-descend lateral-contact
+  bug, but remains a table-push mechanism result, not frozen-LeWM planning.
+  Artifacts:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_above_hybrid_fine32_fixedcpu.json`
+  and `..._fine16_fixedcpu.json`.
+- Cube oracle-order lift control (2026-10-18, fixed CPU): moving lift before
+  effect probes, as required for pick-and-place, produced `0/3` success and
+  `0.1472 m` mean distance. Task1/3 blocks were lifted (`block_z` about
+  `0.29 m`) but transport failed, so the table-push positive cannot be
+  promoted to pick-and-place or carry transfer. Artifact:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_above_fine32_lift15_beforeprobes_fixedcpu.json`.
+- Cube carry retention follow-up after phase-order repair (2026-10-18,
+  fixed CPU): moving transport to the post-lift RGB effect chart did not
+  preserve the grasp; task3 dropped from `z≈0.29` to the table and success
+  remained `0/3`. A sparse `+0.15` vertical correction every five transport
+  steps was also negative (`0/3`, `0.1829 m` mean distance). Thus the carry
+  failure is not repaired by swapping XY effect charts or by naive z hold;
+  stable grasp/contact retention requires a separate mode-conditioned
+  interface. Artifacts:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_above_fine32_lift15_effect_fixedcpu.json`
+  and `..._sparsehold_fixedcpu.json`.
+- Cube controlled-lift carry follow-up (2026-10-18, fixed CPU): reducing
+  oracle-ordered lift from 15 to 5 steps improved the carry arm from `0/3`
+  to `1/3` success and `0.1116 m` mean distance; task1 reached `0.0315 m`.
+  This confirms that the previous lift impulse was too aggressive. Adding
+  RGB relative-height servo feedback at gain `0.5` did not improve the panel
+  (`1/3`, `0.1112 m`), and task3 still failed. Thus carry transfer remains a
+  mode-conditioned XY effect problem after grasp, not a height-only problem.
+  Artifacts:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_above_fine32_lift5_beforeprobes_fixedcpu.json`
+  and `..._lift5_servo05_fixedcpu.json`.
+- Cube carry vertical-hold ablation (2026-10-18, fixed CPU): replacing the
+  failed RGB relative-height servo with a predeclared continuous vertical
+  hold did not recover carry. Full-amplitude hold (`z=1.0`) gave `0/3`
+  success, `0.1787 m` mean distance, and `2/3` contact rate; a lower
+  calibrated amplitude (`z=0.15`) also gave `0/3`, `0.1994 m`, and `2/3`
+  contact. Both were worse than the matched lift5 no-hold arm (`1/3`,
+  `0.1116 m`). This rejects continuous vertical hold as the carry repair;
+  `--transport-lift-hold-magnitude` is retained only for reproducible
+  ablation. Artifacts:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_carrydiag_lift5_hold_fixedcpu.json`
+  and `..._lift5_hold015_fixedcpu.json`.
+- Cube pre-close micro-lift carry probe (2026-10-18, fixed CPU): adding two
+  pre-close steps with simultaneous small lift and gripper closure changed
+  the same frozen 3-root panel to `1/3` success and `0.0904 m` mean distance,
+  versus `1/3` and `0.1116 m` for the lift5 no-hold control. Task2 improved
+  from `0.2198 m` to `0.1418 m`, but task3 still failed and contact rate was
+  only `2/3`. This is a local grasp-geometry signal, not stable carry or
+  pick-and-place evidence; it motivates an independent grasp-mode panel
+  rather than promotion of the controller. Artifact:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_carrydiag_grasplift2_lift5_fixedcpu.json`.
+- Cube low-impact carry ablation (2026-10-18, fixed CPU): jointly reducing
+  horizontal transport and vertical hold to `0.03` did not preserve carry;
+  the matched panel was `0/3`, `0.1555 m`, with `2/3` contact rate. Task3
+  still returned to table height, while task1 regressed relative to the
+  lift5 no-hold control. Together with the `z=1.0`, `0.15`, and `0.03`
+  vertical-only controls, this rules out a single action-amplitude repair.
+  The remaining bottleneck is a mode-conditioned grasp interface: RGB effect
+  support measured after lift is not sufficient to guarantee retained carry.
+  Artifact:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_carrydiag_xy003_z003_fixedcpu.json`.
+- Cube RGB effect-loss re-grasp intervention (2026-10-18, fixed CPU): an
+  online RGB-only gate was added that monitors effect magnitude, effect
+  direction, and a post-lift block--effector gap; after bounded effect loss it
+  performs at most one release/approach/descend/close/lift recovery. The
+  direction-only version gave `0/3`, `0.1038 m`; adding the self-calibrated
+  gap gate gave `0/3`, `0.1125 m`. Task3 still dropped without triggering the
+  gate: its RGB gap stayed in `0.213--0.218`, despite evaluator block height
+  returning to the table. Thus the current RGB rendering does not expose a
+  reliable carry/drop state, and a more elaborate RGB gate cannot repair an
+  unobserved mode. The controller now records
+  `effect_loss_trace`, `rgb_gap_loss`, and `regrasp_count` for this boundary.
+  Artifacts:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_carry_regrasp_effectloss_align02_fixedcpu.json`
+  and `..._carry_regrasp_gap08_fixedcpu.json`.
+- Cube privileged reachability ceiling (2026-10-18, fixed EGL): the official
+  OGBench `CubeMarkovOracle`, run with simulator state on the same frozen
+  three roots, reached `3/3` with mean final XY distance `0.00285 m`. This
+  separates the earlier `0/3` fixed pick-place bank ceiling from task
+  impossibility: the full closed-loop oracle can solve these roots, while the
+  declared RGB-only carry primitive cannot. The result is an evaluator-only
+  ceiling, not visual planning evidence. Reproducible script and artifact:
+  `experiments/audit_cube_markov_oracle_ceiling.py` and
+  `results/cube_approach_fallback_panel_20261018/cube_markov_oracle_ceiling_seed20261904.json`.
+- Cube RGB visual-scale carry servo (2026-10-18, fixed CPU): a new RGB-only
+  controller estimated a local block-area response to a small post-lift z
+  probe and closed the loop on area error during transport. The matched
+  panel was `0/3`, `0.1875 m`; task1/task3 had finite slopes and executed
+  servo corrections, but the corrections destabilized transport, while task2
+  had no usable slope. This rejects red-component area as a reliable height
+  observation for the current renderer. The implementation remains an
+  auditable ablation, not a promoted carry policy. Artifact:
+  `results/cube_approach_fallback_panel_20261018/independent_seed20261904_h240_carry_visual_scale_servo05_fixedcpu.json`.
+
+- GDD-WM train-only repairability replication (2026-10-18, CUDA when
+  available): the capacity audit now has an explicit `--fit-device
+  {auto,cpu,cuda}` contract and records the resolved device instead of
+  silently refusing a runtime whose PyTorch CUDA initialization is
+  unavailable. On matched two-context Reacher data, calibration selected a
+  linear latent-residual readout and the held-out outcome regret delta versus
+  action-only was `-0.5568` with paired root bootstrap CI
+  `[-0.9933,-0.1958]`. However, the shuffled-prediction control was still
+  better than the unshuffled predicted-dynamics readout, so this is not
+  evidence that learned dynamics caused the gain. On matched TwoRoom data,
+  the strict bilinear train-crossfit gate selected `action_only`; the
+  predicted-dynamics gate did not pass and the held-out linear-residual delta
+  was `-17.90` with CI crossing zero. These paired replications localize the
+  negative result to architecture/environment-dependent capacity and
+  action-template confounding. Artifacts:
+  `results/gdd_wm_repairability_20261018/reacher_history1_vs3/` and
+  `results/gdd_wm_repairability_20261018/tworoom_history1_vs3/`; code:
+  `experiments/gdd_wm/audit_train_only_teacher_capacity.py`.
+- GDD-WM repairability authorization gate (2026-10-18): added
+  `experiments/gdd_wm/audit_repairability_gate.py`, which authorizes a
+  predicted-dynamics readout only when both calibration non-degradation and
+  root-disjoint train cross-fit dynamics gates pass. The matched panel
+  authorizes Reacher as a train-only diagnostic (`1/2` environments), but
+  falls back to action-only on TwoRoom. Held-out shuffled-control ambiguity is
+  reported separately and cannot authorize the gate; Reacher is therefore not
+  promoted as learned-dynamics or planning evidence. The panel artifact is
+  `results/gdd_wm_repairability_20261018/repairability_gate_panel.json`.
+- GDD-WM latent-relative goal conditioning intervention (2026-10-18, matched
+  Reacher/TwoRoom panels): adding frozen `goal_latent_model - source_latent`
+  and `predicted_latent - goal_latent_model` features improved Reacher's
+  linear-residual held-out regret delta from `-0.5568` to `-0.6737`, with CI
+  `[-1.1049,-0.3018]`, and removed the Reacher shuffled-control ambiguity.
+  TwoRoom changed the linear-residual delta from `-17.90` to `-17.46` with a
+  CI still crossing zero; its root-disjoint dynamics gate still selected
+  `action_only`, and the shuffled control remained better. Thus goal
+  conditioning is a scoped Reacher repair candidate, not a universal fix.
+  Artifacts:
+  `results/gdd_wm_repairability_20261018/reacher_goal_latent_history1_vs3/`,
+  `results/gdd_wm_repairability_20261018/tworoom_goal_latent_history1_vs3/`,
+  and `results/gdd_wm_repairability_20261018/goal_latent_gate_panel.json`.
+- GDD-WM goal-relative action-frame intervention (2026-10-18, TwoRoom,
+  matched CUDA panel): expressing the fixed action summaries in the
+  source-to-goal frame reduced the action-only held-out regret from `57.78` to
+  `2.05`. This is a strong decision-chart repair, but adding the latent
+  residual was harmful (`+15.56` regret delta, CI `[+2.43,+31.76]`), and both
+  calibration and predicted-dynamics cross-fit gates rejected it. The formal
+  controller therefore keeps the goal-relative action chart and disables the
+  latent residual on this environment. This separates a real task-metric/
+  action-frame repair from a learned-dynamics repair. Artifact:
+  `results/gdd_wm_repairability_20261018/tworoom_goalframe_goal_latent_history1_vs3/`
+  and gate:
+  `results/gdd_wm_repairability_20261018/tworoom_goalframe_gate.json`.
+- GDD-WM root-centered target control (2026-10-18, TwoRoom, matched CUDA
+  panel): after the goal-relative action-frame repair, subtracting each
+  training root's mean task cost did not rescue the latent residual. The
+  calibration gate still fell back to action-only; the linear residual stayed
+  at `+15.56` held-out regret delta, while the full predicted-dynamics term
+  was `+2.91` with CI crossing zero. This rules out absolute cross-root cost
+  scale as the primary cause and localizes the remaining failure to
+  within-support action-effect identifiability. Artifact:
+  `results/gdd_wm_repairability_20261018/tworoom_goalframe_goal_latent_rootcentered_history1_vs3/`.
+- GDD-WM proposal-relative action control (2026-10-18, TwoRoom, matched CUDA
+  panel): normalizing each candidate action summary inside its root/context
+  proposal cloud produced the same metrics as the raw goal-latent control
+  (`-17.46` linear-residual delta, dynamics gate rejected). This null control
+  rules out simple action-amplitude/chart scaling as the remaining cause;
+  within-support action-effect identifiability remains unresolved. Artifact:
+  `results/gdd_wm_repairability_20261018/tworoom_proposalrelative_goal_latent_history1_vs3/`.
+- GDD-WM final-stage support-aware residual consequence (2026-10-18, TwoRoom,
+  fresh CUDA RGB panel): a residual calibrated only on the final (`cem_iteration
+  = 7`) proposal set passed the root-macro calibration gate (`1/144` candidates;
+  calibration delta mean `-0.8702`, paired bootstrap CI
+  `[-2.0295,-0.1396]`). However, the decisive independent comparison on the same
+  32 roots (`20261800--20261831`) found no downstream change: the
+  `capacity_safe_readout` and frozen Euclidean base produced the identical
+  success vector, `10/32` versus `10/32`, with the same `8/0/24` paired
+  wins/losses/ties against the random arm. The apparent `+0.25` improvement is
+  therefore a frozen-base consequence, not evidence for a residual gain. The
+  residual remains a calibrated offline diagnostic candidate, but its independent
+  planning increment is currently `0`; it must not be promoted until a fresh
+  paired outcome shows a change relative to frozen base. Artifacts:
+  `results/gdd_wm_cross_environment_20261018/live_tworoom_final_stage_residual_fresh32/`
+  and
+  `results/gdd_wm_cross_environment_20261018/live_tworoom_frozen_base_fresh32/`;
+  calibration artifact:
+  `results/gdd_wm_cross_environment_20261016/tworoom_cem_final_stage_residual/`.
+- GDD-WM final-stage runtime-scope repair audit (2026-10-18, TwoRoom, CUDA):
+  trace comparison first exposed that the previous artifact was silently
+  disabled by the runtime's explicit-bank fail-closed rule; base and residual
+  CEM traces were exactly identical. The artifact contract was repaired with
+  an explicit `support_scope=full_cem_final_stage`, while old bank-only
+  artifacts retain fail-closed behavior. After regeneration and an independent
+  paired fresh-32 run, the residual was active but did not help: frozen base
+  achieved `10/32`, repaired residual `9/32`, with `0/1/31`
+  residual-wins/losses/ties and success delta `-0.03125` (the only changed
+  root was `20261820`). This correctly localizes the remaining negative result
+  to the learned final-stage correction's out-of-root transfer, rather than a
+  runtime no-op. Artifacts:
+  `experiments/capacity_readout_runtime.py`,
+  `results/gdd_wm_cross_environment_20261018/tworoom_cem_final_stage_residual_fixed/`,
+  `results/gdd_wm_cross_environment_20261018/live_tworoom_final_stage_residual_fixed_fresh32/`,
+  and
+  `results/gdd_wm_cross_environment_20261018/live_tworoom_frozen_base_fresh32/`.
+- GDD-WM enlarged calibration audit (2026-10-18, TwoRoom, CUDA): rebuilding
+  the full CEM trajectory panel with 64 root-disjoint seeds (`32` train,
+  `16` calibration, `16` outcome) removed the apparent small-panel
+  authorization: `calibration_safe_candidate_count=0`, so the formal gate
+  correctly falls back to frozen base. The best exploratory candidate had
+  calibration delta mean `-0.9779` but CI `[-3.2441,+0.8618]`; on the held-out
+  16 roots its regret delta was `+0.5468`, CI `[-2.3574,+4.0983]`. This confirms
+  that the earlier `8`-root calibration was underpowered and that the learned
+  final-stage correction does not yet transfer reliably. The repair is now
+  fail-closed rather than outcome-tuned. Artifacts:
+  `results/gdd_wm_cross_environment_20261018/tworoom_cem_trajectory_panel_64roots/`
+  and
+  `results/gdd_wm_cross_environment_20261018/tworoom_cem_final_stage_residual_64roots/`.
+- GDD-WM no-dynamics Reacher replication (2026-10-18, CUDA, fresh 64 roots):
+  a source/action-only MLP readout was tested against the frozen Euclidean
+  sequence-bank CEM on exactly the same roots (`20264000--20264063`). It gave
+  `5/4/55` wins/losses/ties, success `37/64` versus base `36/64`, but worsened
+  mean final qpos distance by `+0.00227`; this is not a stable positive
+  consequence. The stricter support-fraction gate abstained on all `35` active
+  rows, yielding an exact `0/0/64` delta and no distance change. The result
+  separates two useful properties: no-dynamics MLP can perturb decisions, but
+  its current transfer is not reliable; support gating prevents degradation by
+  falling back to frozen base, at the cost of zero intervention. Artifacts:
+  `results/gdd_wm_cross_environment_20261018/live_reacher_base_fresh64/`,
+  `results/gdd_wm_cross_environment_20261018/live_reacher_mlp_fresh64/`, and
+  `results/gdd_wm_cross_environment_20261018/live_reacher_mlp_support_gate_fresh64/`.
+
+- TwoRoom privileged goal-directed reachability ceiling (2026-10-18,
+  evaluator-only replay): a source/goal-state candidate oracle was evaluated on
+  16 fresh roots, using horizon `5`, action block `5`, and 289 candidates per
+  root. Only `9/16` roots (`56.25%`) contained any successful candidate;
+  `7/16` remained unreachable even after candidate construction used privileged
+  source and goal positions. This is not visual-planning or learned-dynamics
+  evidence. It establishes an independent planner reachability ceiling: the
+  earlier CEM failures cannot all be attributed to latent ranking, and residual
+  tuning must not proceed on those roots until the action interface or horizon
+  is repaired. Artifact:
+  `results/gdd_wm_cross_environment_20261018/tworoom_goal_directed_oracle16/report.json`;
+  implementation: `experiments/audit_tworoom_goal_directed_oracle.py`.
+- TwoRoom candidate-coverage interventions (2026-10-18, fresh CUDA RGB roots
+  `20265000--20265015`): expanding the fixed bank from the legacy 17 templates
+  to 33 evenly spaced angular templates did not change the outcome (`1/16`
+  success, identical success vector). A second RGB-only bank built from the
+  current/goal red-marker displacement with eight angular offsets and two
+  magnitudes also produced the identical `1/16` outcome. These are paired
+  negative results: simple angular coverage and direct RGB goal direction do
+  not rescue the frozen model on this panel. They localize the remaining
+  failure beyond fixed candidate density, toward candidate sequence structure
+  (door/subgoal traversal) or learned cost ranking. Artifacts:
+  `results/gdd_wm_cross_environment_20261018/live_tworoom_angular_bank_compare_legacy16/`,
+  `.../live_tworoom_angular_bank_compare_angular16/`, and
+  `.../live_tworoom_angular_bank_compare_vision_goal16/`.
+- TwoRoom RGB door/subgoal candidate intervention (2026-10-18, same fresh CUDA
+  roots): a visual door detector generated two-stage candidates (visible-door
+  approach followed by goal-directed motion), with fallback-safe RGB inputs and
+  no simulator-state access. It still produced `1/16` success with the exact
+  same success vector as legacy, angular16, and direct vision-goal banks. This
+  rejects the hypothesis that the current negative consequence is explained
+  solely by missing door-crossing sequence templates. The remaining live
+  bottleneck is learned candidate ranking or the short-horizon/control-step
+  interface, and no candidate variant is promoted as the formal controller.
+  Artifact: `results/gdd_wm_cross_environment_20261018/live_tworoom_angular_bank_compare_vision_door16/`.
+- TwoRoom horizon intervention (2026-10-18, same fresh CUDA roots): extending
+  the frozen RGB CEM horizon from `5` to `10` while retaining the legacy bank
+  reduced success from `1/16` to `0/16` on the paired fresh panel. This rules
+  out the simple claim that the current negative consequence is only caused by
+  insufficient prediction/planning horizon; longer imagined rollouts can
+  amplify the existing ranking error under this checkpoint. Artifact:
+  `results/gdd_wm_cross_environment_20261018/live_tworoom_horizon10_legacy16/`.
+- TwoRoom RGB task-geometry control (2026-10-18, same fresh CUDA roots): an
+  outcome-free RGB-only cost model scored candidates by cumulative visual
+  displacement, using a visible-door waypoint for cross-wall roots. It achieved
+  `0/16`, below the frozen latent CEM's `1/16`. Thus replacing latent cost with
+  a hand-coded RGB task metric is not sufficient; the remaining failure also
+  involves action-effect/control-interface mismatch. This baseline is retained
+  as a diagnostic control, not a proposed method. Artifact:
+  `results/gdd_wm_cross_environment_20261018/live_tworoom_vision_geometry16/`.
+- TwoRoom RGB reactive control ceiling (2026-10-18, fresh 32-root paired panel):
+  a pure RGB feedback controller that re-observes after every one-step pulse
+  and steers through a visually detected door waypoint achieved `16/32`
+  successes. Frozen RGB LeWM CEM on the exact same roots achieved `8/32`; the
+  paired comparison is `10/2/20` wins/losses/ties for reactive minus frozen,
+  with success delta `+0.25`. This confirms that the action interface and
+  visible task geometry can support substantially better control; the negative
+  frozen-LeWM result is therefore not an unavoidable environment reachability
+  failure. The controller is an evaluator-only diagnostic and is not claimed
+  as learned-world-model evidence. Artifact:
+  `results/gdd_wm_cross_environment_20261018/tworoom_rgb_reactive_controller32/report.json`.
+- TwoRoom door detector repair audit (2026-10-18): the original RGB door
+  proposal used the longest white run over the full image and could select
+  wall-exterior background. The detector now restricts the gap search to the
+  observed dark wall span, with unit tests. Re-running the corrected door bank
+  and RGB geometry controls yielded `1/16` and `0/16`, respectively, so the
+  corrected negative conclusions remain unchanged. Artifacts:
+  `results/gdd_wm_cross_environment_20261018/live_tworoom_angular_bank_compare_vision_door16_fixed/`
+  and `.../live_tworoom_vision_geometry16_fixed/`.
+- TwoRoom latent/action ranker transfer audit (2026-10-18, CUDA, root-disjoint):
+  a ridge readout trained on 16 calibration roots reduced offline held-out
+  candidate-bank regret from `47.36` to `26.97`, but its independent live
+  consequence did not improve. Frozen base achieved `5/16`; unrestricted
+  ranker extrapolation achieved `3/16`. A support-gated ranker (bank candidates
+  only, base-cost scale alignment for Gaussian proposals) also achieved `3/16`,
+  and a one-shot ranker followed by frozen CEM achieved `4/16`. This isolates
+  the offline-to-online gap: static candidate-bank readout gains do not
+  transfer to receding-horizon execution, even after support gating. Artifacts:
+  `results/gdd_wm_cross_environment_20261018/tworoom_latent_action_ranker_fresh32.json`,
+  `results/gdd_wm_cross_environment_20261018/live_tworoom_ranker_fresh16_base/`,
+  `.../live_tworoom_ranker_fresh16_supportgated/`, and
+  `.../live_tworoom_ranker_fresh16_one_shot/`.
+- TwoRoom RGB risk-gated fallback intervention (2026-10-18, CUDA, two fresh
+  32-root panels): the frozen LeWM CEM action is compared with a one-pulse
+  RGB reactive action using only the current RGB frame and rendered RGB goal.
+  A fallback is triggered by a predeclared 90-degree direction conflict or a
+  model-action norm below `0.08`; the next observation re-evaluates the gate.
+  On panel A, frozen LeWM achieved `10/32`, always-reactive `11/32`, and the
+  hybrid `14/32`. On independent panel B, the corresponding results were
+  `5/32`, `13/32`, and `13/32`. Across 64 roots, frozen LeWM achieved `15/64`,
+  always-reactive `24/64`, and hybrid `27/64`; hybrid versus frozen had
+  `15/3/46` wins/losses/ties. This is a positive intervention on the learned
+  action-ranking bottleneck and is close to the RGB reactive ceiling, but the
+  paired data do not establish superiority over the reactive controller and
+  are not evidence that frozen LeWM alone solves planning. The first panel
+  was run before a telemetry-only NaN exclusion fix; its success outcomes are
+  retained, while gate-distribution statistics are taken only from the
+  corrected second panel. Artifacts:
+  `results/gdd_wm_cross_environment_20261018/tworoom_rgb_hybrid_fallback32/`,
+  `.../tworoom_rgb_hybrid_fallback32_b/`; implementation and tests:
+  `experiments/run_live_tworoom_planning.py`,
+  `tests/test_live_tworoom_planning.py`.
+- TwoRoom online-effect extension (implementation, GPU rerun pending): the
+  same fail-closed RGB gate now optionally fits a root-and-phase-local online
+  least-squares map from executed 2-D actions to observed red-marker
+  displacement. Maps are never pooled across parallel roots or door/goal
+  phases. After at least
+  four observations with rank-two action support, a model action is
+  additionally vetoed when its predicted local image effect has non-positive
+  progress toward the RGB reactive direction. The map uses only consecutive
+  RGB observations and the previously executed action; it never reads
+  simulator state, task outcomes, or privileged contact labels. This arm is
+  exposed by `--hybrid-use-effect-map` and must be evaluated on fresh roots
+  before any claim is made. The current positive numbers above therefore
+  refer only to the direction-conflict gate, not this extension. Runtime now
+  records per-root gate calls, fallback counts, phase counts, and effect-map
+  rank so the eventual GPU audit can test whether gains are concentrated in a
+  particular contact/door phase rather than pooling them invisibly. The
+  deployment gate additionally requires at least six local observations,
+  rank-two action support, condition number at most `100`, and normalized fit
+  residual at most `0.75`; otherwise the map is diagnostic only and cannot
+  veto the model action.
+- TwoRoom failure decomposition artifact (2026-10-18): a unified descriptive
+  report now keeps the privileged reachability ceiling, learned sequence
+  ranking, offline ranker transfer gap, and RGB fallback consequence in
+  separate panels. It reports `7/16` oracle-unreachable roots, sequence
+  ranker mean Spearman `0.041` and top-1 `9.375%`, offline ranker regret
+  reduction `20.39` without an online guarantee, and the two-panel hybrid
+  result `27/64` versus frozen `15/64`. This artifact is an attribution aid,
+  not a pooled causal estimate. Artifact:
+  `results/gdd_wm_cross_environment_20261018/tworoom_failure_decomposition.json`;
+  implementation:
+  `experiments/summarize_tworoom_failure_decomposition.py`.
+- TwoRoom paired uncertainty audit (2026-10-18): on the fixed two-panel
+  64-root outcome set, hybrid minus frozen has mean success delta `+0.1875`,
+  paired bootstrap 95% interval `[+0.0625,+0.3125]`, and exact two-sided
+  sign-flip `p=0.00754` over 18 non-tied roots. Hybrid minus reactive has
+  mean delta `+0.046875`, interval `[-0.015625,+0.109375]`, and `p=0.375`
+  over only 5 non-tied roots, so no superiority over the reactive controller
+  is claimed. Artifact:
+  `results/gdd_wm_cross_environment_20261018/tworoom_hybrid_paired_statistics.json`;
+  implementation:
+  `experiments/audit_tworoom_hybrid_statistics.py`.
+- The GPU rerun is frozen in
+  `experiments/run_tworoom_effect_map_panel.py`: direction-gate and
+  root-local effect-map arms use exactly the same fresh roots, with the
+  effect-map gate as the only intervention. The panel refuses CUDA requests
+  when CUDA is unavailable and reports paired wins/losses/ties plus per-root
+  support diagnostics. On the fresh 32-root CUDA panel
+  `results/tworoom_effect_map_panel_20261018_fresh_v2/panel.json`, both
+  hybrid arms both obtained `14/32` (random control `3/32`) and the paired comparison was `0/0/32`; the effect
+  map was usable on 31/32 roots but its fallback rate was 54.1%. This closes
+  the simple local-effect-gate repair as a planning improvement and retains
+  action-effect transfer as the active bottleneck.
+- Cube RGB macro-transfer panel (2026-10-18, CUDA/EGL, 40 calibration and
+  8 held-out roots): the first fixed panel compared reclose, open-loop,
+  low-gain reclose, persistent contact, RGB effect adaptation, backtracking,
+  and regression-stop arms. Persistent contact and backtracking each reached
+  `2/8`, versus `1/8` for full-scale reclose; persistent contact reduced mean
+  final distance by `0.0261` in paired roots but lost contact on two more
+  roots. The effect-adaptive arm was `1/8`, so offline/local effect fitting
+  did not yield a stable online gain. Artifact:
+  `results/live_cube_rgb_macro_panel_20261018_cuda/panel.json`.
+- Cube contact-probe replication (2026-10-18, CUDA/EGL, fresh seed,
+  root-disjoint): a predeclared short RGB direction-probe was added before
+  persistent low-gain pushing. Persistent was `2/8` with contact `5/8`;
+  persistent+probe was `1/8` with contact `6/8`; paired final-distance
+  reductions versus full-scale reclose were `0.0443` and `0.0431`,
+  respectively. The probe improves contact support but not task success, so
+  action-effect instability after contact remains the active boundary.
+  Artifact:
+  `results/live_cube_rgb_macro_panel_20261018_probe_replication/panel.json`;
+  implementation:
+  `experiments/run_live_cube_rgb_macro_panel.py`.
+- Cube RGB-realized calibration target audit (2026-10-18, CUDA/EGL, fresh
+  root-disjoint panel): the macro ranker was rerun with calibration targets
+  obtained only from the realized RGB successor (goal-centroid minus final
+  block-centroid), instead of privileged simulator task cost. Full-scale
+  reclose, persistent, persistent+probe, and backtrack obtained respectively
+  `0/8`, `0/8`, `0/8`, and `1/8`. The earlier privileged-target panel had
+  persistent `2/8`; therefore its apparent gain is not evidence that RGB
+  successor geometry solved task transfer. This closes the privileged-teacher
+  shortcut as a causal explanation and leaves task-sufficient contact geometry
+  as the active repair target. Artifact:
+  `results/live_cube_rgb_macro_panel_20261018_rgb_goal/panel.json`;
+  implementation:
+  `experiments/run_live_cube_rgb_macro_ranker.py`
+  (`--calibration-target rgb_goal`).
+- Cube contact-aware RGB geometry repair (2026-10-18, CUDA/EGL): adding the
+  visible effector centroid and effector-minus-block chart to the RGB ranker
+  leaves the legacy feature family unchanged by default. On a fresh 8-root
+  panel with RGB-realized calibration, contact-aware backtrack reached `2/8`
+  versus `0/8` for full-scale reclose. The predeclared 16-root replication
+  reached `2/16` versus `0/16`, contact `13/16` versus `10/16`, and paired
+  final-distance reduction `+0.02035` (bootstrap 95% CI
+  `[+0.00599,+0.03594]`); paired success delta was `+0.125` (CI
+  `[0,+0.3125]`, 2 wins, 0 losses, 14 ties). This is the first repeated positive
+  task consequence for a non-privileged RGB repair, but remains Cube-scoped
+  and does not establish universal world-model transfer. Artifacts:
+  `results/live_cube_rgb_macro_panel_20261018_contact_aware/panel.json` and
+  `results/live_cube_rgb_macro_panel_20261018_contact_aware_replication16/panel.json`;
+  implementation:
+  `experiments/run_live_cube_rgb_macro_ranker.py` and
+  `experiments/run_live_cube_rgb_macro_panel.py`.
+- Cube horizon intervention (2026-10-18, CUDA/EGL, fresh root-disjoint
+  16-root test set): with the contact-aware RGB features and non-privileged
+  `rgb_goal` calibration held fixed, increasing the macro horizon to 8 was
+  compared between the predeclared `fullscale_reclose` reference and
+  `lowgain_backtrack`. Backtrack achieved `1/16` success versus `0/16`, and
+  reduced paired final distance by `0.03793` (bootstrap 95% CI
+  `[+0.00758,+0.07463]`; 10 wins, 6 losses). However, best-distance reduction
+  was `0.00289` (CI `[-0.00813,+0.02053]`), contact observation was lower
+  (`10/16` versus `14/16`), and paired success was only one win with no
+  losses. Thus a longer horizon improves a local terminal-distance statistic
+  but does not repair contact retention or stable task success; the active
+  boundary remains within-contact action-effect transfer rather than a simple
+  horizon shortage. Artifact:
+  `results/live_cube_rgb_macro_panel_20261018_contact_aware_horizon8/panel.json`;
+  implementation:
+  `experiments/run_live_cube_rgb_macro_panel.py`.
+- Cube privileged candidate-bank ceiling matched to the horizon-8 roots
+  (2026-10-18, EGL MuJoCo evaluator): the fixed four-direction bank was
+  reachable on `2/16` roots and the expanded eight-direction/low-gain bank was
+  also reachable on `2/16`; expansion recovered `0` previously unreachable
+  roots and reduced mean oracle distance only from `0.25070 m` to `0.24754 m`.
+  The paired failure-cause audit is deliberately `unresolved`, because the
+  online `lowgain_backtrack` arm uses RGB progress feedback, sign reversal,
+  and gain changes that are not represented by the fixed open-loop candidate
+  ceiling. Therefore this result diagnoses weak fixed-bank support but cannot
+  be used to attribute the adaptive arm's failures entirely to reachability.
+  Artifact:
+  `results/cube_planner_ceiling_20261018_horizon8_fresh16/ceiling.json` and
+  `results/cube_failure_cause_horizon8_fresh16/report.json`;
+  implementation:
+  `experiments/audit_cube_planner_ceiling.py` and
+  `experiments/summarize_cube_failure_cause.py`.
+- Cube adaptive action-protocol ceiling (2026-10-18, EGL MuJoCo evaluator,
+  fresh root-disjoint 16-root panel): replaying the fixed online bank with the
+  exact RGB progress-feedback/backtrack law and persistent contact gave
+  `2/16` privileged reachability, the same rate as the open-loop fixed-bank
+  ceiling (`2/16`), with mean oracle distance `0.24389 m` versus `0.25070 m`.
+  The root-level decomposition is more informative than the aggregate:
+  adaptive persistence recovered root `20263002` (task 3) that open-loop could
+  not reach, but lost open-loop reachability on root `20263012`; the selected
+  successful adaptive candidates did not require a gain backtrack. Thus the
+  observed online backtrack success is explained primarily by a
+  root-dependent persistent-contact/reclose protocol interaction, not by a
+  universally useful feedback repair. Artifact:
+  `results/cube_adaptive_protocol_ceiling_20261018_horizon8_fresh16/ceiling.json`;
+  implementation:
+  `experiments/audit_cube_adaptive_protocol_ceiling.py` and
+  `experiments/audit_cube_planner_ceiling.py`.
+- Cube mode-conditioned reclose intervention (implementation queued for CUDA
+  validation): `lowgain_mode_reclose` retains persistent contact only when the
+  previous cycle produces at least the predeclared RGB goal-error decrease
+  `1e-3`; missing or insufficient RGB progress fails closed to reclose. The
+  gate uses no simulator contact labels and records its per-cycle reason in
+  `mode_reclose_trace`. It is a targeted repair for the root-dependent
+  persistent/reclose interaction above, not yet a positive result: the formal
+  RGB panel is blocked until CUDA is available. Implementation:
+  `experiments/run_live_cube_rgb_macro_ranker.py` and
+  `experiments/run_live_cube_rgb_macro_panel.py`.
+- Cube adaptive action-protocol smoke ceiling (2026-10-18, CPU diagnostic
+  because CUDA device nodes were unavailable): on two fresh roots, the exact
+  RGB-backtrack protocol with privileged post-hoc candidate choice reached
+  `0/2` and had mean final distance `0.17665 m`. This is stronger evidence
+  that the current fixed bank/protocol has a reachability ceiling; it is not
+  learned-model or online-policy evidence and is not pooled with the formal
+  CUDA panel. Artifact:
+  `results/cube_adaptive_protocol_ceiling_20261018_cpu_diagnostic/report.json`.
+- Cube goal-conditioned support repair smoke (2026-10-18, CPU diagnostic):
+  adding evaluator-only goal-relative push offsets reduced the one-root oracle
+  distance from `0.20022 m` to `0.14715 m`, but reachability remained `0/1`.
+  Thus directional support helps terminal distance without repairing the
+  contact/transport interface; it is not evidence for a deployable RGB policy
+  or learned-model transfer. Artifact:
+  `results/cube_adaptive_goal_conditioned_ceiling_20261018_cpu_smoke/report.json`.
+- Cube pick-place interface ceiling smoke (2026-10-18, CPU diagnostic):
+  replacing planar push with an evaluator-only close/lift/transport/lower/
+  release primitive still reached `0/1`; both the 8-direction and
+  goal-relative variants had mean final distance `0.35479 m` and recorded no
+  contact. This localizes the current failure one stage earlier: the RGB
+  descent/approach prelude is not establishing reliable contact, so changing
+  the learned ranker cannot fix this root. Artifact:
+  `results/cube_pick_place_ceiling_20261018_cpu_smoke/report.json`.
+- Cube approach-window intervention (2026-10-18, CPU diagnostic): extending
+  the same RGB approach prelude from 16 to 32 steps raised observed contact
+  to `0.9114` on the smoke root, but pick-place reachability remained `0/1`
+  and final distance was `0.19740 m`. Thus approach duration was a real
+  contact bottleneck, but solving contact alone does not solve transport or
+  task closure. Artifact:
+  `results/cube_pick_place_ceiling_20261018_cpu_approach32_smoke/report.json`.
+- Cube pick-place transport-gain smoke (2026-10-18, CPU diagnostic): with the
+  32-step approach and transport magnitude `0.5`, contact reached `1.0` and
+  the best 8-direction pick-place distance improved to `0.15329 m`, but
+  reachability remained `0/1`; the goal-relative variant was worse
+  (`0.24807 m`). This rules out insufficient contact and points to an
+  action-timing/transport-dynamics mismatch in the current primitive.
+  Artifact:
+  `results/cube_pick_place_ceiling_20261018_cpu_transport05_smoke/report.json`.
+- Cube pick-place transport-duration smoke (2026-10-18, CPU diagnostic):
+  increasing transport duration from 20 to 50 steps (magnitude `0.5`) reduced
+  the best privileged distance further to `0.12936 m`, with contact `1.0`, but
+  still yielded `0/1` reachability. The goal-relative variant remained
+  unsuccessful (`0.19158 m`). Longer contact improves local displacement but
+  does not close the task, so the remaining boundary is not merely horizon or
+  contact duration. Artifact:
+  `results/cube_pick_place_ceiling_20261018_cpu_transport50_smoke/report.json`.
+- Cube table-push mechanism recheck (2026-10-18, CPU diagnostic, fresh
+  2-root panel): the previously positive single-root RGB table-push protocol
+  (105 transport steps, magnitude `0.1`, chart controller) had contact on both
+  roots but success `0/2`, mean distance `0.10611 m`; the root-wise distances
+  were `0.05604` and `0.15617 m`. The predeclared `approach-before-descend`
+  intervention was worse (`0/2`, `0.17406 m`). This closes the apparent
+  single-root repair as non-robust and identifies root-dependent approach /
+  effect calibration as the remaining mechanism boundary. Artifacts:
+  `results/cube_tablepush_repair_20261018_cpu_2roots/report.json` and
+  `results/cube_tablepush_before_descend_20261018_cpu_2roots/report.json`.
+- Cube root-local action-effect intervention (2026-10-18, protocol locked;
+  CUDA validation pending): the fresh-root paired panel holds the roots,
+  local RGB probes, action bank, approach/transport schedule, and goal
+  threshold fixed, and compares `chart`, `effect`, and `hybrid` transport
+  controllers. It reports paired action-effect rank, contact, final distance,
+  success, and per-root deltas without selecting a controller from outcome
+  roots. This directly tests whether the remaining root-dependent failure is
+  an action-effect calibration problem. It is not yet a positive result.
+  Implementation: `scripts/run_cube_action_effect_panel.sh`,
+  `experiments/summarize_cube_action_effect_panel.py`; expected artifacts:
+  `results/cube_action_effect_panel_20261018/`.
+  The panel now requires `--lift-before-probes`: effect probes are collected
+  after the object is lifted, so the fitted operator represents carried-object
+  action effect rather than free-gripper/pre-contact motion. Pre-lift effect
+  fitting is rejected fail-closed by the runner. A full-rank but weak,
+  ill-conditioned, or high-residual effect fit is also rejected; the runtime
+  records the fallback source instead of allowing a spurious action map to
+  drive transport.
+- Cube action-effect panel v1 (2026-10-18, CUDA/EGL, 8 fresh paired roots):
+  chart, carried-object effect, and hybrid all had contact `1.0` and success
+  `0/8`; mean final distances were `0.18716`, `0.19216`, and `0.19288 m`.
+  This ruled out contact acquisition as the remaining cause, but the first
+  implementation had a fallback-comparison contamination that was corrected
+  before v2. Artifact: `results/cube_action_effect_panel_20261018/`.
+- Cube action-effect panel v2 (2026-10-18, CUDA/EGL, same frozen roots):
+  after making `effect` fall back to the identical RGB chart rather than a
+  world chart, chart/effect/hybrid were still `0/8`, with mean distances
+  `0.14727`, `0.16349`, and `0.15719 m`. This rejects the hypothesis that
+  the prior negative result was only caused by fallback contamination.
+  Artifact: `results/cube_action_effect_panel_20261018_v2/`.
+- Cube online effect-validation panel v3 (2026-10-18, CUDA/EGL, same roots):
+  rejecting an effect map after a failed first RGB displacement reduced the
+  effect penalty to `-0.00624 m` paired improvement (effect mean `0.15351 m`)
+  but did not produce success (`0/8`). The gate improves safety, not task
+  completion. Artifact: `results/cube_action_effect_panel_20261018_v3/`.
+- Cube greedy-effect control (2026-10-18, CUDA/EGL, same roots): replacing
+  continuous inverse mapping with an eight-direction discrete effect choice
+  still produced `0/8`, mean distance `0.15458 m`, paired improvement
+  `-0.00731 m`. This rejects inverse-amplification as the sole explanation.
+  The current evidence therefore sets a failure boundary: contact is
+  observable and repeatable, but carried-object RGB action-effect transfer is
+  not a reliable cross-root operator for this protocol. Artifact:
+  `results/cube_action_effect_panel_20261018_v4/`.
+- Protocol repair for Cube action-effect panel (2026-10-18): the earlier
+  panel passed `--local-pixel-approach` but inherited the runner default
+  `approach_controller=world`, so the local pixel approach was not actually
+  used. The locked panel now explicitly passes `--approach-controller pixel`;
+  v5 is a fresh-root rerun required before interpreting transport effects.
+- Cube pixel-approach action-effect panel v5 (2026-10-18, CUDA/EGL, fresh
+  8-root paired panel): with the corrected explicit pixel approach,
+  chart/effect/hybrid all remained `0/8` and had mean final distance
+  `0.17624 m`; effect was identical to chart and hybrid did not improve
+  distance. Contact was `0.75`, `0.75`, and `0.875`, respectively. Together
+  with v1--v4, this shows that the negative result is not explained by a
+  single inverse solver, fallback contamination, pre-lift probes, or the
+  world-versus-pixel approach default. The remaining boundary is unstable or
+  insufficiently observable carried-object RGB action-effect transfer under
+  these roots; no controller success claim is made. Artifact:
+  `results/cube_action_effect_panel_20261018_v5/`.
+- Probe-scale repair for Cube action-effect panel (2026-10-18): v1--v5
+  calibrated effect at magnitude `0.15` but executed transport at `0.5`.
+  Because the Cube contact/friction interface may be amplitude-thresholded,
+  this is an invalid local-linear extrapolation. The locked v6 protocol now
+  matches `probe_magnitude=transport_magnitude=0.5` before evaluating effect
+  transfer.
+- Cube matched-scale effect panel v6 (2026-10-18, CUDA/EGL, fresh 8-root
+  paired panel): matching probe and transport magnitudes raised contact to
+  `1.0` for all arms, but chart/effect/hybrid remained `0/8`; mean distances
+  were `0.18031`, `0.18060`, and `0.18060 m`, with paired effect delta
+  `-0.00029 m`. Thus amplitude-threshold mismatch is not sufficient to explain
+  the negative result. The surviving boundary is that RGB carried-object
+  effect information is not independently transferable to task closure under
+  this protocol. Artifact: `results/cube_action_effect_panel_20261018_v6/`.

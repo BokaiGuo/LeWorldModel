@@ -86,8 +86,28 @@ def _macro_bank(
 
 def _macro_summary(bank: np.ndarray) -> np.ndarray:
     bank = np.asarray(bank, dtype=np.float32)
+    # A single whole-sequence mean aliases two physically different phases:
+    # approaching the object and pushing it after contact.  Keep the legacy
+    # summary fields, but add phase-local XY summaries so a factorized bank
+    # can be represented without relying on candidate IDs.
+    # Offline historical macros encode close as -1 while the deployable
+    # online protocol uses +1; both denote the phase boundary here.
+    close = np.abs(bank[:, :, 4]) > 0.5
+    push_start = np.asarray([
+        int(np.flatnonzero(row)[-1]) + 1 if np.any(row) else bank.shape[1]
+        for row in close
+    ], dtype=np.int64)
+    approach_end = np.minimum(push_start, max(1, bank.shape[1] // 2))
+    approach = np.asarray([
+        row[: int(end), :2].mean(axis=0) if int(end) > 0 else np.zeros(2, dtype=np.float32)
+        for row, end in zip(bank, approach_end)
+    ], dtype=np.float32)
+    push = np.asarray([
+        row[int(start):, :2].mean(axis=0) if int(start) < bank.shape[1] else np.zeros(2, dtype=np.float32)
+        for row, start in zip(bank, push_start)
+    ], dtype=np.float32)
     return np.concatenate(
-        [bank.mean(axis=1), bank[:, -1, :], np.mean(np.abs(bank), axis=1)], axis=1,
+        [bank.mean(axis=1), bank[:, -1, :], np.mean(np.abs(bank), axis=1), approach, push], axis=1,
     ).astype(np.float32)
 
 
