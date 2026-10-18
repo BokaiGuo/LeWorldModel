@@ -89,6 +89,42 @@ def _target_red_area(image: np.ndarray) -> float:
     return float(np.max(sizes) / max(mask.size, 1))
 
 
+def _side_rgb_frame(env: gym.Env) -> np.ndarray:
+    """Capture the fixed side RGB view used as an implicit depth cue.
+
+    This is the lightweight analogue of Evo-Depth's multi-view spatial branch:
+    the controller remains RGB-only, while the side projection supplies a
+    view-complementary vertical relation that a single front image cannot
+    identify reliably.
+    """
+    return np.asarray(env.unwrapped.render(camera="side_pixels"), dtype=np.uint8)
+
+
+def _side_vertical_gap(env: gym.Env) -> float | None:
+    """Return normalized side-view block-to-effector vertical gap, if visible."""
+    side = _side_rgb_frame(env)
+    block = _target_red_centroid(side)[:2]
+    effector = _largest_effector_centroid(side)[:2]
+    if np.linalg.norm(block) <= 0.0 or np.linalg.norm(effector) <= 0.0:
+        return None
+    # Camera perturbations and task layouts can flip the image-space vertical
+    # ordering. The contact cue is a distance, not an oriented residual.
+    return float(abs(block[1] - effector[1]))
+
+
+def _multiview_effector_error(env: gym.Env, front_image: np.ndarray) -> np.ndarray | None:
+    """Return block-minus-effector error in front and side RGB projections."""
+    front_block = _target_red_centroid(front_image)[:2]
+    front_effector = _largest_effector_centroid(front_image)[:2]
+    side = _side_rgb_frame(env)
+    side_block = _target_red_centroid(side)[:2]
+    side_effector = _largest_effector_centroid(side)[:2]
+    values = np.concatenate((front_block - front_effector, side_block - side_effector))
+    if not np.isfinite(values).all() or np.linalg.norm(values) <= 0.0:
+        return None
+    return values.astype(np.float64)
+
+
 def _numpyify(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _numpyify(item) for key, item in value.items()}
@@ -136,6 +172,8 @@ def _approach_action(
     controller: str,
     pixel_gain: float,
     world_gain: float,
+    spatial_mapping: np.ndarray | None = None,
+    env: gym.Env | None = None,
 ) -> np.ndarray:
     """Return an RGB-only XY approach action.
 
@@ -145,8 +183,25 @@ def _approach_action(
     image-space correction.  This is a mechanism arm for diagnosing chart
     extrapolation, not evidence for a learned world-model controller.
     """
-    if controller not in {"pixel", "world", "hybrid"}:
+    if controller not in {"pixel", "world", "hybrid", "spatial"}:
         raise ValueError(f"unknown approach controller: {controller}")
+    if controller == "spatial" and spatial_mapping is not None and env is not None:
+        error = _multiview_effector_error(env, image)
+        if error is not None:
+            # mapping is action -> [front_xy, side_xy]. Solve the calibrated
+            # joint-view least-squares inverse, then apply a fixed gain.
+            action = np.linalg.lstsq(
+                np.asarray(spatial_mapping, dtype=np.float64).T,
+                -error,
+                rcond=1.0e-6,
+            )[0]
+            norm = float(np.linalg.norm(action))
+            if np.isfinite(norm) and norm > 1.0e-8:
+                action = float(pixel_gain) * action / max(1.0, norm)
+                output = np.zeros(5, dtype=np.float32)
+                output[:2] = np.clip(action[:2], -1.0, 1.0)
+                return output
+        return _rgb_approach_action(image, pixel_mapping, pixel_gain)
     pixel_action = _rgb_approach_action(image, pixel_mapping, pixel_gain)
     if controller == "pixel" or approach_model is None:
         return pixel_action
@@ -297,6 +352,63 @@ def _fit_local_rgb_pixel_mapping(
     }
 
 
+def _fit_local_rgb_multiview_mapping(
+    initial: dict[str, Any], descent_steps: int, probe_steps: int,
+) -> tuple[np.ndarray | None, dict[str, Any]]:
+    """Fit an RGB-only action-to-joint-view Jacobian for spatial approach.
+
+    The output maps two planar action coordinates to four image coordinates:
+    front-x/front-y and side-x/side-y.  It is a compact, calibrated analogue
+    of Evo-Depth's spatial enhancement branch; no simulator state or task
+    outcome enters the fit.
+    """
+    actions: list[np.ndarray] = []
+    deltas: list[np.ndarray] = []
+    directions = np.asarray(
+        [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]], dtype=np.float32,
+    )
+    env = _make_env()
+    try:
+        for direction in directions:
+            obs, _info, _goal = _reset(env, initial)
+            for _ in range(int(descent_steps)):
+                action = np.zeros(5, dtype=np.float32)
+                action[2] = -1.0
+                obs, _reward, terminated, truncated, _info = env.step(action)
+                if terminated or truncated:
+                    break
+            before = _multiview_effector_error(env, np.asarray(obs, dtype=np.uint8))
+            if before is None:
+                continue
+            action = np.zeros(5, dtype=np.float32)
+            action[:2] = direction
+            for _ in range(int(probe_steps)):
+                obs, _reward, terminated, truncated, _info = env.step(action)
+                if terminated or truncated:
+                    break
+            after = _multiview_effector_error(env, np.asarray(obs, dtype=np.uint8))
+            if after is None:
+                continue
+            actions.append(direction.astype(np.float64))
+            deltas.append((after - before).astype(np.float64))
+    finally:
+        env.close()
+    if len(actions) < 4:
+        return None, {"status": "insufficient_multiview_probe_rows", "rows": len(actions), "rank": 0}
+    x = np.asarray(actions, dtype=np.float64)
+    y = np.asarray(deltas, dtype=np.float64)
+    mapping, _, rank, singular_values = np.linalg.lstsq(x, y, rcond=1.0e-6)
+    residual = x @ mapping - y
+    if int(rank) < 2 or not np.isfinite(mapping).all():
+        return None, {"status": "rank_deficient_multiview_probe", "rows": len(actions), "rank": int(rank)}
+    return mapping.astype(np.float32), {
+        "status": "ok", "rows": len(actions), "rank": int(rank),
+        "condition_number": float(singular_values[0] / max(singular_values[-1], 1.0e-12)),
+        "fit_rmse": float(np.sqrt(np.mean(residual ** 2))),
+        "mapping": mapping.astype(np.float32).tolist(),
+    }
+
+
 def _greedy_effect_action(
     desired: np.ndarray, mapping: np.ndarray | None, magnitude: float,
 ) -> np.ndarray | None:
@@ -336,9 +448,12 @@ def _inverse_effect_action(
 
 def _run_episode(
     *, seed: int, task_id: int, pixel_mapping: np.ndarray | None,
+    spatial_mapping: np.ndarray | None,
     approach_model: dict[str, Any] | None,
     initial: dict[str, Any] | None,
-    open_steps: int, descent_steps: int, approach_steps: int, approach_gain: float,
+    open_steps: int, descent_steps: int, depth_aware_contact: bool,
+    side_gap_threshold: float, side_extra_descent_steps: int,
+    approach_steps: int, approach_gain: float,
     approach_threshold: float, approach_min_steps: int,
     approach_controller: str, approach_world_gain: float,
     approach_task_models: dict[int, dict[str, Any]] | None,
@@ -413,6 +528,8 @@ def _run_episode(
                 if np.linalg.norm(rgb_block) > 0.0 and np.linalg.norm(rgb_effector) > 0.0
                 else None
             )
+            if depth_aware_contact:
+                label["side_vertical_gap"] = _side_vertical_gap(env)
             label_trace.append(label)
             return bool(terminated or truncated)
 
@@ -440,7 +557,8 @@ def _run_episode(
                 elif approach_controller == "adaptive":
                     selected_controller = "hybrid"
                 action = _approach_action(
-                    image, pixel_mapping=pixel_mapping,
+                    image, pixel_mapping=pixel_mapping, spatial_mapping=spatial_mapping,
+                    env=env,
                     approach_model=_model_for_task(
                         approach_model, approach_task_models, task_id,
                     ),
@@ -465,6 +583,17 @@ def _run_episode(
         for _ in range(int(descent_steps)):
             action = np.zeros(5, dtype=np.float32); action[2] = -1.0
             if execute(action, "pre_descend"): break
+        if depth_aware_contact:
+            # A fixed number of descent pulses is not spatially invariant
+            # across camera/height variations.  Use the side projection as a
+            # conservative contact gate, with a hard declared budget.
+            for _ in range(int(side_extra_descent_steps)):
+                gaps = [row.get("side_vertical_gap") for row in label_trace]
+                gap = gaps[-1] if gaps else None
+                if gap is not None and gap <= float(side_gap_threshold):
+                    break
+                action = np.zeros(5, dtype=np.float32); action[2] = -1.0
+                if execute(action, "depth_aware_descend"): break
         if not phases:
             return {"seed": seed, "task_id": task_id, "success": False, "phase_trace": phases}
 
@@ -501,7 +630,8 @@ def _run_episode(
         for _ in range(int(post_close_reapproach_steps) if enable_post_close else 0):
             image = np.asarray(obs, dtype=np.uint8)
             action = _approach_action(
-                image, pixel_mapping=pixel_mapping,
+                image, pixel_mapping=pixel_mapping, spatial_mapping=spatial_mapping,
+                env=env,
                 approach_model=_model_for_task(approach_model, approach_task_models, task_id),
                 goal_image=goal_image,
                 controller=("hybrid" if approach_controller == "adaptive" else approach_controller),
@@ -838,6 +968,12 @@ def main() -> None:
     parser.add_argument("--tasks", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     parser.add_argument("--descent-steps", type=int, default=15)
     parser.add_argument(
+        "--depth-aware-contact", action="store_true",
+        help="use side RGB projection as a conservative implicit-depth contact gate",
+    )
+    parser.add_argument("--side-gap-threshold", type=float, default=0.04)
+    parser.add_argument("--side-extra-descent-steps", type=int, default=0)
+    parser.add_argument(
         "--open-steps", type=int, default=5,
         help="fixed gripper-opening prelude before descent; action[4]=-1",
     )
@@ -849,7 +985,7 @@ def main() -> None:
         help="minimum RGB approach steps before the centroid threshold can stop",
     )
     parser.add_argument(
-        "--approach-controller", choices=("pixel", "world", "hybrid", "adaptive"),
+        "--approach-controller", choices=("pixel", "world", "hybrid", "adaptive", "spatial"),
         default="world",
     )
     parser.add_argument(
@@ -998,11 +1134,24 @@ def main() -> None:
                 local_mapping if local_mapping is not None else mapping
             )
             local_pixel_reports.append(local_report)
+    local_spatial_mappings: list[np.ndarray | None] = [None for _ in test_initials]
+    local_spatial_reports: list[dict[str, Any]] = []
+    if args.approach_controller == "spatial":
+        for index, initial in enumerate(test_initials):
+            spatial_mapping, spatial_report = _fit_local_rgb_multiview_mapping(
+                initial, args.descent_steps, 4,
+            )
+            local_spatial_mappings[index] = spatial_mapping
+            local_spatial_reports.append(spatial_report)
     rows = [_run_episode(
         seed=int(test_initials[i]["seed"]), task_id=int(test_initials[i]["task_id"]),
-        pixel_mapping=local_pixel_mappings[i], approach_model=approach_model,
+        pixel_mapping=local_pixel_mappings[i], spatial_mapping=local_spatial_mappings[i],
+        approach_model=approach_model,
         initial=test_initials[i],
         open_steps=args.open_steps, descent_steps=args.descent_steps,
+        depth_aware_contact=args.depth_aware_contact,
+        side_gap_threshold=args.side_gap_threshold,
+        side_extra_descent_steps=args.side_extra_descent_steps,
         approach_steps=args.approach_steps, approach_gain=args.approach_gain,
         approach_threshold=args.approach_threshold,
         approach_min_steps=args.approach_min_steps,
@@ -1049,6 +1198,7 @@ def main() -> None:
         "approach_chart_diagnostics": approach_report,
         "fit_device": fit_device,
         "local_pixel_approach_diagnostics": local_pixel_reports,
+        "local_spatial_approach_diagnostics": local_spatial_reports,
         "initial_conditions_frozen": True,
         "initial_conditions_source": (
             "captured_before_test" if args.initial_conditions is None

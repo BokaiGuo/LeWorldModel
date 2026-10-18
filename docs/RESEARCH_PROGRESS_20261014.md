@@ -1242,3 +1242,115 @@ This narrows the next diagnosis to the physical RGB-to-pinch alignment and
 lift/carry interface, rather than gripper sign or calibration replay. The
 result is a valid negative boundary artifact; it does not support stable Cube
 pose closure, frozen-LeWM online planning, or a universal world-model claim.
+
+## Evo-Depth-inspired multi-view spatial transfer audit — 2026-10-18
+
+The paper [Evo-Depth](https://arxiv.org/abs/2605.14950) suggests three ideas
+relevant to the Cube failure: complementary RGB views for implicit spatial
+information, lightweight feature modulation rather than replacing the base
+representation, and progressive alignment of the spatial branch with action
+learning. OGBench Cube exposes a fixed `side_pixels` camera, so we tested a
+minimal RGB-only transfer of the first and third ideas without using simulator
+state at runtime.
+
+The implementation adds a side-view spatial cue and a calibration-only joint
+front/side action Jacobian. The front view supplies the planar alignment cue;
+the side view supplies a complementary vertical relation; the controller has a
+fixed probe budget and falls back rather than extrapolating unsupported
+geometry. A signed-gap bug in the first implementation was caught by the
+orientation-invariance test and corrected before the final run.
+
+On the same eight held-out roots used by v6, the corrected v16 depth-gated
+single-view-compatible arm remained `0/8` success with contact `0.875`; the
+joint-view spatial arm v20 remained `0/8` success with contact `0.625` and
+mean final distance `0.18976 m`. At close, side-view gaps remained roughly
+`0.13–0.20` and block height stayed at the table. The joint Jacobian is
+therefore not a successful carry solution and must not be reported as one.
+
+The actionable conclusion is narrower and more useful: multi-view geometry is
+observable, but an online centroid fusion does not learn the camera-extrinsic,
+pinch-point, and within-contact action interface. The next valid intervention
+is a true staged spatial adapter: first fit view-consistent geometry, then fit
+action-effect alignment on held-out calibration roots, and only release when
+side-view lift verification passes. This is a transfer-interface problem, not
+evidence that adding a second image alone repairs frozen-LeWM planning.
+
+## Staged multi-view spatial/action-effect training — 2026-10-18
+
+The first actual training intervention is now implemented in
+`experiments/train_cube_multiview_spatial_adapter.py`. It uses root-disjoint
+RGB pairs: for each root and candidate XY pulse, a zero pulse and candidate
+pulse are replayed from the same reset, and the target is the front/side RGB
+object successor difference after subtracting the zero-pulse successor.
+Simulator state, contact, goal distance, and planning outcomes are excluded
+from the loss.
+
+The staged model trains a geometry encoder/reconstructor first, freezes that
+encoder while fitting the action-effect head, and then jointly fine-tunes both
+at a lower learning rate. The CUDA run used 24 train roots, 8 held-out roots,
+two Cube tasks, four candidate pulses per root, and 4-step pulses. On the
+held-out roots it obtained effect RMSE `0.00258`, effect MAE `0.00184`, and
+per-coordinate sign accuracy `83.59%`. The final training artifact is
+`results/cube_multiview_spatial_adapter_20261018_v1/summary.json` with its
+checkpoint alongside it.
+
+This is a valid learned spatial/action-effect representation result, not yet a
+planning result. The next gate is to load the frozen checkpoint into a shared
+candidate-bank controller and test root-disjoint action-ranking and carry
+consequence against the fixed RGB chart and no-dynamics controls. Until that
+gate is passed, the six universal claims remain closed.
+
+## Held-out action-ranking gate and loss reweighting audit — 2026-10-18
+
+The saved root-disjoint panel was extended with a calibration-only zero-target
+baseline and an independent four-candidate action-ranking evaluator. The
+baseline mean is fit on train roots only; the ranking evaluator uses no test
+planning outcome. In the first learned adapter run (24 train roots, 8 held-out
+roots), effect RMSE improved from `0.03748` for the zero baseline to `0.00295`,
+and MAE from `0.01491` to `0.00203`. However, held-out candidate top-1
+agreement was unchanged at `0.50`, while pairwise agreement fell from `0.542`
+to `0.375`. Thus prediction error reduction did not carry to action ranking.
+
+The diagnosed cause was loss imbalance: the side-view effect channel has much
+larger scale than the front XY channels used by the candidate ranking. A
+train-root-only per-channel standardization and checkpointed inverse transform
+were implemented, with tests and a reusable `.npz` panel artifact. Reusing
+the exact same split, the reweighted v3 adapter reached effect RMSE `0.00280`
+and MAE `0.00171`, but ranking still degraded relative to the baseline:
+top-1 `0.375` versus `0.500`, pairwise `0.458` versus `0.542`.
+
+This is an important negative result, not a tuning success: channel
+standardization fixes the optimization imbalance but does not solve
+cross-root action-effect identifiability. The learned adapter is therefore
+not promoted to a planner. The formal next gate is observed-effect
+verification or a task-conditioned ranking loss with an independently
+declared action utility; closed-loop carry remains unproven and requires a
+separate side-view lift gate.
+
+## Verified-local action transfer audit — 2026-10-19
+
+The proposed `act -> observe -> update -> rank` protocol was implemented in
+`experiments/evaluate_cube_spatial_adapter_transfer.py`. A new data export
+also stores the calibration-only RGB goal displacement, so the ranking score
+is task-conditioned rather than an effect-norm heuristic. On each held-out
+root, fixed `+x` and `+y` pulses are treated as probes; their observed RGB
+effects fit a local action map, while `-x` and `-y` remain excluded from the
+fit and are ranked afterward. A rank/condition gate falls back to the fixed
+chart when local support is insufficient.
+
+The first report exposed an implementation error: the candidate order is
+`[+x, -x, +y, -y]`, but the evaluator initially treated the first two rows as
+orthogonal probes. This forced rank-one fail-closed behavior on all roots. The
+corrected evaluator passed the local support gate on `8/8` roots. It achieved
+top-1 agreement `0.50` and pairwise agreement `0.375` on the unprobed
+`[-x,-y]` candidates, versus `0.375/0.375` for the global adapter and
+`0.375/0.375` for the fixed action chart in the same unprobed comparison.
+The local-vs-global top-1 difference is `+0.125`, but the local method remains
+below the train-only constant baseline (`0.875` top-1 on this small panel).
+
+This is a mechanism improvement, not a solved planning result: local
+verification removes the global-adapter failure mode but does not yet beat a
+constant predictor under the current four-action, pre-contact pulse panel.
+The next data collection must move the probes into a verified contact phase
+(close/lift gate before XY probing) and expand the candidate bank; current
+closed-loop carry and pose closure remain unproven.

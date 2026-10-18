@@ -1,0 +1,183 @@
+"""Evaluate held-out candidate-action ranking for the RGB spatial adapter.
+
+This is an independent consequence of the saved root-disjoint action-effect
+panel.  It does not use simulator state, goal distance, or planning success.
+For each four-action root group, the score of a candidate is the displacement
+projected onto its own XY action direction.  The report compares the learned
+adapter against the train-only constant target baseline.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import numpy as np
+import torch
+
+from experiments.train_cube_multiview_spatial_adapter import SpatialAdapter
+
+
+def _pairwise_agreement(true_scores: np.ndarray, predicted_scores: np.ndarray) -> float:
+    pairs = []
+    for i in range(len(true_scores)):
+        for j in range(i + 1, len(true_scores)):
+            if true_scores[i] == true_scores[j]:
+                continue
+            pairs.append(float((true_scores[i] - true_scores[j]) * (predicted_scores[i] - predicted_scores[j]) > 0))
+    return float(np.mean(pairs)) if pairs else 0.0
+
+
+def _score_rows(actions: np.ndarray, effects: np.ndarray) -> np.ndarray:
+    # First two channels are front-view object XY effect.  The side-view
+    # channels are retained by the adapter but are not used to define this
+    # ranking, keeping the consequence tied to the candidate's planar action.
+    return np.sum(actions * effects[:, :2], axis=1)
+
+
+def _fit_local_probe_map(actions: np.ndarray, effects: np.ndarray) -> tuple[np.ndarray | None, dict[str, float | int | str]]:
+    """Fit an action-to-front-effect map from probe rows only."""
+    x = np.asarray(actions, dtype=np.float64)
+    y = np.asarray(effects[:, :2], dtype=np.float64)
+    rank = int(np.linalg.matrix_rank(x)) if x.ndim == 2 else 0
+    if x.ndim != 2 or x.shape[1] != 2 or y.shape != x.shape or rank < 2:
+        return None, {"status": "insufficient_probe_support", "rank": rank}
+    mapping, _, _, singular = np.linalg.lstsq(x, y, rcond=1.0e-6)
+    condition = float(singular[0] / max(singular[-1], 1.0e-8))
+    norm = float(np.linalg.norm(mapping, ord="fro"))
+    if not np.isfinite(mapping).all() or condition > 100.0 or norm < 1.0e-5:
+        return None, {"status": "unstable_probe_map", "rank": rank, "condition": condition, "mapping_norm": norm}
+    return mapping, {"status": "ok", "rank": rank, "condition": condition, "mapping_norm": norm}
+
+
+def evaluate(npz_path: Path, checkpoint_path: Path, device: str = "cuda") -> dict[str, object]:
+    data = np.load(npz_path)
+    test_features = np.asarray(data["test_features"], dtype=np.float32)
+    test_targets = np.asarray(data["test_targets"], dtype=np.float32)
+    train_targets = np.asarray(data["train_targets"], dtype=np.float32)
+    test_desired = np.asarray(data["test_desired"], dtype=np.float32)
+    actions = test_features[:, -2:]
+    torch_device = torch.device(device)
+    model = SpatialAdapter(input_dim=test_features.shape[1] - 2).to(torch_device)
+    checkpoint = torch.load(checkpoint_path, map_location=torch_device, weights_only=True)
+    model.load_state_dict(checkpoint["model"])
+    protocol = checkpoint["protocol"]
+    target_mean = np.asarray(protocol["target_mean"], dtype=np.float32)
+    target_scale = np.asarray(protocol["target_scale"], dtype=np.float32)
+    model.eval()
+    with torch.no_grad():
+        _reconstruction, predicted = model(
+            torch.from_numpy(test_features[:, :-2]).to(torch_device),
+            torch.from_numpy(actions).to(torch_device),
+        )
+    predicted = predicted.detach().cpu().numpy() * target_scale + target_mean
+    constant = np.repeat(np.mean(train_targets, axis=0, keepdims=True), len(test_targets), axis=0)
+    train_actions = np.asarray(data["train_features"][:, -2:], dtype=np.float64)
+    chart_map, _, _, _ = np.linalg.lstsq(train_actions, train_targets[:, :2], rcond=1.0e-6)
+    chart_predicted = actions @ chart_map
+    reports = {}
+    for name, effects in (("adapter", predicted), ("zero_baseline", constant)):
+        top1 = []
+        pairwise = []
+        for start in range(0, len(test_targets), 4):
+            stop = start + 4
+            true_scores = _score_rows(actions[start:stop], test_targets[start:stop])
+            predicted_scores = _score_rows(actions[start:stop], effects[start:stop])
+            top1.append(int(np.argmax(true_scores) == np.argmax(predicted_scores)))
+            pairwise.append(_pairwise_agreement(true_scores, predicted_scores))
+        reports[name] = {
+            "groups": len(top1),
+            "top1_agreement": float(np.mean(top1)),
+            "pairwise_agreement": float(np.mean(pairwise)),
+        }
+    # Candidate order is [+x, -x, +y, -y].  Use the orthogonal [+x, +y]
+    # rows as fixed short probes; only [-x, -y] are ranked, so evaluated
+    # candidate outcomes are not used to fit the local map.
+    local_top1, chart_top1, global_top1 = [], [], []
+    local_pairwise, chart_pairwise, global_pairwise = [], [], []
+    residuals, gate_failures = [], 0
+    for start in range(0, len(test_targets), 4):
+        probe = np.asarray([start, start + 2])
+        held = np.asarray([start + 1, start + 3])
+        mapping, diagnostics = _fit_local_probe_map(actions[probe], test_targets[probe])
+        if mapping is None:
+            gate_failures += 1
+            local_pred = chart_predicted[held]
+        else:
+            local_pred = actions[held] @ mapping
+            residuals.extend(np.sqrt(np.mean((actions[probe] @ mapping - test_targets[probe, :2]) ** 2, axis=1)).tolist())
+        desired = test_desired[start, :2]
+        true_scores = _score_rows(actions[held], test_targets[held]) * 0.0
+        true_scores = np.sum(test_targets[held, :2] * desired[None, :], axis=1)
+        local_scores = np.sum(local_pred * desired[None, :], axis=1)
+        chart_scores = np.sum(chart_predicted[held] * desired[None, :], axis=1)
+        global_scores = np.sum(predicted[held, :2] * desired[None, :], axis=1)
+        local_top1.append(int(np.argmax(local_scores) == np.argmax(true_scores)))
+        chart_top1.append(int(np.argmax(chart_scores) == np.argmax(true_scores)))
+        global_top1.append(int(np.argmax(global_scores) == np.argmax(true_scores)))
+        local_pairwise.append(_pairwise_agreement(true_scores, local_scores))
+        chart_pairwise.append(_pairwise_agreement(true_scores, chart_scores))
+        global_pairwise.append(_pairwise_agreement(true_scores, global_scores))
+    reports["verified_local_unprobed_candidates"] = {
+        "groups": len(local_top1),
+        "probe_actions": [[0.5, 0.0], [0.0, 0.5]],
+        "ranked_actions": [[-0.5, 0.0], [0.0, -0.5]],
+        "top1_agreement": float(np.mean(local_top1)),
+        "pairwise_agreement": float(np.mean(local_pairwise)),
+        "probe_effect_rmse": float(np.mean(residuals)) if residuals else None,
+        "gate_failures": int(gate_failures),
+        "reprobe_or_fallback_rate": float(gate_failures / max(len(local_top1), 1)),
+    }
+    reports["fixed_action_chart_unprobed_candidates"] = {
+        "top1_agreement": float(np.mean(chart_top1)),
+        "pairwise_agreement": float(np.mean(chart_pairwise)),
+    }
+    reports["global_adapter_unprobed_candidates"] = {
+        "top1_agreement": float(np.mean(global_top1)),
+        "pairwise_agreement": float(np.mean(global_pairwise)),
+    }
+    return {
+        "schema": "cube_spatial_adapter_transfer.v1",
+        "protocol": {
+            "root_disjoint": True,
+            "candidate_bank": "four planar actions",
+            "ranking_score": "front RGB object delta projected onto calibration-only goal displacement",
+            "held_candidate_outcomes_used_for_selection": False,
+            "probe_outcomes_used_for_local_update": True,
+            "probe_candidates_excluded_from_ranking": True,
+        },
+        "adapter": reports["adapter"],
+        "zero_baseline": reports["zero_baseline"],
+        "verified_local_unprobed_candidates": reports["verified_local_unprobed_candidates"],
+        "fixed_action_chart_unprobed_candidates": reports["fixed_action_chart_unprobed_candidates"],
+        "global_adapter_unprobed_candidates": reports["global_adapter_unprobed_candidates"],
+        "delta_adapter_minus_baseline": {
+            key: reports["adapter"][key] - reports["zero_baseline"][key]
+            for key in ("top1_agreement", "pairwise_agreement")
+        },
+        "unprobed_candidate_delta_verified_local_minus_global": {
+            "top1_agreement": float(np.mean(local_top1) - np.mean(global_top1)),
+            "pairwise_agreement": float(np.mean(local_pairwise) - np.mean(global_pairwise)),
+        },
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    args = parser.parse_args()
+    if args.device == "cuda":
+        from experiments.gpu_preflight import require_cuda_allocation
+        require_cuda_allocation("cuda")
+    report = evaluate(args.data, args.checkpoint, args.device)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,5 +1,7 @@
 import pytest
+import numpy as np
 
+import experiments.run_live_cube_rgb_pick_place as cube_pick_place
 from experiments.run_live_cube_rgb_pick_place import (
     GRIPPER_CLOSE_ACTION,
     GRIPPER_OPEN_ACTION,
@@ -14,6 +16,13 @@ def test_cube_gripper_increment_semantics_match_ogbench():
     # the state field name ``gripper_opening`` is not the physical direction.
     assert GRIPPER_OPEN_ACTION == -1.0
     assert GRIPPER_CLOSE_ACTION == 1.0
+
+
+def test_side_contact_gap_is_orientation_invariant(monkeypatch):
+    monkeypatch.setattr(cube_pick_place, "_side_rgb_frame", lambda _env: np.zeros((4, 4, 3), dtype=np.uint8))
+    monkeypatch.setattr(cube_pick_place, "_target_red_centroid", lambda _image: np.array([0.0, -0.2, 1.0]))
+    monkeypatch.setattr(cube_pick_place, "_largest_effector_centroid", lambda _image: np.array([0.0, 0.1, 1.0]))
+    assert cube_pick_place._side_vertical_gap(object()) == pytest.approx(0.3)
 
 
 def test_effect_transport_requires_post_lift_probes():
