@@ -72,6 +72,25 @@ def require_cuda() -> torch.device:
     return device
 
 
+def validate_effect_policy_execution_contract(
+    policy: OnlineEffectPolicy,
+    *,
+    executed_action_steps: int = FRAME_STRIDE,
+) -> None:
+    """Reject a teacher whose labeled effect horizon differs from deployment."""
+
+    if int(policy.action_steps) != int(executed_action_steps):
+        raise ValueError(
+            "effect-policy action horizon does not match the live re-observation "
+            f"contract: policy={policy.action_steps}, executed={executed_action_steps}"
+        )
+    if policy.candidate_family != "runtime_one_block_pulse_v1":
+        raise ValueError(
+            "live effect policy requires runtime_one_block_pulse_v1; refusing "
+            f"legacy family {policy.candidate_family!r}"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=PROJECT_ROOT.parent)
@@ -1248,7 +1267,15 @@ def effect_policy_candidate_scores(
             _pool_visual(encoded["visual"][:, index]).detach().cpu().numpy()[0]
             for index in range(len(context_images))
         ])
-    projection = policy.project_history(pooled)
+    if policy.feature_mode == "state_kinematics_action_basis":
+        if velocity is None:
+            raise ValueError("state_kinematics_action_basis requires RGB-derived velocity")
+        projection = np.concatenate([
+            np.asarray(current, dtype=np.float64).reshape(2),
+            np.asarray(velocity, dtype=np.float64).reshape(2),
+        ])
+    else:
+        projection = policy.project_history(pooled)
     report = policy.score(projection, current, target, actions)
     if local_residual is not None:
         correction = local_residual.predict(actions, velocity=velocity)
@@ -3100,6 +3127,8 @@ def main() -> None:
         effect_policy = OnlineEffectPolicy.load(
             args.effect_policy_checkpoint.resolve(), device,
         )
+        if requested_effect_methods:
+            validate_effect_policy_execution_contract(effect_policy)
     gdd_adapter: tuple[Any, dict[str, Any]] | None = None
     gdd_projection: np.ndarray | None = None
     gdd_goal_anchor: np.ndarray | None = None
@@ -3308,6 +3337,7 @@ def main() -> None:
                 "magnitudes": args.magnitudes,
                 "blocks_per_prediction": max(HORIZONS),
                 "executed_blocks_before_reobservation": 1,
+                "executed_action_steps_before_reobservation": FRAME_STRIDE,
                 "rgb_velocity_probe_blocks": args.probe_blocks,
                 "active_probe_directions": int(args.active_probe_directions),
                 "planner_map": args.planner_map,

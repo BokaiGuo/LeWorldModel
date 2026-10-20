@@ -122,3 +122,16 @@ def test_runtime_repeated_pulse_bank_matches_online_action_shape():
     assert np.allclose(sequences, sequences[:, :1, :])
     magnitudes = np.linalg.norm(sequences[:, 0], axis=1).reshape(4, 8)
     assert np.allclose(magnitudes, np.asarray([0.25, 0.5, 0.75, 1.0])[:, None])
+
+
+def test_runtime_one_block_pulse_matches_reobservation_contract():
+    sequences = _candidate_sequences(
+        np.asarray([0.4, 2.0]), np.asarray([1.2, 1.2]),
+        count=32, steps=5, seed=7000,
+        family="runtime_one_block_pulse_v1",
+        canonical_action_frame=True,
+    )
+
+    assert sequences.shape == (32, 5, 2)
+    assert np.allclose(sequences, sequences[:, :1, :])
+    assert float(np.max(np.abs(sequences))) <= 1.0

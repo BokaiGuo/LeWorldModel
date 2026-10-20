@@ -2824,3 +2824,44 @@ Artifacts:
 - `le-wm-main/results/gdd_wm_reacher_teacher_confirmation128_20261020_cuda/aggregate.json`
 - `le-wm-main/results/gdd_wm_reacher_teacher_confirmation128_20261020_cuda/comparison_batch{0,32,64,96}.json`
 - `le-wm-main/results/gdd_wm_reacher_teacher_confirmation128_20261020_cuda_{baseline,teacher}_batch{0,32,64,96}/planning.json`
+
+## PointMaze one-block effect-contract repair — 2026-10-20
+
+The prior online effect teacher predicted a 20-step terminal effect while the
+live controller executed one 5-step block and immediately re-observed.  This
+is a causal deployment-contract mismatch, not a calibration-threshold issue.
+The runtime now rejects a teacher unless its declared action horizon equals
+the execution horizon and its candidate family is explicitly
+`runtime_one_block_pulse_v1`.  A new 100-root, 32-action, 5-step GPU-generated
+counterfactual bank was fit on 54 train roots and calibrated on 14 disjoint
+roots; the 32 outcome roots remained outside fitting and calibration.
+
+The latent-source version did not solve the problem: its unguarded controller
+reached `3/20` success, while the gate released `0/697` selections because the
+deployment latent-support distance (about `13`) was far beyond the train-bank
+threshold (`1.26`).  This identifies a second causal defect: the offline
+source-latent export and live RGB encoder use incompatible source charts.
+
+An explicitly labelled diagnostic control replaced that source chart with
+RGB-derived position/velocity at deployment (the simulator kinematics are
+only its offline training proxy).  It is **not** latent-only GDD-WM evidence.
+It establishes that the remaining issue is chart alignment rather than the
+one-block effect target: calibration direction cosine improved from `-0.243`
+to `+0.864`, and effect-error p90 from `0.304` to `0.047`.  On the unopened
+20-root GPU panel, it achieved `20/20` success with terminal distance `0.1625`,
+versus visual dynamics `20/20` and `0.1485`.  Thus it restores stable local
+action-effect control but does not beat the strong visual-dynamics baseline.
+
+HTSC correctly remained fail-closed: only eight support-qualified calibration
+roots were available, so the valid finite-sample conformal rank was
+unavailable and it released zero actions; its outcome exactly matched the
+visual-dynamics fallback.  Neither fallback parity nor the proxy controller
+is evidence of a GDD-WM teacher gain.
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/bank/manifest.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/effect_policy_summary.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/planning_report.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/effect_policy_rgb_kinematics_proxy_summary.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/planning_report_rgb_kinematics_proxy.json`

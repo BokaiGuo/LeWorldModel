@@ -81,10 +81,10 @@ def validate_runtime_candidate_chart(metadata: dict[str, Any]) -> None:
 
     family = str(metadata.get("candidate_family", "unknown"))
     frame = str(metadata.get("candidate_bank_coordinate_frame", "unknown"))
-    if family != "runtime_repeated_pulse_v1" or frame != "goal_relative":
+    if family not in {"runtime_repeated_pulse_v1", "runtime_one_block_pulse_v1"} or frame != "goal_relative":
         raise ValueError(
             "online effect policy must be trained on the exact runtime chart "
-            "runtime_repeated_pulse_v1/goal_relative; refusing a paired-order "
+            "a declared runtime pulse family in the goal_relative chart; refusing a paired-order "
             "or world-fixed candidate-bank mismatch"
         )
 
@@ -217,10 +217,13 @@ def build(
     candidate_metadata = dict(payload.get("metadata", {}))
     candidate_family = str(candidate_metadata.get("candidate_family", "unknown"))
     candidate_bank_coordinate_frame = str(candidate_metadata.get("candidate_bank_coordinate_frame", "unknown"))
+    action_steps = int(candidate_metadata.get("total_action_steps", 0))
+    if action_steps < 4:
+        raise ValueError("candidate dataset must declare at least four action steps for the action basis")
     validate_runtime_candidate_chart(candidate_metadata)
     arrays_payload = np.load(arrays, allow_pickle=False)
-    if feature_mode not in {"frozen_latent_action_basis", "history_latent_action_basis"}:
-        raise ValueError("online effect policy requires latent-only deployment features")
+    if feature_mode not in {"frozen_latent_action_basis", "history_latent_action_basis", "state_kinematics_action_basis"}:
+        raise ValueError("online effect policy requires a declared deployable feature chart")
     features, effects, _roots, _goals = _features(records, arrays_payload, feature_mode)
     train_mask = np.asarray([row.get("split") == "train" for row in records])
     if (calibration_candidate_dataset is None) != (calibration_arrays is None):
@@ -257,9 +260,11 @@ def build(
     pca_mean = np.asarray(source_payload["pca_mean"], dtype=np.float64)
     pca_basis = np.asarray(source_payload["pca_basis"], dtype=np.float64)
     latent_dim = int(pca_basis.shape[0])
-    history_windows = int((features.shape[1] - 16) // latent_dim)
-    if history_windows < 1 or features.shape[1] != history_windows * latent_dim + 16:
-        raise ValueError("candidate features do not match source-model PCA plus action basis")
+    context_width = int(features.shape[1] - 16)
+    history_windows = 1 if feature_mode == "state_kinematics_action_basis" else int(context_width // latent_dim)
+    expected_context_width = 4 if feature_mode == "state_kinematics_action_basis" else history_windows * latent_dim
+    if history_windows < 1 or context_width != expected_context_width:
+        raise ValueError("candidate features do not match the declared deployment chart plus action basis")
     if feature_mode == "frozen_latent_action_basis" and history_windows != 1:
         raise ValueError("single-latent feature mode unexpectedly contains history")
 
@@ -337,11 +342,7 @@ def build(
             by_train_root.setdefault(
                 str(row["instance_id"]),
                 np.asarray(
-                    row[
-                        "source_history_model"
-                        if feature_mode == "history_latent_action_basis"
-                        else "source_latent_model"
-                    ],
+                    row["source_history_model"] if feature_mode == "history_latent_action_basis" else row["source_state_raw"] if feature_mode == "state_kinematics_action_basis" else row["source_latent_model"],
                     dtype=np.float64,
                 ),
             )
@@ -371,11 +372,7 @@ def build(
     for root, row in sorted(calibration_selection["roots"].items()):
         source = next(
             np.asarray(
-                record[
-                    "source_history_model"
-                    if feature_mode == "history_latent_action_basis"
-                    else "source_latent_model"
-                ],
+                record["source_history_model"] if feature_mode == "history_latent_action_basis" else record["source_state_raw"] if feature_mode == "state_kinematics_action_basis" else record["source_latent_model"],
                 dtype=np.float64,
             )
             for record in calibration_all_records if str(record["instance_id"]) == root
@@ -394,7 +391,7 @@ def build(
         "latent_support": latent_support,
         "action_support": action_support,
         "regret_calibration": regret_calibration,
-        "action_steps": 20,
+        "action_steps": action_steps,
         "feature_mode": feature_mode,
         "history_windows": history_windows,
         "candidate_family": candidate_family,
@@ -406,9 +403,13 @@ def build(
         "verification_calibration": verification_calibration,
         "protocol": {
             "feature_mode": feature_mode,
+            "feature_contract": "RGB_kinematics_proxy_plus_action_basis" if feature_mode == "state_kinematics_action_basis" else "frozen_latent_plus_action_basis",
             "history_windows": history_windows,
             "candidate_family": candidate_family,
             "candidate_bank_coordinate_frame": candidate_bank_coordinate_frame,
+            "total_action_steps": action_steps,
+            "execution_contract": candidate_metadata.get("execution_contract", "unknown"),
+            "executed_blocks_before_reobservation": candidate_metadata.get("executed_blocks_before_reobservation"),
             "adapter_seeds": list(SEEDS),
             "epochs": int(epochs),
             "device": device,
@@ -422,7 +423,7 @@ def build(
             "calibration_candidate_dataset": str(calibration_dataset_path.resolve()),
             "candidate_family_matched": candidate_dataset.resolve() == calibration_dataset_path.resolve(),
             "online_candidate_boundary": (
-                "runtime repeated-pulse candidates require both latent and action-basis "
+                "runtime candidates require both latent and action-basis "
                 "support; calibration is fixed-bank marginal and does not certify adaptive MPC"
             ),
             "verification_threshold_source": "calibration_predicted_vs_realized_effect_p90",
@@ -476,7 +477,7 @@ def main() -> None:
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument(
         "--feature-mode",
-        choices=("frozen_latent_action_basis", "history_latent_action_basis"),
+        choices=("frozen_latent_action_basis", "history_latent_action_basis", "state_kinematics_action_basis"),
         default="frozen_latent_action_basis",
     )
     parser.add_argument(

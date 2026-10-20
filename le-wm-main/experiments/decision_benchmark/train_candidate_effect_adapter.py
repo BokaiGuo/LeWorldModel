@@ -93,6 +93,7 @@ def _features(
         "history_latent_action",
         "history_latent_action_basis",
         "privileged_state_action",
+        "state_kinematics_action_basis",
         "latent_plus_state_action",
     }:
         raise ValueError(f"unsupported feature_mode: {feature_mode}")
@@ -104,7 +105,7 @@ def _features(
         action_sequence = np.asarray(row["action_sequence"], dtype=np.float64)
         action = (
             action_sequence_basis(action_sequence)
-            if feature_mode in {"frozen_latent_action_basis", "history_latent_action_basis"}
+            if feature_mode in {"frozen_latent_action_basis", "history_latent_action_basis", "state_kinematics_action_basis"}
             else action_sequence.reshape(-1)
         )
         realized = np.asarray(arrays[_array_key(row["realized_terminal_state_ref"])], dtype=np.float64)
@@ -115,7 +116,10 @@ def _features(
             if row.get("source_history_model") is None:
                 raise ValueError("candidate record lacks source_history_model; regenerate the bank")
             context = np.asarray(row["source_history_model"], dtype=np.float64)
-        elif feature_mode == "privileged_state_action":
+        elif feature_mode in {"privileged_state_action", "state_kinematics_action_basis"}:
+            # state_kinematics_action_basis is an explicit diagnostic control:
+            # live deployment supplies the corresponding RGB-derived XY and
+            # velocity; simulator state is only its offline source proxy.
             context = source_state
         else:
             context = np.concatenate([source, source_state])

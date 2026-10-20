@@ -53,7 +53,7 @@ def _candidate_sequences(
 ) -> np.ndarray:
     if count < 4 or steps < 1:
         raise ValueError("candidate count must be >=4 and steps must be positive")
-    if steps % 4:
+    if steps % 4 and family != "runtime_one_block_pulse_v1":
         raise ValueError("steps must be divisible by four to match the adapter action-block clock")
     source = np.asarray(source, dtype=np.float64)[:2]
     goal = np.asarray(goal, dtype=np.float64)[:2]
@@ -90,6 +90,16 @@ def _candidate_sequences(
         # again, but training the complete repeated pulse removes the action-
         # family shift that caused the first online HTSC gate to reject ~80% of
         # otherwise useful action-effect decisions.
+        for magnitude in (0.25, 0.5, 0.75, 1.0):
+            for angle in np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False):
+                direction = np.cos(angle) * direct + np.sin(angle) * perpendicular
+                sequences.append(constant(direction, magnitude))
+    elif family == "runtime_one_block_pulse_v1":
+        # This is intentionally a distinct family from runtime_repeated_pulse_v1.
+        # The live controller executes exactly one FRAME_STRIDE-sized action block
+        # before re-observing.  Labels must therefore describe that same short
+        # intervention, rather than a 20-step counterfactual whose first pulse is
+        # later used as a receding-horizon action.
         for magnitude in (0.25, 0.5, 0.75, 1.0):
             for angle in np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False):
                 direction = np.cos(angle) * direct + np.sin(angle) * perpendicular
@@ -359,7 +369,13 @@ def generate(
         )
         source_latent = np.asarray(row["source_latent"], dtype=np.float64)
         source_projection = (source_latent - pca_mean) @ pca_basis.T
-        action_blocks = sequences.reshape(candidates, 4, steps // 4, 2).reshape(candidates, -1)
+        # The frozen LeWM adapter expects four 5-step action blocks.  A one-block
+        # effect dataset is deliberately not fed through that incompatible
+        # predictor; it trains a deployable RGB-to-realized-effect teacher.
+        # Keeping its predicted latent equal to the source makes the unavailable
+        # learned-dynamics path explicit instead of silently padding an action.
+        one_block_runtime = candidate_family == "runtime_one_block_pulse_v1"
+        action_blocks = None if one_block_runtime else sequences.reshape(candidates, 4, steps // 4, 2).reshape(candidates, -1)
         checkpoint_history_windows = int(checkpoint_payload.get("adapter_training", {}).get("history_windows", 1))
         if checkpoint_history_windows == 1:
             context_projection = np.repeat(source_projection[None], candidates, axis=0)
@@ -371,17 +387,22 @@ def generate(
                     f"{checkpoint_history_windows * source_projection.size}"
                 )
             context_projection = np.repeat(source_history_projection[None], candidates, axis=0)
-        action_features = action_blocks_for_chart([row] * candidates, action_blocks, action_feature_chart)
-        x = np.concatenate([context_projection, action_features], axis=1)
-        prediction = _predict(
-            model,
-            x,
-            int(pca_basis.shape[0]),
-            device,
-            checkpoint_payload["adapter_training"],
-        )
-        horizon = max(prediction)
-        predicted = np.asarray(prediction[horizon], dtype=np.float32)
+        if one_block_runtime:
+            horizon = 0
+            predicted = np.repeat(source_latent[None], candidates, axis=0).astype(np.float32)
+        else:
+            assert action_blocks is not None
+            action_features = action_blocks_for_chart([row] * candidates, action_blocks, action_feature_chart)
+            x = np.concatenate([context_projection, action_features], axis=1)
+            prediction = _predict(
+                model,
+                x,
+                int(pca_basis.shape[0]),
+                device,
+                checkpoint_payload["adapter_training"],
+            )
+            horizon = max(prediction)
+            predicted = np.asarray(prediction[horizon], dtype=np.float32)
         for candidate_index, sequence in enumerate(sequences):
             final_state = _simulate_sequence(source_state, sequence)
             distance = float(np.linalg.norm(final_state[:2] - goal_array))
@@ -464,6 +485,12 @@ def generate(
         "history_windows": int(history_windows),
         "predictor_history_windows": int(checkpoint_payload.get("adapter_training", {}).get("history_windows", 1)),
         "total_action_steps": int(steps),
+        "executed_blocks_before_reobservation": 1 if candidate_family == "runtime_one_block_pulse_v1" else None,
+        "execution_contract": (
+            "one_replanning_block_before_reobservation"
+            if candidate_family == "runtime_one_block_pulse_v1"
+            else "counterfactual_terminal_horizon"
+        ),
         "goal_definition": "explicit legacy PointMaze environment goal coordinate",
         "goal_coordinate": goal_array.tolist(),
         "source_export": str(source_export.resolve()),
@@ -515,6 +542,7 @@ def main() -> None:
             "paired_order_v2",
             "goal_directed_mixture_v1",
             "runtime_repeated_pulse_v1",
+            "runtime_one_block_pulse_v1",
         ),
     )
     parser.add_argument("--source-selection", default="sorted_episode", choices=("sorted_episode", "nearest_goal", "reachable_goal"))

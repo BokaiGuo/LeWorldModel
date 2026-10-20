@@ -45,6 +45,10 @@ def test_online_effect_training_rejects_mismatched_action_chart() -> None:
             "candidate_family": "paired_order_v2",
             "candidate_bank_coordinate_frame": "world_fixed",
         })
+    validate_runtime_candidate_chart({
+        "candidate_family": "runtime_one_block_pulse_v1",
+        "candidate_bank_coordinate_frame": "goal_relative",
+    })
 
 
 def test_online_effect_policy_scores_repeated_pulse_candidates() -> None:

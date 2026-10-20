@@ -27,8 +27,26 @@ from experiments.run_live_pointmaze_planning import (
     perfect_dynamics_mpc_action,
     project_action_to_dynamics_support,
     select_gate_tolerance,
+    validate_effect_policy_execution_contract,
     validate_output_path,
 )
+
+
+def test_effect_policy_rejects_legacy_twenty_step_teacher_at_one_block_deployment() -> None:
+    class Policy:
+        action_steps = 20
+        candidate_family = "runtime_repeated_pulse_v1"
+
+    with pytest.raises(ValueError, match="action horizon"):
+        validate_effect_policy_execution_contract(Policy())
+
+
+def test_effect_policy_accepts_runtime_matched_one_block_teacher() -> None:
+    class Policy:
+        action_steps = 5
+        candidate_family = "runtime_one_block_pulse_v1"
+
+    validate_effect_policy_execution_contract(Policy())
 
 
 def test_gdd_teacher_authorization_fails_closed_on_calibration_regression() -> None:
