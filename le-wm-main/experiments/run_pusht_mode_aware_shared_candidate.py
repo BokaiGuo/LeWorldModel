@@ -882,8 +882,17 @@ def collect_macro_ranker_rows(
     goal_translation_magnitudes: tuple[float, ...],
     boundary_action_frame: bool,
     contact_normal_magnitudes: tuple[float, ...] = (),
+    model: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Collect root-disjoint training pairs for joint two-pulse ranking only."""
+    """Collect root-disjoint pairs under the deployment sequence context.
+
+    The first-action scorer is deployed from a model-imagined intermediate
+    state, while the second-action scorer is deployed after a fresh observed
+    state.  When ``model`` is supplied, candidate generation and ranker
+    features for the first-action context therefore use the frozen train-only
+    predictor's imagined state.  Real successors remain labels only; they are
+    never exposed to the held-out controller.
+    """
 
     rows: list[dict[str, Any]] = []
     for root_index, root in enumerate(roots):
@@ -899,8 +908,18 @@ def collect_macro_ranker_rows(
         for first_index, first_action in enumerate(first_actions):
             first_result = execute_pulse(env, initial, goal, first_action, pulse_steps)
             first_state = np.asarray(first_result["after"], dtype=np.float64).copy()
+            if model is None:
+                ranker_first_state = first_state.copy()
+            else:
+                predicted_target, _, _ = predict_transition(
+                    model, initial, np.asarray(first_action, dtype=np.float64),
+                    np.zeros(2, dtype=np.float64), mode_conditioned=True,
+                    predictor="tree", env=env,
+                    boundary_action_frame=boundary_action_frame,
+                )
+                ranker_first_state = predicted_state(initial, predicted_target)
             second_actions = candidate_actions(
-                env, first_state, tangent_magnitudes, inward_magnitude,
+                env, ranker_first_state, tangent_magnitudes, inward_magnitude,
                 free_recovery_magnitude, goal=goal,
                 goal_translation_magnitudes=goal_translation_magnitudes,
                 boundary_action_frame=boundary_action_frame,
@@ -913,6 +932,7 @@ def collect_macro_ranker_rows(
                     "initial": initial.copy(), "goal": goal.copy(),
                     "first_action": np.asarray(first_action, dtype=np.float64),
                     "first_state": first_state.copy(),
+                    "ranker_first_state": ranker_first_state.copy(),
                     "second_action": np.asarray(second_action, dtype=np.float64),
                     "final": np.asarray(second_result["after"], dtype=np.float64).copy(),
                     "first_index": int(first_index), "second_index": int(second_index),
@@ -928,7 +948,8 @@ def fit_macro_ranker(
 
     features = np.asarray([
         macro_ranker_features(
-            row["initial"], row["goal"], row["first_action"], row["first_state"],
+            row["initial"], row["goal"], row["first_action"],
+            row.get("ranker_first_state", row["first_state"]),
             row["second_action"], env=env,
             boundary_action_frame=boundary_action_frame,
         ) for row in rows
@@ -948,6 +969,7 @@ def select_macro_first_action(
     env: gym.Env, model: dict[str, Any], macro_ranker: ExtraTreesRegressor,
     state: np.ndarray, goal: np.ndarray, actions: np.ndarray,
     previous_action: np.ndarray, args: argparse.Namespace,
+    risk_penalty: float = 0.0,
 ) -> int:
     """Choose the first pulse by minimizing learned joint two-pulse cost."""
 
@@ -972,7 +994,12 @@ def select_macro_first_action(
                 boundary_action_frame=bool(getattr(args, "boundary_action_frame", False)),
             ) for second_action in second_actions
         ], dtype=np.float64)
-        scores.append(float(np.min(macro_ranker.predict(features))))
+        predictions = np.asarray([
+            estimator.predict(features) for estimator in macro_ranker.estimators_
+        ], dtype=np.float64)
+        mean_scores = np.mean(predictions, axis=0)
+        uncertainty = np.std(predictions, axis=0)
+        scores.append(float(np.min(mean_scores + float(risk_penalty) * uncertainty)))
     return int(np.argmin(np.asarray(scores, dtype=np.float64)))
 
 
@@ -980,6 +1007,7 @@ def select_macro_second_action(
     env: gym.Env, macro_ranker: ExtraTreesRegressor, initial_state: np.ndarray,
     goal: np.ndarray, first_action: np.ndarray, current_state: np.ndarray,
     actions: np.ndarray, previous_action: np.ndarray, args: argparse.Namespace,
+    risk_penalty: float = 0.0,
 ) -> int:
     """Choose the second pulse after its fresh runtime observation."""
 
@@ -990,7 +1018,11 @@ def select_macro_second_action(
             boundary_action_frame=bool(getattr(args, "boundary_action_frame", False)),
         ) for action in actions
     ], dtype=np.float64)
-    return int(np.argmin(np.asarray(macro_ranker.predict(features), dtype=np.float64)))
+    predictions = np.asarray([
+        estimator.predict(features) for estimator in macro_ranker.estimators_
+    ], dtype=np.float64)
+    scores = np.mean(predictions, axis=0) + float(risk_penalty) * np.std(predictions, axis=0)
+    return int(np.argmin(scores))
 
 
 def fit_contact_chart(
@@ -1516,6 +1548,80 @@ def choose_online_effect_action(
     if not supported:
         return None, None
     selected, _, info = min(supported, key=lambda value: value[1])
+    return selected, info
+
+
+def choose_local_jacobian_action(
+    env: gym.Env, state: np.ndarray, goal: np.ndarray, actions: np.ndarray,
+    online_local_effects: dict[str, dict[str, Any]], *, max_radius: float = 1.75,
+    min_samples: int = 2, require_paired: bool = True,
+) -> tuple[int | None, dict[str, Any] | None]:
+    """Use only prior observed pulses to fit a local action-effect Jacobian.
+
+    The fit has no simulator successor access.  It is deliberately
+    fail-closed: entries must come from the same polygon region, contain
+    informative effects, span both local action coordinates, and (by default)
+    include both moment signs.  This addresses the dense-bank failure where
+    exact-bin reuse had no support even though paired probes had identified a
+    local signed response.
+    """
+
+    query = online_effect_descriptor(env, state, np.asarray(actions[0], dtype=np.float64))
+    region = str(query["region"])
+    inward = boundary_inward_normal(env, state)
+    tangent = np.asarray([-inward[1], inward[0]], dtype=np.float64)
+    local_rows: list[tuple[np.ndarray, np.ndarray, int]] = []
+    for entry in online_local_effects.values():
+        descriptor = entry.get("descriptor")
+        if not isinstance(descriptor, dict) or str(descriptor.get("region")) != region:
+            continue
+        if int(entry.get("informative_count", 0)) < 1:
+            continue
+        action = np.asarray(entry.get("action", []), dtype=np.float64)
+        if action.shape != (2,):
+            continue
+        distance = _online_effect_descriptor_distance(query, entry)
+        if distance is None or distance > float(max_radius):
+            continue
+        local_action = np.asarray([
+            float(np.dot(action, inward)), float(np.dot(action, tangent)),
+        ], dtype=np.float64)
+        effect = np.asarray(entry.get("mean", []), dtype=np.float64)
+        if local_action.shape != (2,) or effect.shape != (3,) or not np.all(np.isfinite(effect)):
+            continue
+        local_rows.append((local_action, effect, int(np.sign(descriptor.get("moment_sign", 0)))))
+    if len(local_rows) < int(min_samples):
+        return None, None
+    signs = {row[2] for row in local_rows if row[2] != 0}
+    if require_paired and not ({-1, 1} <= signs):
+        return None, None
+    X = np.asarray([row[0] for row in local_rows], dtype=np.float64)
+    Y = np.asarray([row[1] for row in local_rows], dtype=np.float64)
+    if np.linalg.matrix_rank(X) < 2:
+        return None, None
+    coefficients, _, _, _ = np.linalg.lstsq(X, Y, rcond=None)
+    residual = float(np.sqrt(np.mean(np.square(X @ coefficients - Y))))
+    candidate_rows: list[tuple[int, float, dict[str, Any]]] = []
+    desired_sign = float(np.sign(wrap_angle(float(goal[4]) - float(state[4]))))
+    for index, action in enumerate(np.asarray(actions, dtype=np.float64)):
+        local_action = np.asarray([
+            float(np.dot(action, inward)), float(np.dot(action, tangent)),
+        ], dtype=np.float64)
+        target = local_action @ coefficients
+        if desired_sign != 0.0 and abs(float(target[0])) > 1.0e-4:
+            if float(np.sign(target[0])) != desired_sign:
+                continue
+        imagined = predicted_state(state, target)
+        score = planning_pose_cost(state, imagined, goal, phase_aware=True)
+        score += 0.5 * residual
+        candidate_rows.append((int(index), float(score), {
+            "target": target.tolist(), "jacobian_residual": residual,
+            "sample_count": len(local_rows), "rank": int(np.linalg.matrix_rank(X)),
+            "region": region,
+        }))
+    if not candidate_rows:
+        return None, None
+    selected, _, info = min(candidate_rows, key=lambda row: row[1])
     return selected, info
 
 
@@ -2344,6 +2450,8 @@ def closed_loop_two_pulse_macro(
     orientation_effect_ranker: ExtraTreesRegressor | None = None,
     orientation_delta_ranker: ExtraTreesRegressor | None = None,
     orientation_pair_ranker: ExtraTreesRegressor | None = None,
+    macro_first_only: bool = False,
+    macro_risk_penalty: float = 0.0,
     translation_xy_only: bool = False,
     reverse_phase_gate: bool = False,
 ) -> dict[str, Any]:
@@ -2413,12 +2521,13 @@ def closed_loop_two_pulse_macro(
                 if macro_ranker is not None and phase_index == 0:
                     selected = select_macro_first_action(
                         env, model, macro_ranker, current, goal, actions, previous, args,
+                        risk_penalty=macro_risk_penalty,
                     )
-                elif macro_ranker is not None and phase_index == 1:
+                elif macro_ranker is not None and phase_index == 1 and not macro_first_only:
                     selected = select_macro_second_action(
                         env, macro_ranker, macro_initial_state, goal,
                         np.asarray(macro_first_action, dtype=np.float64), current,
-                        actions, previous, args,
+                        actions, previous, args, risk_penalty=macro_risk_penalty,
                     )
                 elif phase.startswith("orientation"):
                     forced_moment_sign = None
@@ -2827,6 +2936,15 @@ def closed_loop(
             contact_distance = float(np.linalg.norm(current[:2] - current[2:4]))
             boundary_distance = float(physical_contact_geometry(env, current)["distance"])
             current_mode_id = current_mode_for_env(env, current)
+            current_xy_error = float(np.linalg.norm(current[2:4] - goal[2:4]))
+            contact_lease_active = bool(
+                getattr(args, "contact_lease", False)
+                and current_mode_id == 2
+                and current_xy_error <= float(
+                    getattr(args, "contact_lease_xy_gate", args.terminal_xy_gate)
+                )
+                and angle_error(current[4], goal[4]) > float(args.terminal_angle_gate)
+            )
             current_region_key = (
                 contact_region_key(env, current) if current_mode_id == 2 else None
             )
@@ -2834,6 +2952,7 @@ def closed_loop(
                 bool(getattr(args, "contact_relocation_on_stagnation", False))
                 and relocation_pending
                 and relocation_attempts < int(args.max_contact_relocations)
+                and not contact_lease_active
             ):
                 # Contact-side relocation is an explicit physical interface
                 # stage.  It consumes only the current observed state and
@@ -2995,6 +3114,10 @@ def closed_loop(
                             mode_conditioned=runtime_mode_conditioned,
                             predictor="tree",
                             previous_observed_angle_delta=last_observed_delta,
+                            xy_shield_tolerance=(
+                                float(getattr(args, "orientation_xy_budget", 0.0))
+                                if bool(getattr(args, "contact_lease", False)) else None
+                            ),
                         )
                     else:
                         desired_moment_sign = desired_sign if moment_to_angle_sign is None else desired_sign * moment_to_angle_sign
@@ -3045,7 +3168,12 @@ def closed_loop(
                             desired_moment_sign = desired_sign * moment_to_angle_sign
                         else:
                             desired_moment_sign = 0.0
-                        replacement = smallest_action_for_moment_sign(
+                        replacement_selector = (
+                            largest_action_for_moment_sign
+                            if bool(getattr(args, "escalate_on_wrong_sign", False))
+                            else smallest_action_for_moment_sign
+                        )
+                        replacement = replacement_selector(
                             current, actions, desired_moment_sign,
                             env=env if contact_geometry_sign_feedback else None,
                         )
@@ -3085,22 +3213,40 @@ def closed_loop(
                 if (
                     adaptive_online_effect
                     and not calibration_probe
-                    and not terminal_handoff
+                    and (
+                        not terminal_handoff
+                        or bool(getattr(args, "terminal_observed_effect", False))
+                    )
                     and not fallback_only
                     and current_mode_id == 2
                 ):
-                    online_selected, online_info = choose_online_effect_action(
-                        env, current, goal, actions, online_local_effects,
-                        max_neighbors=args.online_effect_neighbors,
-                        max_radius=(
-                            args.online_paired_radius
-                            if args.paired_effect_probes else args.online_effect_radius
-                        ),
-                        task_gain_weight=args.online_task_gain_weight,
-                        min_informative_count=args.online_min_informative_count,
-                        min_effect_angle=args.online_min_effect_angle,
-                        require_paired=bool(args.paired_effect_probes),
-                    )
+                    if bool(getattr(args, "online_local_jacobian", False)):
+                        online_selected, online_info = choose_local_jacobian_action(
+                            env, current, goal, actions, online_local_effects,
+                            max_radius=(
+                                args.online_paired_radius
+                                if args.paired_effect_probes else args.online_effect_radius
+                            ),
+                            min_samples=int(getattr(args, "online_jacobian_min_samples", 2)),
+                            require_paired=bool(
+                                args.paired_effect_probes and not args.allow_unpaired_local_effects
+                            ),
+                        )
+                    else:
+                        online_selected, online_info = choose_online_effect_action(
+                            env, current, goal, actions, online_local_effects,
+                            max_neighbors=args.online_effect_neighbors,
+                            max_radius=(
+                                args.online_paired_radius
+                                if args.paired_effect_probes else args.online_effect_radius
+                            ),
+                            task_gain_weight=args.online_task_gain_weight,
+                            min_informative_count=args.online_min_informative_count,
+                            min_effect_angle=args.online_min_effect_angle,
+                            require_paired=bool(
+                                args.paired_effect_probes and not args.allow_unpaired_local_effects
+                            ),
+                        )
                     if online_selected is not None:
                         selected = int(online_selected)
                         online_identified_used = True
@@ -3125,7 +3271,10 @@ def closed_loop(
                     or orientation_gate_keys is not None
                     or force_identification_probe
                 )
-                and not terminal_handoff
+                and (
+                    not terminal_handoff
+                    or bool(getattr(args, "terminal_observed_effect", False))
+                )
                 and not online_identified_used
             ):
                 if force_identification_probe:
@@ -3172,6 +3321,23 @@ def closed_loop(
                             if args.paired_effect_probes and current_region_key is not None
                             else None
                         )
+                        if (
+                            bool(getattr(args, "breakaway_paired_probe", False))
+                            and args.paired_effect_probes
+                            and current_region_key is not None
+                        ):
+                            observed_region_signs = {
+                                int(entry.get("descriptor", {}).get("moment_sign", 0))
+                                for entry in online_local_effects.values()
+                                if str(entry.get("descriptor", {}).get("region"))
+                                == str(current_region_key)
+                            }
+                            # The first calibration pulse is intentionally
+                            # small.  Do not let it anchor the paired probe
+                            # below breakaway; choose a declared max-moment
+                            # pulse, then mirror it on the next observation.
+                            if not ({-1, 1} <= observed_region_signs):
+                                reference_action = None
                         probe = choose_identification_probe(
                             env, current, actions, desired_moment_sign,
                             allow_outward=bool(args.paired_effect_probes),
@@ -3260,6 +3426,12 @@ def closed_loop(
                     ) if predictor == "staged" else None
                 ),
                 "terminal_handoff": terminal_handoff,
+                "contact_lease": bool(getattr(args, "contact_lease", False)),
+                "contact_lease_active": contact_lease_active,
+                "orientation_xy_budget": (
+                    float(getattr(args, "orientation_xy_budget", 0.0))
+                    if bool(getattr(args, "contact_lease", False)) else None
+                ),
                 "terminal_orientation_ranker": bool(getattr(args, "terminal_orientation_ranker", False)),
                 "observed_sign_feedback": bool(observed_sign_feedback),
                 "observed_sign_calibration": bool(observed_sign_calibration),
@@ -3319,6 +3491,7 @@ def closed_loop(
                         "sign_sum": float(np.sign(observed_target[0]) * action_moment_sign(before, action, env=env)),
                         "last_error": 0.0 if predicted_target is None else normalized_effect_error(predicted_target, observed_target),
                         "descriptor": descriptor,
+                        "action": np.asarray(action, dtype=np.float64).tolist(),
                         "task_gain": float(task_gain),
                     }
                 else:
@@ -3343,6 +3516,7 @@ def closed_loop(
                         (float(local_entry.get("task_gain", 0.0)) * count + float(task_gain)) / float(count + 1)
                     )
                     local_entry["descriptor"] = descriptor
+                    local_entry["action"] = np.asarray(action, dtype=np.float64).tolist()
             if args.online_effect_correction and not recovery_macro and not fallback_used and current_mode_id == 2:
                 key = online_effect_key(env, before, action)
                 cache = online_effects.get(key)
@@ -3612,6 +3786,10 @@ def parse_args() -> argparse.Namespace:
                         help="use translation-first then rotation-within-tube imagined scoring")
     parser.add_argument("--staged-translation-gate", type=float, default=28.0,
                         help="XY error above which the staged controller uses the goal-conditioned translation ranker")
+    parser.add_argument("--phase-shield-tolerance", type=float, default=2.0,
+                        help="fixed allowed XY-tube expansion for orientation phases; calibrated before held-out evaluation")
+    parser.add_argument("--focused-three-arm", action="store_true",
+                        help="run only the predeclared predictor/fallback/local-repair/phase arms; avoids full macro O(N^2) sweep")
     parser.add_argument("--contact-recovery", action="store_true",
                         help="use an explicit state-only reacquisition branch outside the contact tube")
     parser.add_argument("--contact-relocation-on-stagnation", action="store_true",
@@ -3649,10 +3827,18 @@ def parse_args() -> argparse.Namespace:
                         help="ablation: after observed local sign calibration, rank only candidates with the desired torque sign")
     parser.add_argument("--direct-observed-sign-reversal", action="store_true",
                         help="ablation: after a wrong observed angle pulse, reverse that pulse's actual moment sign directly")
+    parser.add_argument("--escalate-on-wrong-sign", action="store_true",
+                        help="after a wrong observed pulse, use the largest supported opposite-moment pulse to overcome stiction")
     parser.add_argument("--strict-direction-gate", action="store_true",
                         help="ablation: hard-gate contact candidates whose learned angle-direction probability disagrees with the goal")
     parser.add_argument("--online-effect-correction", action="store_true",
                         help="use observed same-region/action-bin transitions for subsequent runtime ranking")
+    parser.add_argument("--online-local-jacobian", action="store_true",
+                        help="fit a fail-closed local action-effect Jacobian from prior paired observed pulses")
+    parser.add_argument("--allow-unpaired-local-effects", action="store_true",
+                        help="diagnostic only: allow same-region rank-2 observed effects without strict +/- moment pairing")
+    parser.add_argument("--online-jacobian-min-samples", type=int, default=2,
+                        help="minimum prior local samples for the observed-effect Jacobian")
     parser.add_argument("--online-effect-neighbors", type=int, default=3,
                         help="maximum nearby observed local effects reused by adaptive ranking")
     parser.add_argument("--online-effect-radius", type=float, default=1.75,
@@ -3667,6 +3853,8 @@ def parse_args() -> argparse.Namespace:
                         help="minimum absolute observed angle increment in radians for local-effect support")
     parser.add_argument("--paired-effect-probes", action="store_true",
                         help="alternate local probe moment signs to estimate a paired action contrast")
+    parser.add_argument("--breakaway-paired-probe", action="store_true",
+                        help="ignore the small calibration pulse when forming the first paired probe and use the largest declared support pulse")
     parser.add_argument("--active-probe-max-moment", action="store_true",
                         help="stiction-aware probe ablation: use the largest declared candidate moment")
     parser.add_argument("--identification-pulse-steps", type=int, default=1,
@@ -3700,8 +3888,16 @@ def parse_args() -> argparse.Namespace:
                         help="terminal ablation: use the largest available correctly signed moment pulse to test sticking/breakaway")
     parser.add_argument("--terminal-orientation-ranker", action="store_true",
                         help="terminal ablation: use the learned orientation-only action ranker instead of a geometric sign handoff")
+    parser.add_argument("--terminal-observed-effect", action="store_true",
+                        help="allow paired observed-effect probing/Jacobian repair during terminal orientation handoff")
     parser.add_argument("--terminal-pulse-steps", type=int, default=1,
                         help="short pulse length used only during terminal orientation handoff")
+    parser.add_argument("--contact-lease", action="store_true",
+                        help="during near-goal contact orientation, block relocation and enforce an observed XY shield")
+    parser.add_argument("--contact-lease-xy-gate", type=float, default=None,
+                        help="XY distance at which the contact lease becomes active; defaults to --terminal-xy-gate")
+    parser.add_argument("--orientation-xy-budget", type=float, default=0.0,
+                        help="allowed predicted XY error increase during a contact-lease orientation pulse")
     parser.add_argument("--tangent-magnitudes", type=float, nargs="+", default=[0.06, 0.10, 0.16])
     parser.add_argument("--goal-translation-magnitudes", type=float, nargs="+", default=[],
                         help="optional task-directed tangent candidates; empty preserves the legacy bank")
@@ -3715,6 +3911,10 @@ def main() -> None:
         args.macro_pulse_steps = int(args.pulse_steps)
     if int(args.macro_pulse_steps) <= 0:
         raise ValueError("--macro-pulse-steps must be positive")
+    if args.contact_lease_xy_gate is None:
+        args.contact_lease_xy_gate = float(args.terminal_xy_gate)
+    if float(args.orientation_xy_budget) < 0.0:
+        raise ValueError("--orientation-xy-budget must be non-negative")
     device = resolve_device(args.device)
     if args.device == "auto" and device.type != "cuda":
         print("CUDA unavailable; running CPU is permitted only after this explicit device check.")
@@ -3822,7 +4022,7 @@ def main() -> None:
             env, train_roots, tuple(args.tangent_magnitudes), args.inward_magnitude,
             args.free_recovery_magnitude, args.macro_pulse_steps,
             tuple(args.goal_translation_magnitudes), args.boundary_action_frame,
-            tuple(args.contact_normal_magnitudes),
+            tuple(args.contact_normal_magnitudes), model=model,
         )
         macro_ranker = fit_macro_ranker(
             macro_ranker_rows, args.seed + 260, args.trees, env,
@@ -3831,6 +4031,117 @@ def main() -> None:
         model["effect_gate"] = fit_effect_gate_statistics(
             train_rows, model, env, args.boundary_action_frame,
         )
+        if args.focused_three_arm:
+            # Dense action banks make the historical all-arm macro sweep grow
+            # quadratically in candidates and can spend tens of minutes before
+            # writing an artifact.  The confirmatory protocol needs only the
+            # predeclared matched arms below; all share the same fitted model,
+            # roots, pulse budget and candidate bank.
+            held_features = np.asarray([
+                lifted_row_features(row, env=env, boundary_action_frame=args.boundary_action_frame)
+                for row in held_rows
+            ])
+            held_labels = np.asarray([
+                successor_mode(row["before"], row["after"], env=env) for row in held_rows
+            ])
+            mode_accuracy = float(np.mean(model["classifier"].predict(held_features) == held_labels))
+            frozen_loop = closed_loop(
+                env, held_roots, model, args, mode_conditioned=True,
+                contact_recovery=args.contact_recovery,
+                observed_sign_feedback=args.observed_sign_feedback,
+                observed_sign_calibration=args.observed_sign_calibration,
+                contact_geometry_sign_feedback=args.contact_geometry_sign_feedback,
+                recent_contact_sign_fallback=args.recent_contact_sign_fallback,
+                strict_contact_sign_gate=args.strict_contact_sign_gate,
+                direct_observed_sign_reversal=args.direct_observed_sign_reversal,
+            )
+            fallback_loop = closed_loop(
+                env, held_roots, model, args, mode_conditioned=False,
+                contact_recovery=args.contact_recovery,
+                observed_sign_feedback=False, observed_sign_calibration=False,
+                contact_geometry_sign_feedback=False,
+                recent_contact_sign_fallback=False, strict_contact_sign_gate=False,
+                direct_observed_sign_reversal=False, fallback_only=True,
+            )
+            adaptive_loop = closed_loop(
+                env, held_roots, model, args, mode_conditioned=True,
+                contact_recovery=args.contact_recovery,
+                observed_sign_feedback=args.observed_sign_feedback,
+                observed_sign_calibration=args.observed_sign_calibration,
+                contact_geometry_sign_feedback=args.contact_geometry_sign_feedback,
+                recent_contact_sign_fallback=args.recent_contact_sign_fallback,
+                strict_contact_sign_gate=args.strict_contact_sign_gate,
+                direct_observed_sign_reversal=args.direct_observed_sign_reversal,
+                uncertainty_gate=True, adaptive_online_effect=True,
+            )
+            phase_loop = closed_loop_two_pulse_macro(
+                env, held_roots, model, args,
+                translation_predictor="goal_ranker", orientation_predictor="tree",
+                orientation_first=True, translation_xy_only=True,
+                reverse_phase_gate=True,
+                xy_shield_tolerance=args.phase_shield_tolerance,
+                orientation_pair_ranker=model["orientation_pair_ranker"],
+            )
+            # Literature-motivated sequence arm: fit the joint two-pulse
+            # preference model on training roots only, then re-observe between
+            # pulses.  The first pulse is selected from the frozen imagined
+            # state; the second pulse is scored from the fresh observed state.
+            # This is deliberately separate from ``adaptive_local_repair``:
+            # it tests sequence-level learned ranking, not a privileged
+            # successor oracle and not a post-hoc choice of the best root.
+            sequence_ranker_loop = closed_loop_two_pulse_macro(
+                env, held_roots, model, args,
+                translation_predictor="goal_ranker", orientation_predictor="tree",
+                phase_gate=True, macro_ranker=macro_ranker,
+            )
+            sequence_phase_hybrid_loop = closed_loop_two_pulse_macro(
+                env, held_roots, model, args,
+                translation_predictor="goal_ranker", orientation_predictor="tree",
+                phase_gate=True, macro_ranker=macro_ranker,
+                macro_first_only=True,
+                orientation_pair_ranker=model["orientation_pair_ranker"],
+            )
+            risk_averse_sequence_loop = closed_loop_two_pulse_macro(
+                env, held_roots, model, args,
+                translation_predictor="goal_ranker", orientation_predictor="tree",
+                phase_gate=True, macro_ranker=macro_ranker,
+                macro_risk_penalty=1.0,
+            )
+            focused_report = {
+                "schema": "pusht_focused_three_arm.v1",
+                "protocol": vars(args) | {
+                    "resolved_device": str(device),
+                    "cuda_device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
+                    "runtime_successor_access": False,
+                    "same_held_out_roots": len(held_roots),
+                    "focused_reason": "avoid full macro O(N^2) sweep for dense candidate banks",
+                },
+                "mode_accuracy": mode_accuracy,
+                "closed_loop": {
+                    "frozen_predictor": frozen_loop,
+                    "safe_fallback": fallback_loop,
+                    "adaptive_local_repair": adaptive_loop,
+                    "phase_repair": phase_loop,
+                    "sequence_ranker": sequence_ranker_loop,
+                    "sequence_phase_hybrid": sequence_phase_hybrid_loop,
+                    "risk_averse_sequence": risk_averse_sequence_loop,
+                },
+                "claim_boundary": (
+                    "Matched privileged state-chart benchmark; it does not establish "
+                    "frozen RGB/LeWM causal dynamics or universal transfer."
+                ),
+            }
+            (output / "focused_three_arm.json").write_text(
+                json.dumps(focused_report, indent=2, sort_keys=True, default=str)
+            )
+            print(json.dumps({
+                "output": str(output), "mode_accuracy": mode_accuracy,
+                "closed_loop": {
+                    key: value["metrics"]
+                    for key, value in focused_report["closed_loop"].items()
+                },
+            }, indent=2))
+            return
         held_features = np.asarray([
             lifted_row_features(row, env=env, boundary_action_frame=args.boundary_action_frame)
             for row in held_rows
@@ -3947,7 +4258,7 @@ def main() -> None:
         shielded_phase_gate_macro_loop = closed_loop_two_pulse_macro(
             env, held_roots, model, args,
             translation_predictor="goal_ranker", orientation_predictor="tree",
-            phase_gate=True, xy_shield_tolerance=2.0,
+            phase_gate=True, xy_shield_tolerance=args.phase_shield_tolerance,
         )
         orientation_then_translation_macro_loop = closed_loop_two_pulse_macro(
             env, held_roots, model, args,
@@ -3969,7 +4280,7 @@ def main() -> None:
         orientation_delta_ranker_shielded_macro_loop = closed_loop_two_pulse_macro(
             env, held_roots, model, args,
             translation_predictor="goal_ranker", orientation_predictor="tree",
-            orientation_first=True, xy_shield_tolerance=2.0,
+            orientation_first=True, xy_shield_tolerance=args.phase_shield_tolerance,
             orientation_delta_ranker=model["orientation_delta_ranker"],
         )
         orientation_dual_ranker_macro_loop = closed_loop_two_pulse_macro(
@@ -4001,7 +4312,7 @@ def main() -> None:
             env, held_roots, model, args,
             translation_predictor="goal_ranker", orientation_predictor="tree",
             orientation_first=True, translation_xy_only=True, reverse_phase_gate=True,
-            xy_shield_tolerance=2.0,
+            xy_shield_tolerance=args.phase_shield_tolerance,
             orientation_pair_ranker=model["orientation_pair_ranker"],
         )
         joint_macro_loop = closed_loop_two_pulse_macro(
@@ -4126,7 +4437,7 @@ def main() -> None:
             "macro_budget": "two macro pulses; total env steps matched to primitive budget; no successor access",
             "macro_sign_feedback": "optional second-pulse moment-sign gate from first-pulse observed angle direction",
             "macro_phase_gate": "optional existing 28 px XY gate; second pulse remains translation until inside tube",
-            "xy_shield_tolerance": 2.0,
+            "xy_shield_tolerance": float(args.phase_shield_tolerance),
             "joint_macro_ranker": "training-root two-pulse final-pose ranker; training and runtime use macro_pulse_steps; runtime uses learned first-step imagination then fresh observation",
             "sequence_steps": args.sequence_steps,
             "closure_steps": args.closure_steps,

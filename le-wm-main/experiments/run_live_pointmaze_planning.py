@@ -40,6 +40,17 @@ MARKER_RADIUS = 9
 FRAME_STRIDE = 5
 HORIZONS = (1, 2, 4)
 GATE_TOLERANCE_GRID = (0.05, 0.10, 0.20, 0.30, 0.50)
+GDD_SUPPORT_PRESERVING_MIN_RELEASE_RATE = 0.20
+# The GDD verified-local arm uses a smaller, fixed information-action pulse
+# than the legacy effect-policy probe.  This is a safety budget declared in
+# the protocol, not a test-outcome-tuned parameter.
+GDD_VERIFIED_LOCAL_PROBE_MAGNITUDE = 0.25
+# Fixed protocol threshold for the active-information arm.  It is not
+# selected from held-out task outcomes.
+GDD_DISAGREEMENT_COSINE_THRESHOLD = 0.80
+# Fixed post-action RGB verification tolerance in calibrated position units.
+# A failed candidate is quarantined and never used to update the local chart.
+GDD_LOCAL_EXECUTION_RESIDUAL_TOLERANCE = 0.25
 PRIVILEGED_METHODS = frozenset({
     "ground_truth_candidate_oracle",
     "perfect_dynamics_mpc",
@@ -72,6 +83,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="frozen train/calibration-only action-effect ensemble for repaired policies",
     )
+    parser.add_argument("--gdd-adapter-checkpoint", type=Path, default=None)
+    parser.add_argument("--gdd-projection", type=Path, default=None,
+                        help="D2 projection report for gdd_wm_rgb")
+    parser.add_argument("--gdd-feature-table", type=Path, default=None,
+                        help="student feature table containing the frozen goal anchor")
     parser.add_argument("--dinov2-source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--calibration-start", type=int, default=1800)
@@ -93,6 +109,14 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="optional disjoint comma-separated episodes used only to select gate tolerance",
     )
+    parser.add_argument(
+        "--gdd-calibration-episodes",
+        default="",
+        help=(
+            "optional disjoint comma-separated roots used to authorize GDD teacher "
+            "deployment; rejection fails closed to visual dynamics"
+        ),
+    )
     parser.add_argument("--max-test-episodes", type=int, default=None)
     parser.add_argument(
         "--max-blocks", type=int, default=40,
@@ -101,6 +125,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--directions", type=int, default=8)
     parser.add_argument("--magnitudes", type=float, nargs="+", default=[0.25, 0.50, 0.75, 1.00])
     parser.add_argument("--probe-blocks", type=int, default=1)
+    parser.add_argument(
+        "--active-probe-directions", type=int, default=4,
+        help="number of evenly spaced goal-relative active effect probes; default 4 preserves the frozen protocol",
+    )
     parser.add_argument("--calibration-frames", type=int, default=768)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--success-radius", type=float, default=0.25)
@@ -126,8 +154,27 @@ def parse_args() -> argparse.Namespace:
         help="maximum visual-dynamics regret allowed for the consistency gate",
     )
     parser.add_argument(
+        "--gdd-disagreement-cosine-threshold", type=float,
+        default=GDD_DISAGREEMENT_COSINE_THRESHOLD,
+        help=(
+            "fixed cosine threshold for triggering GDD RGB probes; probes run "
+            "only when frozen GDD and visual-dynamics proposals disagree"
+        ),
+    )
+    parser.add_argument(
         "--projection-min-alpha", type=float, default=0.25,
         help="minimum retained WM-action fraction for wm_rgb_projected_guarded",
+    )
+    parser.add_argument(
+        "--gdd-score-horizons", type=int, nargs="+", default=[4],
+        help=(
+            "prediction horizons used by the frozen GDD projection student; "
+            "must be a subset of adapter horizons and match distillation when possible"
+        ),
+    )
+    parser.add_argument(
+        "--gdd-candidate-count", type=int, default=16,
+        help="number of deterministic paired_order_v2 candidates scored by GDD",
     )
     parser.add_argument("--oracle-depth", type=int, default=4)
     parser.add_argument("--oracle-beam-width", type=int, default=8)
@@ -137,8 +184,19 @@ def parse_args() -> argparse.Namespace:
         choices=(
             "random", "visual_greedy", "visual_dynamics", "wm_rgb",
             "wm_rgb_guarded", "wm_rgb_projected", "wm_rgb_projected_guarded",
+            "gdd_wm_rgb", "gdd_wm_rgb_guarded", "gdd_wm_rgb_verified_local",
+            "gdd_wm_rgb_disagreement_verified_local", "gdd_wm_rgb_projected_guarded",
+            "gdd_wm_rgb_waypoint",
+            "gdd_wm_rgb_waypoint_guarded",
+            "gdd_wm_rgb_support_preserving_guarded",
+            "gdd_wm_rgb_support_matched_guarded",
+            "gdd_runtime_task_effect_rgb",
             "effect_adapter_rgb", "effect_adapter_rgb_htsc",
             "effect_adapter_rgb_htsc_consistency",
+            "effect_adapter_rgb_online", "effect_adapter_rgb_online_htsc",
+            "effect_adapter_rgb_online_probe", "effect_adapter_rgb_online_verified_local",
+            "effect_adapter_rgb_online_local_jacobian", "effect_adapter_rgb_online_local_direct",
+            "effect_adapter_rgb_online_local_phase",
             "ground_truth_candidate_oracle",
             "perfect_dynamics_mpc",
         ),
@@ -168,6 +226,19 @@ def parse_episode_list(value: str, label: str) -> list[int] | None:
     if len(set(episodes)) != len(episodes):
         raise ValueError(f"{label} cannot contain duplicate episode IDs")
     return episodes
+
+
+def validate_output_path(path: Path) -> Path:
+    """Reject a directory early; this runner writes one JSON report file."""
+
+    path = Path(path)
+    if path.exists() and path.is_dir():
+        raise ValueError(
+            f"--output must be a JSON file path, not an existing directory: {path}"
+        )
+    if not path.name:
+        raise ValueError("--output must name a JSON report file")
+    return path
 
 
 def _episode_path(root: Path, episode: int) -> Path:
@@ -258,6 +329,278 @@ class VisualDynamicsCalibration:
     def predict_velocity(self, velocity: np.ndarray, action: np.ndarray) -> np.ndarray:
         feature = np.asarray([*np.asarray(velocity)[:2], *np.asarray(action)[:2], 1.0], dtype=np.float64)
         return feature @ self.velocity_weights
+
+
+@dataclass
+class OnlineLocalEffectResidual:
+    """RGB-observed local correction for a frozen action-effect predictor.
+
+    The correction is fitted only from executed frozen-effect action pairs and
+    their observed-minus-predicted displacement residuals in the current
+    episode.  It never reads simulator state.  The
+    constant-only fallback is intentionally zero until an observation exists,
+    so the frozen effect policy remains the explicit baseline at episode start.
+    """
+
+    ridge: float = 1.0e-2
+    min_samples: int = 4
+    shrinkage_samples: float = 4.0
+    max_correction_norm: float = 0.25
+    actions: list[np.ndarray] | None = None
+    velocities: list[np.ndarray] | None = None
+    effects: list[np.ndarray] | None = None
+    verification_errors: list[float] | None = None
+    verification_threshold: float = 0.25
+    min_verification_samples: int = 2
+    verification_direction_threshold: float | None = None
+    directional_scores: list[float] | None = None
+
+    def __post_init__(self) -> None:
+        if self.ridge <= 0.0:
+            raise ValueError("online residual ridge must be positive")
+        if (
+            self.min_samples < 1 or self.shrinkage_samples <= 0.0
+            or self.max_correction_norm <= 0.0
+            or self.verification_threshold <= 0.0
+            or self.min_verification_samples < 1
+        ):
+            raise ValueError("online residual stability parameters must be positive")
+        self.actions = [] if self.actions is None else self.actions
+        self.velocities = [] if self.velocities is None else self.velocities
+        self.effects = [] if self.effects is None else self.effects
+        self.verification_errors = [] if self.verification_errors is None else self.verification_errors
+        self.directional_scores = [] if self.directional_scores is None else self.directional_scores
+
+    @staticmethod
+    def _features(actions: np.ndarray, velocities: np.ndarray | None = None) -> np.ndarray:
+        values = np.asarray(actions, dtype=np.float64)
+        if values.ndim == 1:
+            values = values.reshape(1, -1)
+        if values.ndim != 2 or values.shape[1] != 2:
+            raise ValueError("online residual actions must have shape [N, 2]")
+        if velocities is None:
+            velocity_values = np.zeros_like(values)
+        else:
+            velocity_values = np.asarray(velocities, dtype=np.float64)
+            if velocity_values.ndim == 1:
+                velocity_values = velocity_values.reshape(1, -1)
+            if velocity_values.shape != values.shape:
+                raise ValueError("online residual velocities must match action shape")
+        vx, vy = velocity_values[:, 0], velocity_values[:, 1]
+        ax, ay = values[:, 0], values[:, 1]
+        return np.stack([
+            np.ones(len(values)), vx, vy, ax, ay,
+            vx * ax, vx * ay, vy * ax, vy * ay,
+            ax * ax, ax * ay, ay * ay,
+        ], axis=1)
+
+    def update(
+        self,
+        action: np.ndarray,
+        observed_effect: np.ndarray,
+        velocity: np.ndarray | None = None,
+        predicted_effect: np.ndarray | None = None,
+    ) -> None:
+        action = np.asarray(action, dtype=np.float64).reshape(-1)
+        effect = np.asarray(observed_effect, dtype=np.float64).reshape(-1)
+        velocity = np.zeros(2, dtype=np.float64) if velocity is None else np.asarray(velocity, dtype=np.float64).reshape(-1)
+        if (
+            action.shape != (2,) or velocity.shape != (2,) or effect.shape != (2,)
+            or not np.isfinite(action).all() or not np.isfinite(velocity).all()
+            or not np.isfinite(effect).all()
+        ):
+            raise ValueError("online residual update requires finite 2D action/effect")
+        if predicted_effect is not None:
+            predicted = np.asarray(predicted_effect, dtype=np.float64).reshape(-1)
+            if predicted.shape != (2,) or not np.isfinite(predicted).all():
+                raise ValueError("predicted effect must be a finite 2D vector")
+            effect = effect - predicted
+        self.actions.append(action.copy())
+        self.velocities.append(velocity.copy())
+        self.effects.append(effect.copy())
+
+    def predict(self, actions: np.ndarray, velocity: np.ndarray | None = None) -> np.ndarray:
+        values = np.asarray(actions, dtype=np.float64)
+        if values.ndim != 2 or values.shape[1] != 2:
+            raise ValueError("online residual query actions must have shape [N, 2]")
+        if not self.trusted:
+            return np.zeros_like(values)
+        matrix = self._features(np.stack(self.actions), np.stack(self.velocities))
+        targets = np.stack(self.effects)
+        gram = matrix.T @ matrix + np.eye(matrix.shape[1], dtype=np.float64) * self.ridge
+        weights = np.linalg.solve(gram, matrix.T @ targets)
+        query_velocity = None if velocity is None else np.repeat(
+            np.asarray(velocity, dtype=np.float64).reshape(1, 2), len(values), axis=0
+        )
+        correction = self._features(values, query_velocity) @ weights
+        # Do not let a high-dimensional local fit dominate before it has
+        # accumulated enough independent observations.  The final norm cap is
+        # a trust region in task-effect space, not a test-set threshold.
+        correction *= len(self.actions) / (len(self.actions) + self.shrinkage_samples)
+        norms = np.linalg.norm(correction, axis=1, keepdims=True)
+        correction *= np.minimum(1.0, self.max_correction_norm / np.maximum(norms, 1.0e-12))
+        return correction
+
+    def record_verification(self, predicted_effect: np.ndarray, observed_effect: np.ndarray) -> None:
+        predicted = np.asarray(predicted_effect, dtype=np.float64).reshape(-1)
+        observed = np.asarray(observed_effect, dtype=np.float64).reshape(-1)
+        if predicted.shape != (2,) or observed.shape != (2,) or not np.isfinite(predicted).all() or not np.isfinite(observed).all():
+            raise ValueError("successor verification requires finite 2D effects")
+        self.verification_errors.append(float(np.linalg.norm(predicted - observed)))
+        predicted_norm = float(np.linalg.norm(predicted))
+        observed_norm = float(np.linalg.norm(observed))
+        if predicted_norm > 1.0e-8 and observed_norm > 1.0e-8:
+            self.directional_scores.append(float(np.dot(predicted, observed) / (predicted_norm * observed_norm)))
+
+    def update_verified_execution(
+        self,
+        action: np.ndarray,
+        observed_effect: np.ndarray,
+        velocity: np.ndarray | None = None,
+        predicted_effect: np.ndarray | None = None,
+        verification_baseline_effect: np.ndarray | None = None,
+    ) -> bool:
+        """Record one frozen-effect execution, or abstain on a fallback.
+
+        A ``None`` prediction means that the executed action came from a
+        fallback controller.  Such a transition is useful to the fallback's
+        own model but is not a residual observation for this frozen effect
+        policy, so it is deliberately ignored here.
+        """
+
+        if predicted_effect is None:
+            return False
+        verification_predicted = np.asarray(predicted_effect, dtype=np.float64).reshape(-1)
+        verification_observed = np.asarray(observed_effect, dtype=np.float64).reshape(-1)
+        if verification_baseline_effect is not None:
+            baseline = np.asarray(verification_baseline_effect, dtype=np.float64).reshape(-1)
+            if baseline.shape != (2,) or not np.isfinite(baseline).all():
+                raise ValueError("verification baseline effect must be a finite 2D vector")
+            verification_predicted = verification_predicted - baseline
+            verification_observed = verification_observed - baseline
+        self.record_verification(verification_predicted, verification_observed)
+        self.update(
+            action,
+            observed_effect,
+            velocity=velocity,
+            predicted_effect=predicted_effect,
+        )
+        return True
+
+    @property
+    def trusted(self) -> bool:
+        if len(self.actions) < self.min_samples or len(self.verification_errors) < self.min_verification_samples:
+            return False
+        recent = np.asarray(self.verification_errors[-self.min_verification_samples :], dtype=np.float64)
+        norm_ok = bool(float(np.mean(recent)) <= self.verification_threshold)
+        if self.verification_direction_threshold is None or len(self.directional_scores) < self.min_verification_samples:
+            return norm_ok
+        directional = np.asarray(self.directional_scores[-self.min_verification_samples :], dtype=np.float64)
+        return bool(float(np.mean(directional)) >= self.verification_direction_threshold)
+
+    @property
+    def sample_count(self) -> int:
+        return len(self.actions)
+
+
+@dataclass
+class VerifiedLocalActionEffectModel:
+    """Low-variance RGB-observed local action-effect model.
+
+    Unlike ``OnlineLocalEffectResidual``, this model does not fit a frozen
+    teacher residual with a 12-term interaction basis.  It fits the local
+    affine map ``effect = bias + action @ Jacobian`` from observed RGB
+    successors only.  The deliberately small basis is identifiable from the
+    four predeclared cardinal probes and is refit after every executed pulse.
+    It is a recovery arm, not a certificate for the global teacher.
+    """
+
+    ridge: float = 5.0e-2
+    min_samples: int = 4
+    actions: list[np.ndarray] | None = None
+    effects: list[np.ndarray] | None = None
+    verification_errors: list[float] | None = None
+    quarantined: bool = False
+
+    def __post_init__(self) -> None:
+        if self.ridge <= 0.0 or self.min_samples < 3:
+            raise ValueError("local action-effect model parameters must be positive")
+        self.actions = [] if self.actions is None else self.actions
+        self.effects = [] if self.effects is None else self.effects
+        self.verification_errors = [] if self.verification_errors is None else self.verification_errors
+
+    @staticmethod
+    def _features(actions: np.ndarray) -> np.ndarray:
+        values = np.asarray(actions, dtype=np.float64)
+        if values.ndim == 1:
+            values = values.reshape(1, -1)
+        if values.ndim != 2 or values.shape[1] != 2:
+            raise ValueError("local action-effect actions must have shape [N, 2]")
+        return np.concatenate([np.ones((len(values), 1)), values], axis=1)
+
+    def update(self, action: np.ndarray, observed_effect: np.ndarray) -> None:
+        action = np.asarray(action, dtype=np.float64).reshape(-1)
+        effect = np.asarray(observed_effect, dtype=np.float64).reshape(-1)
+        if (
+            action.shape != (2,) or effect.shape != (2,)
+            or not np.isfinite(action).all() or not np.isfinite(effect).all()
+        ):
+            raise ValueError("local action-effect update requires finite 2D values")
+        self.actions.append(action.copy())
+        self.effects.append(effect.copy())
+
+    @property
+    def sample_count(self) -> int:
+        return len(self.actions)
+
+    @property
+    def trusted(self) -> bool:
+        if self.quarantined or self.sample_count < self.min_samples:
+            return False
+        matrix = self._features(np.stack(self.actions))
+        return bool(np.linalg.matrix_rank(matrix) >= 3)
+
+    def predict(self, actions: np.ndarray) -> np.ndarray:
+        values = np.asarray(actions, dtype=np.float64)
+        if values.ndim != 2 or values.shape[1] != 2:
+            raise ValueError("local action-effect query actions must have shape [N, 2]")
+        if not self.trusted:
+            return np.zeros_like(values)
+        matrix = self._features(np.stack(self.actions))
+        targets = np.stack(self.effects)
+        weights = np.linalg.solve(
+            matrix.T @ matrix + np.eye(3, dtype=np.float64) * self.ridge,
+            matrix.T @ targets,
+        )
+        return self._features(values) @ weights
+
+    def verify_execution(
+        self,
+        predicted_effect: np.ndarray,
+        observed_effect: np.ndarray,
+        tolerance: float = GDD_LOCAL_EXECUTION_RESIDUAL_TOLERANCE,
+    ) -> bool:
+        """Verify one released local action using only its next RGB frame.
+
+        A failed check quarantines the episode-local chart.  The failed
+        transition is deliberately not added to the chart, preventing an
+        erroneous local inverse from teaching itself its own mistake.
+        """
+
+        predicted = np.asarray(predicted_effect, dtype=np.float64).reshape(-1)
+        observed = np.asarray(observed_effect, dtype=np.float64).reshape(-1)
+        if (
+            predicted.shape != (2,) or observed.shape != (2,)
+            or not np.isfinite(predicted).all() or not np.isfinite(observed).all()
+            or tolerance <= 0.0
+        ):
+            raise ValueError("local execution verification requires finite 2D effects")
+        residual = float(np.linalg.norm(predicted - observed))
+        self.verification_errors.append(residual)
+        passed = residual <= float(tolerance)
+        if not passed:
+            self.quarantined = True
+        return passed
 
 
 def fit_visual_dynamics_calibration(
@@ -434,6 +777,34 @@ class RGBMazeMap:
             key=lambda cell: float(np.linalg.norm(self.cell_positions[cell] - np.asarray(position)[:2])),
         )
 
+    def segment_is_free(
+        self,
+        start: np.ndarray,
+        end: np.ndarray,
+        clearance: float = 0.55,
+        samples: int = 17,
+    ) -> bool:
+        """Check a proposed RGB-space displacement against inferred occupancy.
+
+        This is deliberately conservative and uses only the static map fitted
+        from calibration RGB.  It is a support gate, not privileged collision
+        checking: if any sampled point is too far from every inferred free-cell
+        center, the candidate is rejected.
+        """
+
+        start_value = np.asarray(start, dtype=np.float64).reshape(-1)
+        end_value = np.asarray(end, dtype=np.float64).reshape(-1)
+        if start_value.shape != (2,) or end_value.shape != (2,):
+            raise ValueError("RGB maze segment endpoints must be 2D")
+        if not np.isfinite(start_value).all() or not np.isfinite(end_value).all():
+            raise ValueError("RGB maze segment endpoints must be finite")
+        if clearance <= 0.0 or samples < 2:
+            raise ValueError("RGB maze segment gate parameters are invalid")
+        free_positions = np.stack([self.cell_positions[cell] for cell in self.free_cells])
+        points = np.linspace(start_value, end_value, int(samples))
+        distances = np.linalg.norm(points[:, None, :] - free_positions[None, :, :], axis=2)
+        return bool(np.all(np.min(distances, axis=1) <= float(clearance)))
+
     def path_waypoints(self, current: np.ndarray, goal: np.ndarray) -> list[np.ndarray]:
         """Return a shortest 4-neighbor route in RGB-inferred free space."""
 
@@ -548,6 +919,96 @@ def action_bank(
     return bank
 
 
+def active_probe_actions(
+    current: np.ndarray,
+    goal: np.ndarray,
+    directions: int = 4,
+    magnitude: float = 0.5,
+) -> np.ndarray:
+    """Return evenly spaced goal-relative probes in the runtime chart."""
+
+    current = np.asarray(current, dtype=np.float64)[:2]
+    goal = np.asarray(goal, dtype=np.float64)[:2]
+    displacement = goal - current
+    norm = float(np.linalg.norm(displacement))
+    if norm <= 1.0e-8:
+        raise ValueError("active probes require a nonzero current-goal displacement")
+    if not np.isfinite(magnitude) or magnitude <= 0.0 or magnitude > 1.0:
+        raise ValueError("active probe magnitude must lie in (0, 1]")
+    if int(directions) < 4 or int(directions) % 2:
+        raise ValueError("active probe directions must be an even number >= 4")
+    direct = displacement / norm
+    perpendicular = np.asarray([-direct[1], direct[0]], dtype=np.float64)
+    if int(directions) == 4:
+        return np.stack([
+            magnitude * direct, -magnitude * direct,
+            magnitude * perpendicular, -magnitude * perpendicular,
+        ]).astype(np.float64)
+    angles = np.linspace(0.0, 2.0 * np.pi, int(directions), endpoint=False)
+    return np.stack([
+        magnitude * (np.cos(angle) * direct + np.sin(angle) * perpendicular)
+        for angle in angles
+    ]).astype(np.float64)
+
+
+def paired_gdd_action_sequences(
+    current: np.ndarray,
+    goal: np.ndarray,
+    steps: int = 20,
+) -> np.ndarray:
+    """Return the frozen ``paired_order_v2`` action family used by GDD.
+
+    The GDD adapter was trained on two ordered half-horizon pulses, not on a
+    repeated single action.  Keeping this generator local makes the live
+    planner's action chart explicit and prevents silently feeding a different
+    candidate family to the frozen adapter.
+    """
+
+    if steps != 20:
+        raise ValueError("paired_order_v2 requires the frozen 20-step horizon")
+    displacement = np.asarray(goal, dtype=np.float64).reshape(-1)[:2] - np.asarray(current, dtype=np.float64).reshape(-1)[:2]
+    norm = float(np.linalg.norm(displacement))
+    if norm <= 1.0e-8:
+        raise ValueError("paired GDD action bank requires nonzero current-goal displacement")
+    direct = displacement / norm
+    perpendicular = np.asarray([-direct[1], direct[0]], dtype=np.float64)
+    half = steps // 2
+    quarter = steps // 4
+    sequences: list[np.ndarray] = []
+
+    def pair(first: np.ndarray, second: np.ndarray) -> None:
+        left = np.zeros((steps, 2), dtype=np.float64)
+        right = np.zeros((steps, 2), dtype=np.float64)
+        left[:half] = first
+        left[half:] = second
+        right[:half] = second
+        right[half:] = first
+        sequences.extend((np.clip(left, -1.0, 1.0), np.clip(right, -1.0, 1.0)))
+
+    pair(direct * 0.75, perpendicular * 0.5)
+    pair(direct * 0.75, -perpendicular * 0.5)
+    pair(direct * 0.9, -direct * 0.3)
+    pulse_a = np.zeros((steps, 2), dtype=np.float64)
+    pulse_b = np.zeros((steps, 2), dtype=np.float64)
+    pulse_a[:quarter] = direct
+    pulse_b[-quarter:] = direct
+    sequences.extend((pulse_a, pulse_b))
+    sequences.append(np.tile(direct * 0.35, (steps, 1)))
+    sequences.append(np.tile(perpendicular * 0.75, (steps, 1)))
+    sequences.append(np.zeros((steps, 2), dtype=np.float64))
+    # ``generate_candidate_bank.py`` deterministically appends five
+    # support-bounded random sequences to reach the frozen count of 16.
+    # Reproduce that exact canonical-bank tail; it is part of the adapter's
+    # training support, not an online randomization.
+    rng = np.random.default_rng(7000)
+    while len(sequences) < 16:
+        sequence = rng.uniform(-0.75, 0.75, size=(steps, 2))
+        norms = np.linalg.norm(sequence, axis=1, keepdims=True)
+        sequence = sequence * np.minimum(1.0, 0.75 / np.maximum(norms, 1.0e-12))
+        sequences.append(sequence[:, 0, None] * direct + sequence[:, 1, None] * perpendicular)
+    return np.stack(sequences, axis=0)
+
+
 def _pool_visual(value: torch.Tensor) -> torch.Tensor:
     """Pool [N,V,H,W,D] or [T,N,V,H,W,D] visual tokens to [N,D]."""
 
@@ -628,6 +1089,9 @@ def _load_jepa_model(
         cfgs_data=config["data"], wrapper_kwargs={"ctxt_window": 1},
     )
     model.eval()
+    # Preserve the exact preprocessing contract used by the frozen RGB
+    # successor export for the GDD source chart.
+    model._gdd_source_contract_transform = transform
     return model, transform, stats, np.asarray(stats.action_mean), np.asarray(stats.action_std)
 
 
@@ -692,6 +1156,37 @@ def _make_context(
     }
 
 
+def _make_gdd_source_contract_context(
+    context: dict[str, torch.Tensor],
+    transform: Any,
+) -> dict[str, torch.Tensor]:
+    """Apply the frozen RGB successor export contract before ``model.encode``.
+
+    The released RGB successor artifacts were produced with
+    ``raw / 255 -> transform -> *255 -> EncPredWM.encode``.  ``encode`` then
+    performs its own ``/255`` and transform pass.  This apparently redundant
+    round-trip is part of the frozen artifact provenance; silently replacing it
+    with ``encode(raw)`` changes the source chart seen by the PCA/adapter.
+    Proprio is left unchanged because ``encode`` owns its normalization.
+    """
+
+    if not isinstance(context, dict) or "visual" not in context or "proprio" not in context:
+        raise ValueError("GDD context must contain visual and proprio tensors")
+    visual = context["visual"]
+    if visual.ndim != 5:
+        raise ValueError(f"GDD visual context must be [B,T,C,H,W], got {tuple(visual.shape)}")
+    if not callable(transform):
+        raise ValueError("GDD source-contract transform is not callable")
+    raw = visual.to(dtype=torch.float32)
+    transformed = transform(raw / 255.0) * 255.0
+    if not torch.is_tensor(transformed) or transformed.shape != raw.shape:
+        raise ValueError(
+            "GDD source-contract transform changed visual shape: "
+            f"{tuple(raw.shape)} -> {getattr(transformed, 'shape', None)}"
+        )
+    return {"visual": transformed, "proprio": context["proprio"]}
+
+
 def model_candidate_scores(
     model: Any,
     readout: LatentReadout,
@@ -733,10 +1228,20 @@ def effect_policy_candidate_scores(
     current: np.ndarray,
     target: np.ndarray,
     actions: np.ndarray,
+    local_residual: OnlineLocalEffectResidual | None = None,
+    velocity: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Score repeated-pulse candidates from current RGB without state access."""
 
     context = _make_context(context_images, context_proprios)
+    # Effect policies are fitted on the same frozen RGB source chart as the
+    # successor export.  Applying model.encode(raw) here bypasses the
+    # export's declared transform round-trip and can move an otherwise
+    # matched history-4 context dozens of support units away.  GDD projection
+    # already uses this wrapper; keep the effect-policy path identical.
+    source_transform = getattr(model, "_gdd_source_contract_transform", None)
+    if callable(source_transform):
+        context = _make_gdd_source_contract_context(context, source_transform)
     with torch.no_grad():
         encoded = model.encode(context)
         pooled = np.stack([
@@ -745,8 +1250,47 @@ def effect_policy_candidate_scores(
         ])
     projection = policy.project_history(pooled)
     report = policy.score(projection, current, target, actions)
+    if local_residual is not None:
+        correction = local_residual.predict(actions, velocity=velocity)
+        effects = np.asarray(report["effects"], dtype=np.float64) + correction
+        terminals = np.asarray(current, dtype=np.float64).reshape(1, 2) + effects
+        report["effects"] = effects
+        report["terminals"] = terminals
+        report["costs"] = np.linalg.norm(
+            terminals - np.asarray(target, dtype=np.float64).reshape(1, 2), axis=1,
+        )
+        report["online_residual_used"] = True
+        report["online_residual_sample_count"] = local_residual.sample_count
+        report["online_residual_trusted"] = local_residual.trusted
+    else:
+        report["online_residual_used"] = False
+        report["online_residual_sample_count"] = 0
+        report["online_residual_trusted"] = False
     report["source_projection"] = projection
     return report
+
+
+def deployment_context_windows(effect_policy: OnlineEffectPolicy | None) -> int:
+    """Return the causal RGB window required by the loaded effect policy."""
+
+    if effect_policy is None:
+        return 2
+    return max(2, int(effect_policy.history_windows))
+
+
+def deployment_warmup_blocks(
+    probe_blocks: int,
+    required_context_windows: int,
+) -> int:
+    """Align live history-N contexts with the exported source-frame clock."""
+
+    if probe_blocks < 0:
+        raise ValueError("probe_blocks must be non-negative")
+    if required_context_windows < 1:
+        raise ValueError("required_context_windows must be positive")
+    # A history-N export starts at frame 5 and ends at frame 5*N.  Starting
+    # from frame 0 therefore requires N explicit no-op blocks.
+    return max(int(probe_blocks), int(required_context_windows))
 
 
 def visual_dynamics_scores(
@@ -923,6 +1467,23 @@ def project_action_to_dynamics_support(
     )
 
 
+def nearest_supported_action(
+    proposed_action: np.ndarray,
+    support_actions: np.ndarray,
+) -> tuple[int, np.ndarray, float]:
+    """Map a proposal to the nearest action in the declared deployment bank."""
+
+    proposal = np.asarray(proposed_action, dtype=np.float64).reshape(-1)
+    bank = np.asarray(support_actions, dtype=np.float64)
+    if proposal.shape != (2,) or bank.ndim != 2 or bank.shape[1] != 2:
+        raise ValueError("proposal and support bank must have shapes [2] and [N, 2]")
+    if len(bank) == 0 or not np.isfinite(proposal).all() or not np.isfinite(bank).all():
+        raise ValueError("proposal and support bank must be non-empty and finite")
+    distances = np.linalg.norm(bank - proposal[None, :], axis=1)
+    index = int(np.argmin(distances))
+    return index, bank[index].copy(), float(distances[index])
+
+
 def choose_action(
     method: str,
     model: Any,
@@ -948,8 +1509,15 @@ def choose_action(
     oracle_depth: int = 4,
     oracle_beam_width: int = 8,
     effect_policy: OnlineEffectPolicy | None = None,
+    local_effect_residual: OnlineLocalEffectResidual | None = None,
+    local_action_effect_model: VerifiedLocalActionEffectModel | None = None,
     effect_regret_tolerance: float = 0.25,
     effect_visual_tolerance: float = 0.10,
+    gdd_adapter: tuple[Any, dict[str, Any]] | None = None,
+    gdd_projection: np.ndarray | None = None,
+    gdd_goal_anchor: np.ndarray | None = None,
+    gdd_score_horizons: tuple[int, ...] = (4,),
+    gdd_candidate_count: int = 16,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     current_center = green_center(current_rgb)
     goal_center = green_center(goal_rgb)
@@ -1018,14 +1586,449 @@ def choose_action(
         )
         index = int(np.argmin(scores))
     elif method in {
+        "gdd_wm_rgb", "gdd_wm_rgb_guarded", "gdd_wm_rgb_verified_local",
+        "gdd_wm_rgb_disagreement_verified_local", "gdd_wm_rgb_projected_guarded",
+        "gdd_wm_rgb_waypoint",
+        "gdd_wm_rgb_waypoint_guarded",
+        "gdd_wm_rgb_support_preserving_guarded",
+        "gdd_wm_rgb_support_matched_guarded",
+    }:
+        if gdd_adapter is None or gdd_projection is None or gdd_goal_anchor is None:
+            raise ValueError("gdd_wm_rgb requires a frozen adapter, projection, and goal anchor")
+        from experiments.empirical_spectral_audit.evaluate_pointmaze_adapter_external_evidence import _predict
+        adapter, adapter_payload = gdd_adapter
+        pca_mean = np.asarray(adapter_payload["pca_mean"], dtype=np.float64)
+        pca_basis = np.asarray(adapter_payload["pca_basis"], dtype=np.float64)
+        action_chart = str(adapter_payload.get("adapter_training", {}).get("action_feature_chart", "raw"))
+        with torch.no_grad():
+            context = _make_context(context_images, context_proprios)
+            source_transform = getattr(model, "_gdd_source_contract_transform", None)
+            encoded = model.encode(_make_gdd_source_contract_context(context, source_transform))
+            pooled = _pool_visual(encoded["visual"])[0].detach().cpu().numpy().astype(np.float64)
+        source_projection = (pooled - pca_mean) @ pca_basis.T
+        # The frozen adapter was trained on the exact paired_order_v2 family:
+        # two ordered ten-step pulses, represented as four five-step blocks.
+        # The selected sequence's first five-step block is the only action
+        # released to the environment before RGB re-observation.
+        fallback_actions = actions.copy()
+        waypoint_conditioned = method in {
+            "gdd_wm_rgb_waypoint_guarded",
+            "gdd_wm_rgb_support_matched_guarded",
+        }
+        gdd_conditioning_target = target if waypoint_conditioned else goal
+        support_matched = method == "gdd_wm_rgb_support_matched_guarded"
+        if support_matched:
+            # This family is identical to the package builder: every visual
+            # fixed-bank action is repeated for the frozen 20-step adapter
+            # horizon, and the first five-step block is released online.
+            gdd_sequences = np.tile(
+                fallback_actions[:, None, :], (1, 20, 1),
+            )
+        else:
+            gdd_sequences = paired_gdd_action_sequences(current, gdd_conditioning_target)
+        if not 4 <= int(gdd_candidate_count) <= len(gdd_sequences):
+            raise ValueError(
+                f"GDD candidate count must lie in [4, {len(gdd_sequences)}], "
+                f"got {gdd_candidate_count}"
+            )
+        gdd_sequences = gdd_sequences[:int(gdd_candidate_count)]
+        actions = gdd_sequences[:, 0, :].copy()
+        repeated = gdd_sequences.reshape(len(gdd_sequences), 4, 10)
+        # The adapter/projection was trained with the declared global task
+        # goal. The RGB maze waypoint only determines the local action bank;
+        # feeding it as the student goal creates a train/deploy covariate
+        # shift and invalidates the learned geometry.
+        rows = [{"source_state_raw": np.r_[current, velocity], "goal_raw": gdd_conditioning_target} for _ in actions]
+        if action_chart != "raw":
+            from experiments.empirical_spectral_audit.pointmaze_action_charts import action_blocks_for_chart
+            repeated = action_blocks_for_chart(rows, repeated, action_chart)
+        source_matrix = np.repeat(source_projection[None, :], len(actions), axis=0)
+        adapter_features = np.concatenate([source_matrix, repeated.reshape(len(actions), -1)], axis=1)
+        prediction = _predict(
+            adapter, adapter_features, int(pca_basis.shape[0]), str(model.device),
+            adapter_payload["adapter_training"],
+        )
+        anchor = np.asarray(gdd_goal_anchor, dtype=np.float64).reshape(-1)
+        projection = np.asarray(gdd_projection, dtype=np.float64)
+        score_horizons = tuple(int(horizon) for horizon in gdd_score_horizons)
+        if not score_horizons or any(horizon not in HORIZONS for horizon in score_horizons):
+            raise ValueError(
+                f"GDD score horizons must be a non-empty subset of {HORIZONS}, "
+                f"got {score_horizons}"
+            )
+        candidate_scores = []
+        for horizon in score_horizons:
+            latent = np.asarray(prediction[horizon], dtype=np.float64)
+            features = np.concatenate([latent, np.repeat(gdd_conditioning_target[None, :], len(actions), axis=0)], axis=1)
+            centered = features - anchor.reshape(1, -1)
+            candidate_scores.append(np.linalg.norm(centered @ projection.T, axis=1) ** 2 / projection.shape[0])
+        scores = np.mean(np.stack(candidate_scores, axis=1), axis=1)
+        index = int(np.argmin(scores))
+        if method in {
+            "gdd_wm_rgb_guarded", "gdd_wm_rgb_projected_guarded",
+            "gdd_wm_rgb_waypoint_guarded",
+            "gdd_wm_rgb_support_preserving_guarded",
+            "gdd_wm_rgb_support_matched_guarded",
+        }:
+            # Compare the GDD proposal against the *actual* visual-dynamics
+            # bank, not only against the GDD-restricted candidate family.
+            # The old comparison could certify a bad GDD action because the
+            # visual baseline action was absent from the reference set.
+            gdd_dynamics_scores = visual_dynamics_scores(
+                current, velocity, target, actions, dynamics, kp, kv,
+            )
+            baseline_scores = visual_dynamics_scores(
+                current, velocity, target, fallback_actions, dynamics, kp, kv,
+            )
+            baseline_index = int(np.argmin(baseline_scores))
+            gdd_selected_action = actions[index].copy()
+            support_index = baseline_index
+            support_distance = 0.0
+            if method == "gdd_wm_rgb_support_preserving_guarded":
+                # Score with the frozen GDD family, but release only an action
+                # from the same bank used by the visual-dynamics reference.
+                support_index, _support_action, support_distance = nearest_supported_action(
+                    gdd_selected_action, fallback_actions,
+                )
+                gdd_dynamics_scores = visual_dynamics_scores(
+                    current, velocity, target, fallback_actions, dynamics, kp, kv,
+                )
+                gdd_regret = float(
+                    gdd_dynamics_scores[support_index] - baseline_scores[baseline_index]
+                )
+            else:
+                gdd_regret = float(gdd_dynamics_scores[index] - baseline_scores[baseline_index])
+            gate_info.update({
+                "gdd_dynamics_selected_index": baseline_index,
+                "gdd_dynamics_regret": gdd_regret,
+                "gdd_reference_bank": "visual_dynamics_fixed_bank",
+                "gdd_reference_best_score": float(baseline_scores[baseline_index]),
+                "gdd_selected_score": float(gdd_dynamics_scores[index]),
+                "gdd_guard_tolerance": float(wm_dynamics_tolerance),
+            })
+            if method == "gdd_wm_rgb_support_preserving_guarded":
+                gate_info.update({
+                    "gdd_support_preserving": True,
+                    "gdd_support_selected_index": int(support_index),
+                    "gdd_support_mapping_distance": float(support_distance),
+                    "gdd_release_tolerance": 0.0,
+                })
+                actions = fallback_actions
+                scores = baseline_scores
+                index = support_index
+            release_tolerance = (
+                0.0
+                if method in {
+                    "gdd_wm_rgb_support_preserving_guarded",
+                    "gdd_wm_rgb_support_matched_guarded",
+                }
+                else float(wm_dynamics_tolerance)
+            )
+            if gdd_regret > release_tolerance:
+                actions = fallback_actions
+                scores = baseline_scores
+                index = baseline_index
+                gate_info.update({
+                    "fallback_used": True,
+                    "fallback_reason": "gdd_action_effect_regret_exceeds_rgb_dynamics_support",
+                    "fallback_action_family": "visual_dynamics_fixed_bank",
+                })
+        gate_info.update({
+            "gdd_projection_used": True,
+            "gdd_feature_source": (
+                "RGB_encoder_PCA_plus_frozen_adapter_prediction_plus_active_waypoint_anchor"
+                if waypoint_conditioned
+                else "RGB_encoder_PCA_plus_frozen_adapter_prediction_plus_fixed_goal_anchor"
+            ),
+            "gdd_teacher_runtime_used": False,
+            "gdd_candidate_id_input": False,
+            "gdd_teacher_rank_input": False,
+            "gdd_action_family": (
+                "visual_fixed_bank_repeated_20_step_v1"
+                if support_matched else "paired_order_v2"
+            ),
+            "gdd_action_sequence_count": int(len(gdd_sequences)),
+            "gdd_goal_conditioning": "active_waypoint" if waypoint_conditioned else "global_goal",
+        })
+        if method == "gdd_wm_rgb_projected_guarded":
+            # Preserve the GDD preference only along a calibration-supported
+            # segment toward the actual visual-dynamics action.  This handles
+            # route/action-support mismatch without inventing a new direction.
+            if gdd_regret > float(wm_dynamics_tolerance):
+                executed_action = fallback_actions[baseline_index]
+                projection_alpha = 0.0
+                projected_score = float(baseline_scores[baseline_index])
+                support_score = projected_score
+                projection_fallback = True
+            else:
+                (
+                    executed_action,
+                    projection_alpha,
+                    projected_score,
+                    support_score,
+                ) = project_action_to_dynamics_support(
+                    gdd_selected_action,
+                    fallback_actions[baseline_index],
+                    current,
+                    velocity,
+                    target,
+                    dynamics,
+                    kp,
+                    kv,
+                    float(wm_dynamics_tolerance),
+                )
+                projection_fallback = projection_alpha < float(projection_min_alpha)
+                if projection_fallback:
+                    executed_action = fallback_actions[baseline_index]
+                    projection_alpha = 0.0
+            gate_info.update({
+                "projection_used": bool(projection_alpha < 1.0 - 1.0e-12),
+                "projection_alpha": float(projection_alpha),
+                "projected_dynamics_score": float(projected_score),
+                "dynamics_support_score": float(support_score),
+                "projection_min_alpha": float(projection_min_alpha),
+                "fallback_used": bool(
+                    projection_fallback
+                    or gdd_regret > float(wm_dynamics_tolerance)
+                ),
+                "fallback_reason": (
+                    "gdd_cross_bank_regret_exceeds_tolerance"
+                    if gdd_regret > float(wm_dynamics_tolerance)
+                    else "projection_alpha_below_minimum"
+                    if projection_fallback else None
+                ),
+            })
+            return executed_action, {
+                "selected_index": int(index),
+                "candidate_count": int(len(actions)),
+                "current_visual_position": current.tolist(),
+                "goal_visual_position": goal.tolist(),
+                "visual_velocity": velocity.tolist(),
+                "route_waypoints": [np.asarray(point).tolist() for point in waypoints],
+                "active_waypoint": np.asarray(target).tolist(),
+                "selected_action": executed_action.tolist(),
+                "candidate_scores": np.asarray(scores).tolist(),
+                "action_transfer_gate": gate_info,
+            }
+        if method in {
+            "gdd_wm_rgb_verified_local",
+            "gdd_wm_rgb_disagreement_verified_local",
+        }:
+            # The projection student proposes a candidate, but the proposal is
+            # not released until an observed RGB action-effect chart has
+            # enough rank-two support.  This is deliberately a recovery arm:
+            # it does not feed teacher ranks or held-out outcomes into the
+            # student, and it falls back to the ordinary visual-dynamics bank
+            # when the local chart is not identifiable.
+            if local_action_effect_model is None:
+                raise RuntimeError("GDD verified-local method requires a local action-effect model")
+            local_effects = local_action_effect_model.predict(actions)
+            local_support_limit = float(GDD_VERIFIED_LOCAL_PROBE_MAGNITUDE * 1.5)
+            local_supported = (
+                np.linalg.norm(np.asarray(actions, dtype=np.float64), axis=1)
+                <= local_support_limit + 1.0e-12
+            )
+            local_path_supported = np.ones(len(actions), dtype=bool)
+            if (
+                method == "gdd_wm_rgb_disagreement_verified_local"
+                and maze_map is not None
+            ):
+                local_endpoints = np.asarray(current, dtype=np.float64).reshape(1, 2) + local_effects
+                local_path_supported = np.asarray([
+                    maze_map.segment_is_free(current, endpoint)
+                    for endpoint in local_endpoints
+                ], dtype=bool)
+                local_supported &= local_path_supported
+            if not np.any(local_supported):
+                local_supported = np.zeros(len(actions), dtype=bool)
+            local_costs = np.linalg.norm(
+                np.asarray(current, dtype=np.float64).reshape(1, 2)
+                + local_effects
+                - np.asarray(target, dtype=np.float64).reshape(1, 2),
+                axis=1,
+            )
+            local_costs = np.where(local_supported, local_costs, np.inf)
+            local_index = int(np.argmin(local_costs))
+            local_trusted = bool(local_action_effect_model.trusted)
+            gdd_index = int(index)
+            dynamics_scores = visual_dynamics_scores(
+                current, velocity, target, fallback_actions, dynamics, kp, kv,
+            )
+            dynamics_index = int(np.argmin(dynamics_scores))
+            local_fallback_effects = local_action_effect_model.predict(fallback_actions)
+            local_fallback_costs = np.linalg.norm(
+                np.asarray(current, dtype=np.float64).reshape(1, 2)
+                + local_fallback_effects
+                - np.asarray(target, dtype=np.float64).reshape(1, 2),
+                axis=1,
+            )
+            local_visual_regret = float(
+                local_costs[local_index] - local_fallback_costs[dynamics_index]
+            )
+            gate_info.update({
+                "gdd_proposed_index": gdd_index,
+                "gdd_local_selected_index": local_index,
+                "gdd_local_chart_trusted": local_trusted,
+                "gdd_local_chart_sample_count": int(local_action_effect_model.sample_count),
+                "gdd_local_chart_basis": "observed_rgb_affine_bias_plus_action_jacobian",
+                "gdd_local_action_support_limit": local_support_limit,
+                "gdd_local_supported_candidate_count": int(np.sum(local_supported)),
+                "gdd_local_path_supported_candidate_count": int(np.sum(local_path_supported)),
+                "gdd_local_path_gate": bool(
+                    method == "gdd_wm_rgb_disagreement_verified_local"
+                ),
+                "gdd_local_visual_dynamics_index": dynamics_index,
+                "gdd_local_visual_regret": local_visual_regret,
+                "gdd_local_visual_tolerance": 0.10,
+                "effect_selected_index": local_index,
+                "predicted_effect": local_effects[local_index].tolist(),
+            })
+            if local_trusted and np.isfinite(local_costs[local_index]) and local_visual_regret <= 0.10:
+                index = local_index
+                gate_info.update({
+                    "fallback_used": False,
+                    "fallback_reason": "gdd_proposal_verified_by_local_rgb_effect",
+                })
+            else:
+                actions = fallback_actions
+                scores = dynamics_scores
+                index = dynamics_index
+                gate_info.update({
+                    "effect_selected_index": None,
+                    "fallback_used": True,
+                    "fallback_reason": (
+                        "gdd_local_effect_support_insufficient" if not local_trusted
+                        else "gdd_local_effect_visual_consistency_failed"
+                    ),
+                    "fallback_action_family": "visual_dynamics_fixed_bank",
+                })
+    elif method == "gdd_runtime_task_effect_rgb":
+        if gdd_adapter is None:
+            raise ValueError("gdd_runtime_task_effect_rgb requires --gdd-adapter-checkpoint")
+        from experiments.empirical_spectral_audit.evaluate_pointmaze_adapter_external_evidence import _predict
+        adapter, adapter_payload = gdd_adapter
+        pca_mean = np.asarray(adapter_payload["pca_mean"], dtype=np.float64)
+        pca_basis = np.asarray(adapter_payload["pca_basis"], dtype=np.float64)
+        action_chart = str(adapter_payload.get("adapter_training", {}).get("action_feature_chart", "raw"))
+        # This checkpoint was trained on the exact 32-candidate
+        # runtime_repeated_pulse_v1 family.  Its source chart is the ordinary
+        # single-encode RGB export, so do not apply the GDD successor-export
+        # double-transform contract here.
+        with torch.no_grad():
+            encoded = model.encode(_make_context(context_images, context_proprios))
+            pooled = _pool_visual(encoded["visual"])[0].detach().cpu().numpy().astype(np.float64)
+        source_projection = (pooled - pca_mean) @ pca_basis.T
+        runtime_actions = action_bank(current, goal, directions, magnitudes)
+        repeated = np.repeat(runtime_actions[:, None, :], 20, axis=1).reshape(len(runtime_actions), 4, 10)
+        rows = [{"source_state_raw": np.r_[current, velocity], "goal_raw": goal} for _ in runtime_actions]
+        if action_chart != "raw":
+            from experiments.empirical_spectral_audit.pointmaze_action_charts import action_blocks_for_chart
+            repeated = action_blocks_for_chart(rows, repeated, action_chart)
+        source_matrix = np.repeat(source_projection[None, :], len(runtime_actions), axis=0)
+        adapter_features = np.concatenate([source_matrix, repeated.reshape(len(runtime_actions), -1)], axis=1)
+        prediction = _predict(
+            adapter, adapter_features, int(pca_basis.shape[0]), str(model.device),
+            adapter_payload["adapter_training"],
+        )
+        task_training = adapter_payload["adapter_training"]
+        task_scores = []
+        for horizon in HORIZONS:
+            latent = np.asarray(prediction[horizon], dtype=np.float64)
+            basis = np.asarray(task_training["task_bases"][str(horizon)], dtype=np.float64).reshape(1, -1)
+            center = np.asarray(task_training["task_centers"][str(horizon)], dtype=np.float64).reshape(1, -1)
+            target_center = float(task_training.get("task_target_centers", {}).get(str(horizon), 0.0))
+            # Recover the scalar task-effect coefficient from the frozen
+            # one-dimensional task subspace; higher predicted progress is
+            # preferred, so the planner minimizes its negative.
+            coefficient = np.sum((latent - center) * basis, axis=1) / max(float(np.sum(basis * basis)), 1.0e-12)
+            task_scores.append(coefficient + target_center)
+        scores = -np.mean(np.stack(task_scores, axis=1), axis=1)
+        index = int(np.argmin(scores))
+        actions = runtime_actions
+        gate_info.update({
+            "gdd_runtime_task_effect_used": True,
+            "gdd_feature_source": "RGB_encoder_PCA_plus_frozen_runtime_repeated_pulse_task_effect_adapter",
+            "gdd_task_effect_checkpoint": str(adapter_payload.get("protocol", {}).get("checkpoint", "unknown")),
+            "gdd_candidate_id_input": False,
+            "gdd_teacher_runtime_used": False,
+            "gdd_action_family": "runtime_repeated_pulse_v1",
+            "gdd_action_sequence_count": int(len(runtime_actions)),
+        })
+    elif method in {
+        "effect_adapter_rgb_online_local_jacobian",
+        "effect_adapter_rgb_online_local_direct",
+        "effect_adapter_rgb_online_local_phase",
+    }:
+        if local_action_effect_model is None:
+            raise ValueError("local-jacobian method requires an observed-effect model")
+        local_effects = local_action_effect_model.predict(actions)
+        local_costs = np.linalg.norm(
+            np.asarray(current, dtype=np.float64).reshape(1, 2)
+            + local_effects
+            - np.asarray(target, dtype=np.float64).reshape(1, 2),
+            axis=1,
+        )
+        index = int(np.argmin(local_costs))
+        local_trusted = bool(local_action_effect_model.trusted)
+        gate_info.update({
+            "local_action_effect_trusted": local_trusted,
+            "local_action_effect_sample_count": local_action_effect_model.sample_count,
+            "local_action_effect_basis": "affine_bias_plus_action_jacobian",
+            "effect_policy_released": local_trusted,
+            "predicted_effect": local_effects[index].tolist(),
+        })
+        dynamics_scores = visual_dynamics_scores(
+            current, velocity, target, actions, dynamics, kp, kv,
+        )
+        dynamics_index = int(np.argmin(dynamics_scores))
+        local_regret = float(local_costs[index] - dynamics_scores[dynamics_index])
+        local_consistent = bool(local_regret <= float(effect_visual_tolerance))
+        direct_release = method in {
+            "effect_adapter_rgb_online_local_direct",
+            "effect_adapter_rgb_online_local_phase",
+        }
+        gate_info.update({
+            "local_action_effect_dynamics_index": dynamics_index,
+            "local_action_effect_regret_of_visual": local_regret,
+            "local_action_effect_visual_tolerance": float(effect_visual_tolerance),
+            "local_action_effect_consistent": local_consistent,
+            "local_action_effect_release_rule": (
+                "trusted_chart_direct_ranking" if direct_release
+                else "trusted_chart_and_visual_consistency"
+            ),
+        })
+        if not local_trusted or (not direct_release and not local_consistent):
+            index = dynamics_index
+            gate_info.update({
+                "dynamics_selected_index": dynamics_index,
+                "fallback_used": True,
+                "fallback_reason": (
+                    "local_action_effect_not_identifiable" if not local_trusted
+                    else "local_action_effect_visual_consistency_failed"
+                ),
+            })
+        scores = local_costs
+    elif method in {
         "effect_adapter_rgb", "effect_adapter_rgb_htsc",
-        "effect_adapter_rgb_htsc_consistency",
+        "effect_adapter_rgb_htsc_consistency", "effect_adapter_rgb_online",
+        "effect_adapter_rgb_online_htsc", "effect_adapter_rgb_online_probe",
+        "effect_adapter_rgb_online_verified_local", "effect_adapter_rgb_online_local_jacobian",
+        "effect_adapter_rgb_online_verified_local",
     }:
         if effect_policy is None:
             raise ValueError(f"{method} requires --effect-policy-checkpoint")
         effect_report = effect_policy_candidate_scores(
             model, effect_policy, context_images, context_proprios,
             current, target, actions,
+            local_residual=(
+                local_effect_residual
+                if method in {
+                    "effect_adapter_rgb_online", "effect_adapter_rgb_online_htsc",
+                    "effect_adapter_rgb_online_probe", "effect_adapter_rgb_online_verified_local",
+                }
+                else None
+            ),
+            velocity=velocity,
         )
         effect_scores = np.asarray(effect_report["costs"], dtype=np.float64)
         effect_index = int(np.argmin(effect_scores))
@@ -1062,9 +2065,15 @@ def choose_action(
             ),
             "predicted_effect": np.asarray(effect_report["effects"])[effect_index].tolist(),
             "predicted_terminal": np.asarray(effect_report["terminals"])[effect_index].tolist(),
+            "online_residual_used": bool(effect_report.get("online_residual_used", False)),
+            "online_residual_sample_count": int(effect_report.get("online_residual_sample_count", 0)),
         })
         index = effect_index
-        if method in {"effect_adapter_rgb_htsc", "effect_adapter_rgb_htsc_consistency"} and not released:
+        if method in {
+            "effect_adapter_rgb_htsc", "effect_adapter_rgb_htsc_consistency",
+            "effect_adapter_rgb_online_htsc",
+            "effect_adapter_rgb_online_probe",
+        } and not released:
             dynamics_scores = visual_dynamics_scores(
                 current, velocity, target, actions, dynamics, kp, kv,
             )
@@ -1079,6 +2088,40 @@ def choose_action(
                     ) else "effect_policy_regret_bound_failed"
                 ),
             })
+        elif method == "effect_adapter_rgb_online_verified_local" and not released:
+            # Probe-and-update recovery arm. It may use the local observed
+            # effect model only after this episode has verified enough probes
+            # and the current state/action remain inside support. The global
+            # teacher bound remains reported as failed; this arm tests local
+            # system identification separately.
+            local_verified = bool(
+                local_effect_residual is not None
+                and local_effect_residual.trusted
+                and state_support_passed
+                and action_support_passed
+            )
+            gate_info.update({
+                "local_verified_release": local_verified,
+                "local_verified_sample_count": (
+                    0 if local_effect_residual is None else local_effect_residual.sample_count
+                ),
+            })
+            if not local_verified:
+                dynamics_scores = visual_dynamics_scores(
+                    current, velocity, target, actions, dynamics, kp, kv,
+                )
+                dynamics_index = int(np.argmin(dynamics_scores))
+                index = dynamics_index
+                gate_info.update({
+                    "dynamics_selected_index": dynamics_index,
+                    "fallback_used": True,
+                    "fallback_reason": "local_effect_verification_or_support_failed",
+                })
+            else:
+                gate_info.update({
+                    "fallback_used": False,
+                    "fallback_reason": "global_teacher_bound_failed_local_verified_override",
+                })
         elif method == "effect_adapter_rgb_htsc_consistency":
             dynamics_scores = visual_dynamics_scores(
                 current, velocity, target, actions, dynamics, kp, kv,
@@ -1209,7 +2252,29 @@ def run_episode(
     effect_policy: OnlineEffectPolicy | None = None,
     effect_regret_tolerance: float = 0.25,
     effect_visual_tolerance: float = 0.10,
+    gdd_adapter: tuple[Any, dict[str, Any]] | None = None,
+    gdd_projection: np.ndarray | None = None,
+    gdd_goal_anchor: np.ndarray | None = None,
+    gdd_disagreement_cosine_threshold: float = GDD_DISAGREEMENT_COSINE_THRESHOLD,
+    gdd_score_horizons: tuple[int, ...] = (4,),
+    gdd_candidate_count: int = 16,
+    active_probe_directions: int = 4,
+    gdd_authorized: bool = True,
 ) -> dict[str, Any]:
+    requested_method = method
+    gdd_authorization_fallback = False
+    if (
+        not gdd_authorized
+        and method in {
+            "gdd_wm_rgb", "gdd_wm_rgb_guarded", "gdd_wm_rgb_verified_local",
+            "gdd_wm_rgb_disagreement_verified_local", "gdd_wm_rgb_projected_guarded",
+            "gdd_runtime_task_effect_rgb",
+        }
+    ):
+        # Fail closed before probe setup: a rejected teacher must not spend
+        # information-action budget before reverting to visual dynamics.
+        method = "visual_dynamics"
+        gdd_authorization_fallback = True
     if fixed_renderer is None:
         images, states = load_episode(dataset_root, episode)
         renderer = DatasetMatchedRenderer.from_episode(images, calibration)
@@ -1221,6 +2286,7 @@ def run_episode(
         initial_reference = None
         renderer_source = "calibration_only_dataset_matched_renderer"
     runtime = LegacyPointMazeRuntime(states[0])
+    required_context_windows = deployment_context_windows(effect_policy)
     current_rgb = renderer.render(runtime.state)
     goal_rgb = renderer.render(np.r_[GOAL_STATE, [0.0, 0.0]])
     initial_render_error = (
@@ -1233,26 +2299,298 @@ def run_episode(
     reset_state = runtime.state.copy()
     if probe_blocks < 0:
         raise ValueError("probe_blocks must be non-negative")
-    if probe_blocks:
-        for _ in range(probe_blocks):
-            runtime.step_block(np.zeros(2, dtype=np.float64))
+    # A history-aware effect policy must receive the same declared number of
+    # causal RGB contexts at deployment.  The old live path always retained
+    # exactly two frames, silently truncating history-4 policies to history-2.
+    # Warm-up uses explicit no-op blocks and is recorded in the report; it is
+    # not replaced by duplicated frames.  Runtime temporal exports define a
+    # history-N source at frames 5, ..., 5*N (the final frame is the source
+    # observation).  Starting from frame 0 therefore requires N no-op blocks;
+    # using N-1 would silently deploy [0, 5, ..., 5*(N-1)] and move the live
+    # latent chart one action block away from the fitted teacher.
+    warmup_blocks = deployment_warmup_blocks(probe_blocks, required_context_windows)
+    history_images = [current_rgb]
+    history_proprios = [proprio.copy()]
+    for _ in range(warmup_blocks):
+        runtime.step_block(np.zeros(2, dtype=np.float64))
         probe_rgb = renderer.render(runtime.state)
         probe_center = green_center(probe_rgb)
         probe_delta = (probe_center[0] - center[0], probe_center[1] - center[1])
         probe_proprio = np.concatenate([
             calibration.position(probe_center), calibration.velocity(probe_delta)
         ])
-        current_rgb = probe_rgb
+        history_images.append(probe_rgb)
+        history_proprios.append(probe_proprio)
         center = probe_center
-        context_images = [renderer.render(reset_state), probe_rgb]
-        context_proprios = [proprio.copy(), probe_proprio]
-    else:
-        context_images = [current_rgb, current_rgb.copy()]
-        context_proprios = [proprio.copy(), proprio.copy()]
+        current_rgb = probe_rgb
+    if warmup_blocks == 0:
+        history_images.append(current_rgb.copy())
+        history_proprios.append(proprio.copy())
+    context_images = history_images[-required_context_windows:]
+    context_proprios = history_proprios[-required_context_windows:]
     planning_start_state = runtime.state.copy()
     rng = np.random.default_rng(seed)
+    # Non-online baselines must pass an explicit no-residual state through the
+    # shared planner path.  Leaving this uninitialized made the four-arm
+    # runner fail on the first visual-dynamics episode before any scientific
+    # metric was produced.
+    local_effect_residual: OnlineLocalEffectResidual | None = None
+    local_action_effect_model: VerifiedLocalActionEffectModel | None = None
+    if method in {
+        "effect_adapter_rgb_online", "effect_adapter_rgb_online_htsc",
+        "effect_adapter_rgb_online_probe", "effect_adapter_rgb_online_verified_local",
+        "effect_adapter_rgb_online_local_jacobian", "effect_adapter_rgb_online_local_direct",
+        "effect_adapter_rgb_online_local_phase",
+        "gdd_wm_rgb_verified_local",
+        "gdd_wm_rgb_disagreement_verified_local",
+    }:
+        verification_threshold = (
+            float(effect_policy.verification_threshold)
+            if effect_policy is not None else 0.25
+        )
+        local_effect_residual = OnlineLocalEffectResidual(
+            verification_threshold=verification_threshold,
+            verification_direction_threshold=(
+                None if effect_policy is None else effect_policy.verification_direction_threshold
+            ),
+        )
+    if method in {
+        "effect_adapter_rgb_online_local_jacobian", "effect_adapter_rgb_online_local_direct",
+        "effect_adapter_rgb_online_local_phase",
+        "gdd_wm_rgb_verified_local",
+        "gdd_wm_rgb_disagreement_verified_local",
+    }:
+        local_action_effect_model = VerifiedLocalActionEffectModel()
+    active_probe_trace: list[dict[str, Any]] = []
+    probe_triggered_flag: bool | None = None
+    if method in {
+        "effect_adapter_rgb_online_probe", "effect_adapter_rgb_online_verified_local",
+        "effect_adapter_rgb_online_local_jacobian", "effect_adapter_rgb_online_local_direct",
+        "effect_adapter_rgb_online_local_phase",
+        "gdd_wm_rgb_verified_local",
+        "gdd_wm_rgb_disagreement_verified_local",
+    }:
+        # Predeclared action-space coverage probes.  These are deliberately
+        # independent of the task-cost ranking: each cardinal pulse is
+        # executed, re-observed, and used only to update the local effect
+        # residual before ordinary planning begins.
+        # The runtime candidate chart is goal-relative: these are exactly its
+        # four cardinal directions at magnitude 0.5, rotated into raw control
+        # coordinates for the current RGB-estimated state.
+        probe_position = calibration.position(center)
+        probe_target = GOAL_STATE.copy()
+        if planner_map == "rgb_maze" and maze_map is not None:
+            probe_waypoints = maze_map.path_waypoints(probe_position, GOAL_STATE)
+            if probe_waypoints:
+                probe_target = np.asarray(probe_waypoints[0], dtype=np.float64)
+        probe_actions = active_probe_actions(
+            probe_position, probe_target,
+            directions=active_probe_directions,
+            magnitude=(
+                GDD_VERIFIED_LOCAL_PROBE_MAGNITUDE
+                if method in {
+                    "gdd_wm_rgb_verified_local",
+                    "gdd_wm_rgb_disagreement_verified_local",
+                } else 0.5
+            ),
+        )
+        run_probes = True
+        disagreement_info: dict[str, Any] = {}
+        if method == "gdd_wm_rgb_disagreement_verified_local":
+            # Dry-run both frozen proposal families before executing any
+            # information action.  This uses only current RGB, calibration
+            # dynamics, and the frozen student; no simulator outcome is read.
+            gdd_dry_action, gdd_dry_decision = choose_action(
+                "gdd_wm_rgb", model, readout, current_rgb, goal_rgb,
+                context_images, context_proprios, calibration, action_mean,
+                action_std, directions, magnitudes, dynamics, maze_map,
+                planner_map, kp, kv, wm_dynamics_tolerance, rng,
+                projection_min_alpha, runtime=runtime,
+                oracle_depth=oracle_depth, oracle_beam_width=oracle_beam_width,
+                effect_policy=effect_policy,
+                gdd_adapter=gdd_adapter, gdd_projection=gdd_projection,
+                gdd_goal_anchor=gdd_goal_anchor,
+                gdd_score_horizons=gdd_score_horizons,
+                gdd_candidate_count=gdd_candidate_count,
+            )
+            visual_actions = action_bank(
+                probe_position, probe_target, directions, magnitudes,
+            )
+            visual_scores = visual_dynamics_scores(
+                probe_position,
+                np.asarray(context_proprios[-1], dtype=np.float64)[2:4],
+                probe_target, visual_actions, dynamics, kp, kv,
+            )
+            visual_action = visual_actions[int(np.argmin(visual_scores))]
+            gdd_norm = float(np.linalg.norm(gdd_dry_action))
+            visual_norm = float(np.linalg.norm(visual_action))
+            cosine = float(
+                np.dot(gdd_dry_action, visual_action) / max(gdd_norm * visual_norm, 1.0e-12)
+            ) if gdd_norm > 1.0e-12 and visual_norm > 1.0e-12 else -1.0
+            run_probes = cosine < float(gdd_disagreement_cosine_threshold)
+            probe_triggered_flag = bool(run_probes)
+            disagreement_info = {
+                "gdd_dry_action": gdd_dry_action.tolist(),
+                "visual_dry_action": visual_action.tolist(),
+                "proposal_cosine": cosine,
+                "cosine_threshold": float(gdd_disagreement_cosine_threshold),
+                "probe_triggered": bool(run_probes),
+                "gdd_dry_decision": gdd_dry_decision,
+            }
+        if not run_probes:
+            active_probe_trace.append({
+                "probe_skipped": True,
+                "reason": "frozen_gdd_and_visual_proposals_agree",
+                **disagreement_info,
+            })
+        for probe_index, probe_action in enumerate(probe_actions if run_probes else []):
+            try:
+                previous_position = calibration.position(center)
+                previous_velocity = np.asarray(context_proprios[-1], dtype=np.float64)[2:4]
+                runtime.step_block(probe_action)
+                next_rgb = renderer.render(runtime.state)
+                next_center = green_center(next_rgb)
+                observed_position = calibration.position(next_center)
+                predicted_effect = None
+                if method not in {
+                    "gdd_wm_rgb_verified_local",
+                    "gdd_wm_rgb_disagreement_verified_local",
+                    "effect_adapter_rgb_online_local_jacobian",
+                    "effect_adapter_rgb_online_local_direct",
+                    "effect_adapter_rgb_online_local_phase",
+                }:
+                    probe_report = effect_policy_candidate_scores(
+                        model, effect_policy, context_images, context_proprios,
+                        calibration.position(center), GOAL_STATE, probe_action[None, :],
+                    )
+                    predicted_effect = np.asarray(probe_report["effects"][0], dtype=np.float64)
+                    local_effect_residual.update_verified_execution(
+                        probe_action,
+                        observed_position - previous_position,
+                        velocity=previous_velocity,
+                        predicted_effect=predicted_effect,
+                        verification_baseline_effect=dynamics.predict_position_delta(
+                            previous_velocity, np.zeros(2, dtype=np.float64),
+                        ),
+                    )
+                if local_action_effect_model is not None:
+                    local_action_effect_model.update(
+                        probe_action,
+                        observed_position - previous_position,
+                    )
+                delta = (next_center[0] - center[0], next_center[1] - center[1])
+                next_proprio = np.concatenate([
+                    calibration.position(next_center), calibration.velocity(delta),
+                ])
+                context_images = (context_images + [next_rgb])[-required_context_windows:]
+                context_proprios = (context_proprios + [next_proprio])[-required_context_windows:]
+                current_rgb = next_rgb
+                center = next_center
+                active_probe_trace.append({
+                    "probe_index": int(probe_index),
+                    "action": probe_action.tolist(),
+                    "coordinate_frame": "goal_relative_runtime_chart",
+                    "probe_target": probe_target.tolist(),
+                    "predicted_effect": None if predicted_effect is None else predicted_effect.tolist(),
+                    "observed_effect": (observed_position - previous_position).tolist(),
+                    "verification_error": (
+                        None if method in {
+                            "gdd_wm_rgb_verified_local",
+                            "gdd_wm_rgb_disagreement_verified_local",
+                            "effect_adapter_rgb_online_local_jacobian",
+                            "effect_adapter_rgb_online_local_direct",
+                            "effect_adapter_rgb_online_local_phase",
+                        }
+                        else float(local_effect_residual.verification_errors[-1])
+                    ),
+                    "residual_trusted": bool(
+                        local_action_effect_model.trusted
+                        if method in {
+                            "gdd_wm_rgb_verified_local",
+                            "gdd_wm_rgb_disagreement_verified_local",
+                        } and local_action_effect_model is not None
+                        else local_effect_residual.trusted
+                    ),
+                })
+            except ValueError as exc:
+                active_probe_trace.append({
+                    "probe_index": int(probe_index),
+                    "action": probe_action.tolist(),
+                    "coordinate_frame": "goal_relative_runtime_chart",
+                    "probe_target": probe_target.tolist(),
+                    "error": str(exc),
+                })
+                break
+    phase_reprobe_blocks = 0
+
+    def remeasure_phase_chart(phase_target: np.ndarray) -> int:
+        """Re-identify the RGB local chart after a route-phase transition.
+
+        The initial chart is not transported across a waypoint/obstacle phase.
+        This intervention spends the same predeclared active-probe budget in
+        the new phase and uses only observed RGB successors.  It is deliberately
+        isolated to the phase-reset arm so the historical local-direct result
+        remains reproducible.
+        """
+
+        nonlocal current_rgb, center, context_images, context_proprios
+        nonlocal local_action_effect_model, phase_reprobe_blocks
+        local_action_effect_model = VerifiedLocalActionEffectModel()
+        probe_position = calibration.position(center)
+        probe_actions = active_probe_actions(
+            probe_position,
+            np.asarray(phase_target, dtype=np.float64),
+            directions=active_probe_directions,
+            magnitude=0.5,
+        )
+        executed = 0
+        for probe_index, probe_action in enumerate(probe_actions):
+            try:
+                previous_position = calibration.position(center)
+                previous_velocity = np.asarray(context_proprios[-1], dtype=np.float64)[2:4]
+                runtime.step_block(probe_action)
+                next_rgb = renderer.render(runtime.state)
+                next_center = green_center(next_rgb)
+                observed_position = calibration.position(next_center)
+                local_action_effect_model.update(
+                    probe_action,
+                    observed_position - previous_position,
+                )
+                delta = (next_center[0] - center[0], next_center[1] - center[1])
+                next_proprio = np.concatenate([
+                    calibration.position(next_center), calibration.velocity(delta),
+                ])
+                context_images = (context_images + [next_rgb])[-required_context_windows:]
+                context_proprios = (context_proprios + [next_proprio])[-required_context_windows:]
+                current_rgb = next_rgb
+                center = next_center
+                active_probe_trace.append({
+                    "phase_reprobe": True,
+                    "probe_index": int(probe_index),
+                    "action": probe_action.tolist(),
+                    "coordinate_frame": "goal_relative_runtime_chart",
+                    "probe_target": np.asarray(phase_target).tolist(),
+                    "observed_effect": (observed_position - previous_position).tolist(),
+                    "previous_velocity": previous_velocity.tolist(),
+                    "residual_trusted": bool(local_action_effect_model.trusted),
+                })
+                executed += 1
+            except ValueError as exc:
+                active_probe_trace.append({
+                    "phase_reprobe": True,
+                    "probe_index": int(probe_index),
+                    "action": probe_action.tolist(),
+                    "probe_target": np.asarray(phase_target).tolist(),
+                    "error": str(exc),
+                })
+                break
+        phase_reprobe_blocks += executed
+        return executed
+
+    planning_start_state = runtime.state.copy()
     trace = []
     detector_failures = 0
+    previous_waypoint: np.ndarray | None = None
     for block_index in range(max_blocks):
         try:
             action, decision = choose_action(
@@ -1262,25 +2600,171 @@ def run_episode(
                 wm_dynamics_tolerance, rng, projection_min_alpha, runtime=runtime,
                 oracle_depth=oracle_depth, oracle_beam_width=oracle_beam_width,
                 effect_policy=effect_policy,
+                local_effect_residual=local_effect_residual,
+                local_action_effect_model=local_action_effect_model,
                 effect_regret_tolerance=effect_regret_tolerance,
                 effect_visual_tolerance=effect_visual_tolerance,
+                gdd_adapter=gdd_adapter,
+                gdd_projection=gdd_projection,
+                gdd_goal_anchor=gdd_goal_anchor,
+                gdd_score_horizons=gdd_score_horizons,
+                gdd_candidate_count=gdd_candidate_count,
             )
         except ValueError as exc:
             detector_failures += 1
             trace.append({"block": block_index, "error": str(exc)})
             break
+        action_gate = decision.get("action_transfer_gate", {})
+        active_waypoint = decision.get("active_waypoint")
+        phase_changed = bool(
+            method in {
+                "gdd_wm_rgb_disagreement_verified_local",
+                "effect_adapter_rgb_online_local_phase",
+            }
+            and previous_waypoint is not None
+            and active_waypoint is not None
+            and not np.allclose(
+                np.asarray(active_waypoint, dtype=np.float64),
+                previous_waypoint,
+                atol=1.0e-8,
+                rtol=0.0,
+            )
+        )
+        if (
+            phase_changed
+            and method == "effect_adapter_rgb_online_local_phase"
+            and local_action_effect_model is not None
+        ):
+            # Re-identify, rather than transport, the local chart into a new
+            # route phase. This is the phase-reset intervention under test.
+            reprobe_count = remeasure_phase_chart(np.asarray(active_waypoint))
+            action, decision = choose_action(
+                method, model, readout, current_rgb, goal_rgb,
+                context_images, context_proprios, calibration, action_mean,
+                action_std, directions, magnitudes, dynamics, maze_map,
+                planner_map, kp, kv, wm_dynamics_tolerance, rng,
+                projection_min_alpha, runtime=runtime,
+                oracle_depth=oracle_depth, oracle_beam_width=oracle_beam_width,
+                effect_policy=effect_policy,
+                local_effect_residual=local_effect_residual,
+                local_action_effect_model=local_action_effect_model,
+                effect_regret_tolerance=effect_regret_tolerance,
+                effect_visual_tolerance=effect_visual_tolerance,
+                gdd_adapter=gdd_adapter, gdd_projection=gdd_projection,
+                gdd_goal_anchor=gdd_goal_anchor,
+                gdd_score_horizons=gdd_score_horizons,
+                gdd_candidate_count=gdd_candidate_count,
+            )
+            action_gate = decision.get("action_transfer_gate", {})
+            action_gate.update({
+                "route_phase_changed": True,
+                "phase_chart_reset": True,
+                "phase_reprobe_blocks": int(reprobe_count),
+            })
+            decision["selected_action"] = action.tolist()
+        elif phase_changed and local_action_effect_model is not None:
+            # A local chart identified before a waypoint transition is not
+            # assumed valid in the new route phase.  Quarantine it and use the
+            # same RGB-only visual fallback for this transition block.
+            local_action_effect_model.quarantined = True
+            fallback_action, fallback_decision = choose_action(
+                "visual_dynamics", model, readout, current_rgb, goal_rgb,
+                context_images, context_proprios, calibration, action_mean,
+                action_std, directions, magnitudes, dynamics, maze_map,
+                planner_map, kp, kv, wm_dynamics_tolerance, rng,
+                projection_min_alpha, runtime=runtime,
+                oracle_depth=oracle_depth, oracle_beam_width=oracle_beam_width,
+            )
+            action = fallback_action
+            action_gate.update({
+                "fallback_used": True,
+                "fallback_reason": "route_waypoint_changed_local_chart_quarantined",
+                "fallback_action_family": "visual_dynamics_fixed_bank",
+                "route_phase_changed": True,
+                "route_phase_fallback_selected_index": fallback_decision.get("selected_index"),
+            })
+            decision["selected_action"] = action.tolist()
+            decision["selected_index"] = fallback_decision.get("selected_index")
+        if active_waypoint is not None:
+            previous_waypoint = np.asarray(active_waypoint, dtype=np.float64).copy()
         runtime.step_block(action)
         next_rgb = renderer.render(runtime.state)
         try:
             next_center = green_center(next_rgb)
+            previous_position = calibration.position(center)
+            observed_position = calibration.position(next_center)
+            if local_effect_residual is not None:
+                gate = decision.get("action_transfer_gate", {})
+                selected_effect = gate.get("predicted_effect")
+                selected_is_effect = (
+                    gate.get("effect_selected_index") == decision.get("selected_index")
+                    and selected_effect is not None
+                )
+                if selected_is_effect:
+                    local_effect_residual.update_verified_execution(
+                        action,
+                        observed_position - previous_position,
+                        velocity=np.asarray(context_proprios[-1], dtype=np.float64)[2:4],
+                        predicted_effect=np.asarray(selected_effect, dtype=np.float64),
+                        verification_baseline_effect=dynamics.predict_position_delta(
+                            np.asarray(context_proprios[-1], dtype=np.float64)[2:4],
+                            np.zeros(2, dtype=np.float64),
+                        ),
+                    )
+                # Only a pulse actually selected from the frozen effect policy
+                # may update its residual model.  A visual-dynamics fallback
+                # has no frozen-effect prediction to subtract and must not
+                # contaminate the effect adapter with a full displacement.
+                gate["online_residual_trusted_after_observation"] = local_effect_residual.trusted
+            if (
+                local_action_effect_model is not None
+                    and not (
+                    method in {
+                        "gdd_wm_rgb_verified_local",
+                        "gdd_wm_rgb_disagreement_verified_local",
+                        "effect_adapter_rgb_online_local_direct",
+                        "effect_adapter_rgb_online_local_phase",
+                    }
+                    and bool(decision.get("action_transfer_gate", {}).get("fallback_used"))
+                )
+            ):
+                local_gate = decision.get("action_transfer_gate", {})
+                local_prediction = local_gate.get("predicted_effect")
+                local_is_released = (
+                    method in {
+                        "gdd_wm_rgb_disagreement_verified_local",
+                        "effect_adapter_rgb_online_local_direct",
+                        "effect_adapter_rgb_online_local_phase",
+                    }
+                    and not bool(local_gate.get("fallback_used"))
+                    and local_prediction is not None
+                )
+                local_execution_verified = True
+                if local_is_released:
+                    local_execution_verified = local_action_effect_model.verify_execution(
+                        np.asarray(local_prediction, dtype=np.float64),
+                        observed_position - previous_position,
+                    )
+                    local_gate["post_action_effect_verified"] = bool(local_execution_verified)
+                    local_gate["post_action_effect_residual"] = float(
+                        local_action_effect_model.verification_errors[-1]
+                    )
+                    local_gate["local_chart_quarantined"] = bool(
+                        local_action_effect_model.quarantined
+                    )
+                if local_execution_verified:
+                    local_action_effect_model.update(
+                        action,
+                        observed_position - previous_position,
+                    )
             delta = (next_center[0] - center[0], next_center[1] - center[1])
             next_proprio = np.concatenate([calibration.position(next_center), calibration.velocity(delta)])
             center = next_center
         except ValueError:
             detector_failures += 1
             next_proprio = context_proprios[-1].copy()
-        context_images = [context_images[-1], next_rgb]
-        context_proprios = [context_proprios[-1], next_proprio]
+        context_images = (context_images + [next_rgb])[-required_context_windows:]
+        context_proprios = (context_proprios + [next_proprio])[-required_context_windows:]
         current_rgb = next_rgb
         trace.append({
             "block": block_index,
@@ -1292,9 +2776,29 @@ def run_episode(
     final_distance = float(np.linalg.norm(runtime.state[:2] - GOAL_STATE))
     return {
         "episode_id": int(episode),
-        "method": method,
+        "method": requested_method,
+        "gdd_authorization_fallback": gdd_authorization_fallback,
         "initial_state_for_environment": reset_state.tolist(),
         "planning_start_state_for_evaluation": planning_start_state.tolist(),
+        "context_windows": int(required_context_windows),
+        "warmup_blocks": int(warmup_blocks),
+        # A skipped-probe diagnostic is intentionally present in the trace,
+        # but it is not an executed environment action and must not be charged
+        # to the information-action budget.
+        "active_probe_blocks": int(sum(
+            "probe_index" in item for item in active_probe_trace
+        )),
+        "phase_reprobe_blocks": int(phase_reprobe_blocks),
+        "probe_triggered": probe_triggered_flag,
+        "probe_disagreement_cosine": next(
+            (
+                float(item["proposal_cosine"])
+                for item in active_probe_trace
+                if "proposal_cosine" in item
+            ),
+            None,
+        ),
+        "active_probe_trace": active_probe_trace,
         "final_state_for_evaluation": runtime.state.tolist(),
         "initial_distance": float(np.linalg.norm(reset_state[:2] - GOAL_STATE)),
         "planning_start_distance": float(np.linalg.norm(planning_start_state[:2] - GOAL_STATE)),
@@ -1341,12 +2845,54 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for row in rows
         if row.get("renderer_initial_mean_abs_error") is not None
     ]
+    post_verification_rows = [
+        row for row in rows
+        if any(
+            "post_action_effect_verified" in trace.get("action_transfer_gate", {})
+            for trace in row.get("trace", [])
+        )
+    ]
+    post_verification_checks = [
+        trace.get("action_transfer_gate", {})
+        for row in rows
+        for trace in row.get("trace", [])
+        if "post_action_effect_verified" in trace.get("action_transfer_gate", {})
+    ]
+    phase_fallback_calls = sum(
+        bool(trace.get("action_transfer_gate", {}).get("route_phase_changed"))
+        for row in rows
+        for trace in row.get("trace", [])
+    )
     return {
         "episodes": len(rows),
         "success_rate": float(np.mean([row["success"] for row in rows])),
         "mean_final_distance": float(np.mean([row["final_distance"] for row in rows])),
         "mean_progress": float(np.mean([row["progress"] for row in rows])),
         "mean_probe_progress": float(np.mean([row["probe_progress"] for row in rows])),
+        "mean_active_probe_blocks": float(np.mean([row["active_probe_blocks"] for row in rows])),
+        "mean_phase_reprobe_blocks": float(np.mean([row.get("phase_reprobe_blocks", 0) for row in rows])),
+        "probe_trigger_rate": float(np.mean([
+            bool(row.get("probe_triggered")) for row in rows
+            if row.get("probe_triggered") is not None
+        ])) if any(row.get("probe_triggered") is not None for row in rows) else None,
+        "post_action_verification_rate": (
+            float(np.mean([
+                bool(item["post_action_effect_verified"])
+                for item in post_verification_checks
+            ]))
+            if post_verification_checks else None
+        ),
+        "chart_quarantine_rate": (
+            float(np.mean([
+                any(
+                    bool(trace.get("action_transfer_gate", {}).get("local_chart_quarantined"))
+                    for trace in row.get("trace", [])
+                )
+                for row in post_verification_rows
+            ]))
+            if post_verification_rows else None
+        ),
+        "route_phase_fallback_calls": int(phase_fallback_calls),
         "mean_planning_start_distance": float(np.mean([row["planning_start_distance"] for row in rows])),
         "mean_blocks": float(np.mean([row["blocks_executed"] for row in rows])),
         "detector_failure_rate": float(np.mean([row["detector_failures"] > 0 for row in rows])),
@@ -1382,18 +2928,101 @@ def select_gate_tolerance(candidates: list[dict[str, Any]]) -> float:
     return float(ordered[0]["tolerance"])
 
 
+def authorize_gdd_teacher(
+    teacher_rows: list[dict[str, Any]],
+    visual_rows: list[dict[str, Any]],
+    *,
+    minimum_release_rate: float = 0.0,
+) -> dict[str, Any]:
+    """Freeze a conservative, outcome-free-at-test GDD deployment decision.
+
+    Calibration outcomes are allowed here because these roots are explicitly
+    withheld from the final consequence.  Requiring both no success loss and
+    no final-distance degradation prevents a teacher from being authorized by
+    a single coarse binary metric while worsening continuous control quality.
+    """
+    if not teacher_rows or not visual_rows:
+        raise ValueError("GDD authorization requires non-empty calibration rows")
+    if not 0.0 <= float(minimum_release_rate) <= 1.0:
+        raise ValueError("minimum_release_rate must lie in [0, 1]")
+    teacher_success = float(np.mean([bool(row["success"]) for row in teacher_rows]))
+    visual_success = float(np.mean([bool(row["success"]) for row in visual_rows]))
+    teacher_distance = float(np.mean([float(row["final_distance"]) for row in teacher_rows]))
+    visual_distance = float(np.mean([float(row["final_distance"]) for row in visual_rows]))
+    release_rates: list[float] = []
+    for row in teacher_rows:
+        aggregate = row.get("aggregate")
+        if isinstance(aggregate, dict) and "gate_fallback_rate" in aggregate:
+            release_rates.append(1.0 - float(aggregate["gate_fallback_rate"]))
+            continue
+        trace = row.get("trace", [])
+        gates = [
+            item.get("action_transfer_gate", {})
+            for item in trace
+            if isinstance(item, dict) and isinstance(item.get("action_transfer_gate"), dict)
+        ]
+        if gates:
+            release_rates.append(float(np.mean([
+                not bool(gate.get("fallback_used", False)) for gate in gates
+            ])))
+    teacher_release_rate = float(np.mean(release_rates)) if release_rates else None
+    release_gate_passed = (
+        True if minimum_release_rate == 0.0 else bool(
+            teacher_release_rate is not None
+            and teacher_release_rate + 1.0e-12 >= float(minimum_release_rate)
+        )
+    )
+    authorized = bool(
+        teacher_success >= visual_success
+        and teacher_distance <= visual_distance + 1.0e-12
+        and release_gate_passed
+    )
+    return {
+        "authorized": authorized,
+        "rule": (
+            "teacher success >= visual success AND teacher final distance <= visual final distance"
+            " AND teacher release rate >= minimum_release_rate"
+        ),
+        "teacher_success_rate": teacher_success,
+        "visual_success_rate": visual_success,
+        "teacher_mean_final_distance": teacher_distance,
+        "visual_mean_final_distance": visual_distance,
+        "success_delta_teacher_minus_visual": teacher_success - visual_success,
+        "final_distance_delta_teacher_minus_visual": teacher_distance - visual_distance,
+        "minimum_release_rate": float(minimum_release_rate),
+        "teacher_release_rate": teacher_release_rate,
+        "release_rate_gate_passed": release_gate_passed,
+        "n_teacher": len(teacher_rows),
+        "n_visual": len(visual_rows),
+        "outcome_used_for_test_selection": False,
+    }
+
+
 def main() -> None:
     args = parse_args()
+    args.output = validate_output_path(args.output)
     if not 0.0 <= float(args.projection_min_alpha) <= 1.0:
         raise ValueError("projection-min-alpha must be in [0, 1]")
     if float(args.effect_regret_tolerance) < 0.0:
         raise ValueError("effect-regret-tolerance must be non-negative")
+    args.gdd_score_horizons = tuple(int(horizon) for horizon in args.gdd_score_horizons)
+    if not args.gdd_score_horizons or any(horizon not in HORIZONS for horizon in args.gdd_score_horizons):
+        raise ValueError(
+            f"gdd-score-horizons must be a non-empty subset of {HORIZONS}, "
+            f"got {args.gdd_score_horizons}"
+        )
+    max_candidate_count = 32 if "gdd_wm_rgb_support_matched_guarded" in args.methods else 16
+    if not 4 <= int(args.gdd_candidate_count) <= max_candidate_count:
+        raise ValueError(f"gdd-candidate-count must lie in [4, {max_candidate_count}]")
     device = require_cuda()
     dataset_root = args.dataset_root.resolve()
     calibration_episodes = parse_episode_list(args.calibration_episodes, "calibration episodes")
     test_episodes = parse_episode_list(args.test_episodes, "test episodes")
     gate_calibration_episodes = parse_episode_list(
         args.gate_calibration_episodes, "gate calibration episodes",
+    )
+    gdd_calibration_episodes = parse_episode_list(
+        args.gdd_calibration_episodes, "GDD calibration episodes",
     )
     if calibration_episodes is None:
         calibration_episodes = list(range(args.calibration_start, args.calibration_end))
@@ -1412,12 +3041,22 @@ def main() -> None:
         ) | (set(gate_calibration_episodes) & set(test_episodes))
         if gate_overlap:
             raise ValueError(f"gate calibration overlaps another split: {sorted(gate_overlap)}")
+    if gdd_calibration_episodes is not None:
+        gdd_overlap = (
+            set(gdd_calibration_episodes) & set(calibration_episodes)
+        ) | (set(gdd_calibration_episodes) & set(test_episodes))
+        if gate_calibration_episodes is not None:
+            gdd_overlap |= set(gdd_calibration_episodes) & set(gate_calibration_episodes)
+        if gdd_overlap:
+            raise ValueError(
+                f"GDD calibration overlaps another split: {sorted(gdd_overlap)}"
+            )
     for episode in calibration_episodes:
         _episode_path(dataset_root, episode)
     state_episode_count = int(torch.load(
         dataset_root / "states.pth", map_location="cpu", weights_only=True
     ).shape[0])
-    for episode in test_episodes + (gate_calibration_episodes or []):
+    for episode in test_episodes + (gate_calibration_episodes or []) + (gdd_calibration_episodes or []):
         if episode < 0 or episode >= state_episode_count:
             raise ValueError(f"episode {episode} is outside the recorded state dataset")
         if args.test_visual_source == "stored_episode":
@@ -1447,7 +3086,8 @@ def main() -> None:
     )
     effect_methods = {
         "effect_adapter_rgb", "effect_adapter_rgb_htsc",
-        "effect_adapter_rgb_htsc_consistency",
+        "effect_adapter_rgb_htsc_consistency", "effect_adapter_rgb_online",
+        "effect_adapter_rgb_online_htsc", "effect_adapter_rgb_online_probe",
     }
     requested_effect_methods = effect_methods & set(args.methods)
     if requested_effect_methods and args.effect_policy_checkpoint is None:
@@ -1460,6 +3100,39 @@ def main() -> None:
         effect_policy = OnlineEffectPolicy.load(
             args.effect_policy_checkpoint.resolve(), device,
         )
+    gdd_adapter: tuple[Any, dict[str, Any]] | None = None
+    gdd_projection: np.ndarray | None = None
+    gdd_goal_anchor: np.ndarray | None = None
+    gdd_projection_methods = {
+        "gdd_wm_rgb", "gdd_wm_rgb_guarded", "gdd_wm_rgb_verified_local",
+        "gdd_wm_rgb_disagreement_verified_local", "gdd_wm_rgb_projected_guarded",
+        "gdd_wm_rgb_waypoint",
+        "gdd_wm_rgb_waypoint_guarded",
+        "gdd_wm_rgb_support_preserving_guarded",
+        "gdd_wm_rgb_support_matched_guarded",
+    }
+    runtime_task_effect_methods = {"gdd_runtime_task_effect_rgb"}
+    if gdd_projection_methods & set(args.methods):
+        if not (args.gdd_adapter_checkpoint and args.gdd_projection and args.gdd_feature_table):
+            raise ValueError("GDD projection methods require --gdd-adapter-checkpoint, --gdd-projection, and --gdd-feature-table")
+    if runtime_task_effect_methods & set(args.methods) and args.gdd_adapter_checkpoint is None:
+        raise ValueError("gdd_runtime_task_effect_rgb requires --gdd-adapter-checkpoint")
+    if (gdd_projection_methods | runtime_task_effect_methods) & set(args.methods):
+        from experiments.empirical_spectral_audit.evaluate_pointmaze_adapter_external_evidence import _load_adapter
+        gdd_adapter = _load_adapter(args.gdd_adapter_checkpoint.resolve(), str(device))
+        if gdd_projection_methods & set(args.methods):
+            projection_payload = json.loads(args.gdd_projection.read_text(encoding="utf-8"))
+            gdd_projection = np.asarray(projection_payload["projection"], dtype=np.float64)
+            with np.load(args.gdd_feature_table, allow_pickle=False) as table:
+                goal_features = np.asarray(table["goal_features"], dtype=np.float64)
+            if goal_features.ndim != 2 or len(goal_features) == 0:
+                raise ValueError("GDD feature table has no goal anchor")
+            gdd_goal_anchor = goal_features[0]
+            if gdd_projection.ndim != 2 or gdd_projection.shape[1] != len(gdd_goal_anchor):
+                raise ValueError("GDD projection and goal anchor dimensions disagree")
+            print("[PointMaze live] loaded frozen GDD projection student; runtime teacher/rank inputs disabled")
+        else:
+            print("[PointMaze live] loaded frozen runtime task-effect adapter; teacher/rank inputs disabled")
     selected_tolerance = float(args.wm_dynamics_tolerance)
     gate_calibration_report: dict[str, Any] | None = None
     if gate_calibration_episodes is not None:
@@ -1480,6 +3153,12 @@ def main() -> None:
                 effect_policy=effect_policy,
                 effect_regret_tolerance=args.effect_regret_tolerance,
                 effect_visual_tolerance=args.effect_visual_tolerance,
+                gdd_adapter=gdd_adapter,
+                gdd_projection=gdd_projection,
+                gdd_goal_anchor=gdd_goal_anchor,
+                gdd_score_horizons=args.gdd_score_horizons,
+                gdd_candidate_count=args.gdd_candidate_count,
+                active_probe_directions=args.active_probe_directions,
             ) for index, episode in enumerate(gate_calibration_episodes)]
             tolerance_candidates.append({
                 "tolerance": float(tolerance),
@@ -1494,6 +3173,93 @@ def main() -> None:
             "candidates": tolerance_candidates,
         }
         print(f"[PointMaze live] selected gate tolerance={selected_tolerance:.2f}")
+    gdd_authorization: dict[str, bool] = {
+        method: True for method in args.methods
+    }
+    gdd_authorization_report: dict[str, Any] | None = None
+    requested_gdd_methods = sorted(
+        set(args.methods) & {
+            "gdd_wm_rgb", "gdd_wm_rgb_guarded", "gdd_wm_rgb_verified_local",
+            "gdd_wm_rgb_disagreement_verified_local", "gdd_wm_rgb_projected_guarded",
+            "gdd_wm_rgb_waypoint",
+            "gdd_wm_rgb_waypoint_guarded",
+            "gdd_wm_rgb_support_preserving_guarded",
+            "gdd_wm_rgb_support_matched_guarded",
+            "gdd_runtime_task_effect_rgb",
+        }
+    )
+    if gdd_calibration_episodes is not None and requested_gdd_methods:
+        teacher_method = requested_gdd_methods[0]
+        print(
+            "[PointMaze live] authorizing GDD teacher on "
+            f"{len(gdd_calibration_episodes)} disjoint calibration-only roots "
+            f"using method={teacher_method}"
+        )
+        teacher_rows = [run_episode(
+            teacher_method, episode, dataset_root, calibration, model, readout,
+            action_mean, action_std, dynamics, maze_map, args.planner_map,
+            args.directions, args.magnitudes, args.probe_blocks, args.kp, args.kv,
+            selected_tolerance, args.max_blocks, args.success_radius,
+            args.seed + 200000 + index, args.projection_min_alpha,
+            args.oracle_depth, args.oracle_beam_width,
+            fixed_renderer=test_renderer,
+            effect_policy=effect_policy,
+            effect_regret_tolerance=args.effect_regret_tolerance,
+            effect_visual_tolerance=args.effect_visual_tolerance,
+            gdd_adapter=gdd_adapter,
+            gdd_projection=gdd_projection,
+            gdd_goal_anchor=gdd_goal_anchor,
+            gdd_disagreement_cosine_threshold=args.gdd_disagreement_cosine_threshold,
+            gdd_score_horizons=args.gdd_score_horizons,
+            gdd_candidate_count=args.gdd_candidate_count,
+            active_probe_directions=args.active_probe_directions,
+        ) for index, episode in enumerate(gdd_calibration_episodes)]
+        visual_rows = [run_episode(
+            "visual_dynamics", episode, dataset_root, calibration, model, readout,
+            action_mean, action_std, dynamics, maze_map, args.planner_map,
+            args.directions, args.magnitudes, args.probe_blocks, args.kp, args.kv,
+            selected_tolerance, args.max_blocks, args.success_radius,
+            args.seed + 200000 + index, args.projection_min_alpha,
+            args.oracle_depth, args.oracle_beam_width,
+            fixed_renderer=test_renderer,
+            effect_policy=effect_policy,
+            effect_regret_tolerance=args.effect_regret_tolerance,
+            effect_visual_tolerance=args.effect_visual_tolerance,
+            gdd_adapter=gdd_adapter,
+            gdd_projection=gdd_projection,
+            gdd_goal_anchor=gdd_goal_anchor,
+            gdd_disagreement_cosine_threshold=args.gdd_disagreement_cosine_threshold,
+            gdd_score_horizons=args.gdd_score_horizons,
+            gdd_candidate_count=args.gdd_candidate_count,
+            active_probe_directions=args.active_probe_directions,
+        ) for index, episode in enumerate(gdd_calibration_episodes)]
+        minimum_release_rate = (
+            GDD_SUPPORT_PRESERVING_MIN_RELEASE_RATE
+            if teacher_method in {
+                "gdd_wm_rgb_support_preserving_guarded",
+                "gdd_wm_rgb_support_matched_guarded",
+            }
+            else 0.0
+        )
+        decision = authorize_gdd_teacher(
+            teacher_rows,
+            visual_rows,
+            minimum_release_rate=minimum_release_rate,
+        )
+        for method in requested_gdd_methods:
+            gdd_authorization[method] = bool(decision["authorized"])
+        gdd_authorization_report = {
+            "episodes": list(gdd_calibration_episodes),
+            "teacher_method": teacher_method,
+            "decision": decision,
+            "teacher_aggregate": _aggregate(teacher_rows),
+            "visual_aggregate": _aggregate(visual_rows),
+            "applied_to_methods": requested_gdd_methods,
+        }
+        print(
+            "[PointMaze live] GDD authorization="
+            f"{decision['authorized']} (fail-closed on rejection)"
+        )
     methods = tuple(args.methods)
     rows: list[dict[str, Any]] = []
     for method in methods:
@@ -1510,6 +3276,14 @@ def main() -> None:
                 effect_policy=effect_policy,
                 effect_regret_tolerance=args.effect_regret_tolerance,
                 effect_visual_tolerance=args.effect_visual_tolerance,
+                gdd_adapter=gdd_adapter,
+                gdd_projection=gdd_projection,
+                gdd_goal_anchor=gdd_goal_anchor,
+                gdd_disagreement_cosine_threshold=args.gdd_disagreement_cosine_threshold,
+                gdd_score_horizons=args.gdd_score_horizons,
+                gdd_candidate_count=args.gdd_candidate_count,
+                active_probe_directions=args.active_probe_directions,
+                gdd_authorized=gdd_authorization.get(method, True),
             ))
     aggregates = {method: _aggregate([row for row in rows if row["method"] == method]) for method in methods}
     privileged_methods = [method for method in methods if method in PRIVILEGED_METHODS]
@@ -1522,6 +3296,7 @@ def main() -> None:
             "device": str(device),
             "calibration_episodes": calibration_episodes,
             "test_episodes": test_episodes,
+            "gdd_calibration_episodes": gdd_calibration_episodes,
             "episode_selection": (
                 "explicit_episode_lists"
                 if args.calibration_episodes or args.test_episodes
@@ -1534,16 +3309,28 @@ def main() -> None:
                 "blocks_per_prediction": max(HORIZONS),
                 "executed_blocks_before_reobservation": 1,
                 "rgb_velocity_probe_blocks": args.probe_blocks,
+                "active_probe_directions": int(args.active_probe_directions),
                 "planner_map": args.planner_map,
                 "kp": args.kp,
                 "kv": args.kv,
                 "wm_dynamics_tolerance": args.wm_dynamics_tolerance,
                 "selected_wm_dynamics_tolerance": selected_tolerance,
                 "projection_min_alpha": args.projection_min_alpha,
+                "gdd_disagreement_cosine_threshold": args.gdd_disagreement_cosine_threshold,
+                "gdd_score_horizons": list(args.gdd_score_horizons),
+                "gdd_candidate_count": int(args.gdd_candidate_count),
                 "oracle_depth": args.oracle_depth,
                 "oracle_beam_width": args.oracle_beam_width,
             },
             "methods": list(methods),
+            "gdd_student": {
+                "adapter_checkpoint": None if args.gdd_adapter_checkpoint is None else str(args.gdd_adapter_checkpoint.resolve()),
+                "projection": None if args.gdd_projection is None else str(args.gdd_projection.resolve()),
+                "feature_table": None if args.gdd_feature_table is None else str(args.gdd_feature_table.resolve()),
+                "runtime_teacher_forbidden": True,
+                "candidate_id_input_forbidden": True,
+                "teacher_rank_input_forbidden": True,
+            },
             "privileged_methods": privileged_methods,
             "runtime_state_access": bool(privileged_methods),
             "goal_state_for_environment_only": GOAL_STATE.tolist(),
@@ -1562,6 +3349,7 @@ def main() -> None:
                 "not provide coverage for the state-conditioned repeated-pulse bank"
             ),
             "gate_calibration": gate_calibration_report,
+            "gdd_calibration_authorization": gdd_authorization_report,
         },
         "calibration": {
             "episodes": list(calibration.calibration_episodes),

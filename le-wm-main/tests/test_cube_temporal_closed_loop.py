@@ -6,6 +6,7 @@ from experiments.run_cube_temporal_closed_loop import (
     _robust_rank_score,
     _rgb_block_goal_error,
     _support_exploration_action,
+    _verified_rgb_action,
 )
 
 
@@ -45,3 +46,38 @@ def test_rank_consensus_is_scale_invariant_and_finite():
     score = _rank_consensus_score(torch.from_numpy(latent), torch.from_numpy(rgb))
     np.testing.assert_allclose(score.numpy(), 2.0 * _robust_rank_score(torch.from_numpy(latent)).numpy())
     assert np.isfinite(score.numpy()).all()
+
+
+def test_verified_rgb_effect_fails_closed_until_rank_two_redundant_support():
+    candidates = np.asarray([
+        [0, 0, 0, 0, 0], [1, 0, 0, 0, 0], [-1, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0], [0, -1, 0, 0, 0],
+    ], dtype=np.float32)
+    action, diagnostics = _verified_rgb_action(
+        [np.asarray([1.0, 0.0])] * 3,
+        [np.asarray([1.0, 0.0])] * 3,
+        np.asarray([1.0, 0.0]), candidates,
+    )
+    assert action is None
+    assert diagnostics["status"] == "insufficient_support"
+
+
+def test_verified_rgb_effect_selects_observed_goal_improving_direction():
+    candidates = np.asarray([
+        [0, 0, 0, 0, 0], [1, 0, 0, 0, 0], [-1, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0], [0, -1, 0, 0, 0],
+    ], dtype=np.float32)
+    actions = [
+        np.asarray([1.0, 0.0]), np.asarray([-1.0, 0.0]),
+        np.asarray([0.0, 1.0]), np.asarray([0.0, -1.0]),
+    ]
+    deltas = [
+        np.asarray([0.2, 0.0]), np.asarray([-0.2, 0.0]),
+        np.asarray([0.0, 0.1]), np.asarray([0.0, -0.1]),
+    ]
+    action, diagnostics = _verified_rgb_action(
+        actions, deltas, np.asarray([1.0, 0.0]), candidates,
+    )
+    np.testing.assert_allclose(action, candidates[1])
+    assert diagnostics["status"] == "ok"
+    assert diagnostics["rank"] == 2

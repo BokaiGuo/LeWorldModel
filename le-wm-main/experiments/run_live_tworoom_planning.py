@@ -33,6 +33,7 @@ from experiments.checkpoint_compat import load_compatible_pretrained
 from experiments.capacity_readout_runtime import (
     CapacityReadoutCostModel,
     IndexedCanonicalReadoutCostModel,
+    apply_capacity_bilinear_mode,
     capacity_action_summary as _capacity_action_summary,
     load_capacity_readout,
     load_indexed_canonical_readout,
@@ -95,6 +96,34 @@ def _rgb_reactive_action(current: np.ndarray, goal: np.ndarray) -> tuple[np.ndar
     return (delta / norm).astype(np.float32), phase
 
 
+def _effect_policy_action(
+    reactive: np.ndarray, effect_map: np.ndarray,
+) -> np.ndarray | None:
+    """Invert a verified local RGB effect map into a bounded task action.
+
+    ``effect_map`` follows the row convention ``action @ map = observed RGB
+    displacement``.  The inverse is used only after the caller has passed the
+    support/conditioning/residual gate; this helper itself remains a pure
+    numerical operation and fails closed on singular or non-progressing maps.
+    """
+    desired = np.asarray(reactive, dtype=np.float64).reshape(-1)
+    mapping = np.asarray(effect_map, dtype=np.float64)
+    if desired.shape != (2,) or mapping.shape != (2, 2):
+        return None
+    if not np.isfinite(desired).all() or not np.isfinite(mapping).all():
+        return None
+    action = desired @ np.linalg.pinv(mapping)
+    if not np.isfinite(action).all():
+        return None
+    norm = float(np.linalg.norm(action))
+    if norm > 1.0:
+        action = action / norm
+    predicted = action @ mapping
+    if not np.isfinite(predicted).all() or float(np.dot(predicted, desired)) <= 0.0:
+        return None
+    return action.astype(np.float32)
+
+
 class RGBReactivePolicy:
     """Raw-RGB reactive baseline with the same World evaluation interface."""
 
@@ -118,6 +147,94 @@ class RGBReactivePolicy:
         return actions
 
 
+class LocalEffectRankedCostModel:
+    """Use a verified local RGB effect chart to rank supported candidates."""
+
+    def __init__(self, base_model, action_mean, action_std, blend_weight: float):
+        if not 0.0 <= float(blend_weight) <= 1.0:
+            raise ValueError("local effect blend weight must be in [0, 1]")
+        self.base_model = base_model
+        self.action_mean = torch.as_tensor(action_mean, dtype=torch.float32)
+        self.action_std = torch.as_tensor(action_std, dtype=torch.float32)
+        self.blend_weight = float(blend_weight)
+        self.local_rank_rows = 0
+        self.local_rank_decisions = 0
+        self.local_rank_argmin_changes = 0
+
+    @staticmethod
+    def _rank_affine(local_cost, base_cost, support):
+        count = support.sum(dim=1, keepdim=True)
+        safe = count.to(base_cost).clamp_min(1.0)
+        local_mean = (local_cost * support).sum(dim=1, keepdim=True) / safe
+        base_mean = (base_cost * support).sum(dim=1, keepdim=True) / safe
+        local_var = (((local_cost - local_mean) * support).square()).sum(
+            dim=1, keepdim=True,
+        ) / safe
+        base_var = (((base_cost - base_mean) * support).square()).sum(
+            dim=1, keepdim=True,
+        ) / safe
+        mapped = base_mean + (local_cost - local_mean) * (
+            base_var.sqrt() / local_var.sqrt().clamp_min(1.0e-6)
+        )
+        return torch.where(count >= 2, mapped, base_cost)
+
+    def get_cost(self, info_dict, action_candidates):
+        base_cost = self.base_model.get_cost(info_dict, action_candidates)
+        local_map = info_dict.get("_local_effect_map")
+        local_target = info_dict.get("_local_effect_target")
+        local_valid = info_dict.get("_local_effect_valid")
+        bank_mask = info_dict.get("_candidate_bank_mask")
+        if local_map is None or local_target is None or local_valid is None or bank_mask is None:
+            return base_cost
+        device = action_candidates.device
+        local_map = torch.as_tensor(local_map, device=device, dtype=action_candidates.dtype)
+        local_target = torch.as_tensor(local_target, device=device, dtype=action_candidates.dtype)
+        local_valid = torch.as_tensor(local_valid, device=device, dtype=torch.bool)
+        bank_mask = torch.as_tensor(bank_mask, device=device, dtype=torch.bool)
+        if local_map.ndim != 4 or local_target.ndim != 3 or local_valid.ndim != 2:
+            raise ValueError("local effect context has invalid rank")
+        support = local_valid & bank_mask
+        if not bool(support.any()):
+            return base_cost
+        raw = action_candidates * self.action_std.to(device) + self.action_mean.to(device)
+        first_action = raw[:, :, 0, :2]
+        predicted_effect = torch.einsum("bni,bnij->bnj", first_action, local_map)
+        target_direction = local_target / local_target.norm(
+            dim=-1, keepdim=True,
+        ).clamp_min(1.0e-6)
+        local_cost = -torch.sum(predicted_effect * target_direction, dim=-1)
+        mapped = self._rank_affine(local_cost, base_cost, support)
+        self.local_rank_rows += int(support.any(dim=1).sum().item())
+        blended = (
+            (1.0 - self.blend_weight) * base_cost
+            + self.blend_weight * mapped
+        )
+        result = torch.where(support, blended, base_cost)
+        active_rows = support.any(dim=1)
+        base_argmin = torch.argmin(base_cost, dim=1)
+        result_argmin = torch.argmin(result, dim=1)
+        self.local_rank_decisions += int(active_rows.sum().item())
+        self.local_rank_argmin_changes += int(
+            ((base_argmin != result_argmin) & active_rows).sum().item()
+        )
+        return result
+
+    def runtime_diagnostics(self):
+        base = getattr(self.base_model, "runtime_diagnostics", None)
+        diagnostics = dict(base() if callable(base) else {})
+        diagnostics.update({
+            "local_effect_ranker_enabled": True,
+            "local_effect_ranker_blend_weight": self.blend_weight,
+            "local_effect_ranker_rows": int(self.local_rank_rows),
+            "local_effect_ranker_decisions": int(self.local_rank_decisions),
+            "local_effect_ranker_argmin_changes": int(self.local_rank_argmin_changes),
+            "local_effect_ranker_argmin_change_rate": float(
+                self.local_rank_argmin_changes / max(self.local_rank_decisions, 1)
+            ),
+        })
+        return diagnostics
+
+
 class RiskGatedRGBPolicy:
     """Use frozen LeWM, but veto strongly conflicting actions with RGB evidence.
 
@@ -130,11 +247,21 @@ class RiskGatedRGBPolicy:
 
     def __init__(self, base_policy, conflict_cos: float = 0.0,
                  model_min_norm: float = 0.08,
-                 use_effect_map: bool = False):
+                 use_effect_map: bool = False,
+                 use_effect_policy: bool = False,
+                 effect_map_intercept: bool = False,
+                 door_phase_reactive: bool = False,
+                 phase_transition_fallback: bool = False,
+                 use_local_effect_ranker: bool = False):
         self.base_policy = base_policy
         self.conflict_cos = float(conflict_cos)
         self.model_min_norm = float(model_min_norm)
         self.use_effect_map = bool(use_effect_map)
+        self.use_effect_policy = bool(use_effect_policy)
+        self.effect_map_intercept = bool(effect_map_intercept)
+        self.door_phase_reactive = bool(door_phase_reactive)
+        self.phase_transition_fallback = bool(phase_transition_fallback)
+        self.use_local_effect_ranker = bool(use_local_effect_ranker)
         self.env = None
         self.gate_calls = 0
         self.fallback_count = 0
@@ -147,6 +274,10 @@ class RiskGatedRGBPolicy:
         self.previous_frames: list[np.ndarray | None] = []
         self.previous_actions: list[np.ndarray | None] = []
         self.previous_phases: list[str | None] = []
+        self.effect_policy_count = 0
+        self.effect_policy_fallback_count = 0
+        self.effect_policy_validation_fallback_count = 0
+        self.effect_policy_phase_block_count = 0
         self.gate_calls_by_env: list[int] = []
         self.fallback_counts_by_env: list[int] = []
         self.phase_counts_by_env: list[dict[str, int]] = []
@@ -170,6 +301,37 @@ class RiskGatedRGBPolicy:
             {"door": 0, "goal": 0} for _ in range(int(env.num_envs))
         ]
         self.previous_phases = [None for _ in range(int(env.num_envs))]
+        self.effect_policy_count = 0
+        self.effect_policy_fallback_count = 0
+        self.effect_policy_validation_fallback_count = 0
+        self.effect_policy_phase_block_count = 0
+
+    def runtime_diagnostics(self):
+        """Expose wrapped solver diagnostics without changing action selection.
+
+        Hybrid runs used to export ``null`` here, which made it impossible to
+        verify whether a local ranker actually scored any supported bank rows.
+        Keep this method diagnostic-only and namespace the wrapper counters so
+        the frozen planner's own counters remain distinguishable.
+        """
+        base = getattr(self.base_policy, "solver", None)
+        model = getattr(base, "model", None)
+        diagnostics_fn = getattr(model, "runtime_diagnostics", None)
+        diagnostics = dict(diagnostics_fn() if callable(diagnostics_fn) else {})
+        diagnostics.update({
+            "hybrid_gate_calls": int(self.gate_calls),
+            "hybrid_fallback_count": int(self.fallback_count),
+            "hybrid_fallback_rate": float(
+                self.fallback_count / max(self.gate_calls, 1)
+            ),
+            "hybrid_local_effect_ranker_enabled": bool(
+                self.use_local_effect_ranker
+            ),
+            "hybrid_effect_policy_phase_block_count": int(
+                self.effect_policy_phase_block_count
+            ),
+        })
+        return diagnostics
 
     def _effect_histories(
         self, env_index: int, phase: str | None = None,
@@ -194,7 +356,12 @@ class RiskGatedRGBPolicy:
         rank = int(np.linalg.matrix_rank(actions))
         if rank < 2 or not np.isfinite(actions).all() or not np.isfinite(deltas).all():
             return None, rank
-        mapping, _, _, _ = np.linalg.lstsq(actions, deltas, rcond=1.0e-6)
+        design = (
+            np.column_stack([actions, np.ones(len(actions))])
+            if self.effect_map_intercept else actions
+        )
+        mapping, _, _, _ = np.linalg.lstsq(design, deltas, rcond=1.0e-6)
+        mapping = mapping[:2]
         return mapping.astype(np.float32) if np.isfinite(mapping).all() else None, rank
 
     def _effect_map_quality(
@@ -207,6 +374,8 @@ class RiskGatedRGBPolicy:
             "rank": 0,
             "condition_number": None,
             "normalized_residual": None,
+            "heldout_normalized_residual": None,
+            "heldout_usable": False,
             "usable": False,
             "reason": "insufficient_rows",
         }
@@ -223,8 +392,13 @@ class RiskGatedRGBPolicy:
             diagnostics["reason"] = "rank_or_finite_support_failed"
             return diagnostics
         condition = float(np.linalg.cond(actions))
-        mapping, _, _, _ = np.linalg.lstsq(actions, deltas, rcond=1.0e-6)
-        residual = actions @ mapping - deltas
+        design = (
+            np.column_stack([actions, np.ones(len(actions))])
+            if self.effect_map_intercept else actions
+        )
+        mapping_full, _, _, _ = np.linalg.lstsq(design, deltas, rcond=1.0e-6)
+        mapping = mapping_full[:2]
+        residual = design @ mapping_full - deltas
         normalized_residual = float(
             np.linalg.norm(residual) / max(np.linalg.norm(deltas), 1.0e-6)
         )
@@ -236,12 +410,78 @@ class RiskGatedRGBPolicy:
         if not np.isfinite(normalized_residual) or normalized_residual > 0.75:
             diagnostics["reason"] = "effect_map_residual_too_large"
             return diagnostics
+        # A clean in-sample fit does not certify the next pulse. Reserve the
+        # latest two observations as an outcome-free rolling verification set.
+        if len(actions_history) < 8:
+            diagnostics["reason"] = "insufficient_holdout_rows"
+            diagnostics["usable"] = True
+            return diagnostics
+        train_actions = actions[:-2]
+        train_deltas = deltas[:-2]
+        heldout_actions = actions[-2:]
+        heldout_deltas = deltas[-2:]
+        if int(np.linalg.matrix_rank(train_actions)) < 2:
+            diagnostics["reason"] = "heldout_train_support_failed"
+            diagnostics["usable"] = True
+            return diagnostics
+        train_design = (
+            np.column_stack([train_actions, np.ones(len(train_actions))])
+            if self.effect_map_intercept else train_actions
+        )
+        heldout_mapping, _, _, _ = np.linalg.lstsq(
+            train_design, train_deltas, rcond=1.0e-6,
+        )
+        heldout_design = (
+            np.column_stack([heldout_actions, np.ones(len(heldout_actions))])
+            if self.effect_map_intercept else heldout_actions
+        )
+        heldout_residual = heldout_design @ heldout_mapping - heldout_deltas
+        heldout_normalized = float(
+            np.linalg.norm(heldout_residual)
+            / max(np.linalg.norm(heldout_deltas), 1.0e-6)
+        )
+        diagnostics["heldout_normalized_residual"] = heldout_normalized
+        if not np.isfinite(heldout_normalized) or heldout_normalized > 0.75:
+            diagnostics["reason"] = "heldout_effect_verification_failed"
+            diagnostics["usable"] = True
+            return diagnostics
         diagnostics["usable"] = True
+        diagnostics["heldout_usable"] = True
         diagnostics["reason"] = "support_and_fit_quality_passed"
         return diagnostics
 
     def get_action(self, info_dict: dict, **kwargs) -> np.ndarray:
-        model_actions = np.asarray(self.base_policy.get_action(info_dict, **kwargs), dtype=np.float32)
+        planner_info = dict(info_dict)
+        if self.use_local_effect_ranker:
+            n_envs = len(np.asarray(info_dict["pixels"]))
+            effect_maps = np.zeros((n_envs, 2, 2), dtype=np.float32)
+            effect_targets = np.zeros((n_envs, 2), dtype=np.float32)
+            effect_valid = np.zeros(n_envs, dtype=bool)
+            terminated_now = np.asarray(
+                info_dict.get("terminated", np.zeros(n_envs, dtype=bool)),
+                dtype=bool,
+            ).reshape(-1)
+            for index in range(n_envs):
+                if terminated_now[index]:
+                    continue
+                target, phase = _rgb_reactive_action(
+                    _raw_frame(info_dict["pixels"], index),
+                    _raw_frame(info_dict["goal"], index),
+                )
+                if self.door_phase_reactive and phase == "door":
+                    continue
+                local_map, _ = self._effect_map(index, phase)
+                quality = self._effect_map_quality(index, phase)
+                if local_map is not None and quality.get("heldout_usable", False):
+                    effect_maps[index] = local_map
+                    effect_targets[index] = target
+                    effect_valid[index] = True
+            planner_info["_local_effect_map"] = effect_maps
+            planner_info["_local_effect_target"] = effect_targets
+            planner_info["_local_effect_valid"] = effect_valid
+        model_actions = np.asarray(
+            self.base_policy.get_action(planner_info, **kwargs), dtype=np.float32,
+        )
         if model_actions.ndim == 1:
             model_actions = model_actions[None, :]
         output = model_actions.copy()
@@ -286,9 +526,39 @@ class RiskGatedRGBPolicy:
             reactive_norm = float(np.linalg.norm(reactive))
             cosine = float(np.dot(model_xy, reactive) / max(model_norm * reactive_norm, 1.0e-8))
             fallback = model_norm < self.model_min_norm or cosine < self.conflict_cos
+            previous_phase = self.previous_phases[index]
+            if (
+                self.phase_transition_fallback
+                and previous_phase is not None
+                and previous_phase != phase
+            ):
+                # Protect the first block after a visual phase transition,
+                # while retaining the learned/effect-policy action in a stable
+                # phase.  This is weaker than disabling the entire door phase.
+                fallback = True
+            if self.door_phase_reactive and phase == "door":
+                # TwoRoom has a hybrid task: crossing the door is a distinct
+                # waypoint phase.  A frozen terminal-cost ranker is not
+                # authorized to override the RGB waypoint controller there;
+                # this is a predeclared phase-conditioned fail-closed arm.
+                fallback = True
+                # This phase gate must dominate the later local-effect repair
+                # branch.  Previously ``fallback=True`` was interpreted by
+                # that branch as permission to replace the model action with
+                # an inverse local map, silently undoing the declared
+                # door-phase fail-closed policy.
+                self.effect_policy_phase_block_count += 1
             effect_map, effect_rank = self._effect_map(index, phase)
             effect_quality = self._effect_map_quality(index, phase)
-            if self.use_effect_map and effect_map is not None and effect_quality["usable"]:
+            phase_effect_release_allowed = not (
+                self.door_phase_reactive and phase == "door"
+            )
+            if (
+                phase_effect_release_allowed
+                and (self.use_effect_map or self.use_effect_policy)
+                and effect_map is not None
+                and effect_quality["usable"]
+            ):
                 predicted_effect = model_xy @ effect_map
                 # The reactive vector is the desired local image-space
                 # direction.  Reject a model action whose observed local
@@ -296,6 +566,36 @@ class RiskGatedRGBPolicy:
                 # action direction appears plausible.
                 if float(np.dot(predicted_effect, reactive)) <= 0.0:
                     fallback = True
+                if self.use_effect_policy:
+                    phase_actions, phase_deltas = self._effect_histories(index, phase)
+                    validated_map = effect_map
+                    if len(phase_actions) >= 8:
+                        train_actions = np.asarray(phase_actions[:-2], dtype=np.float64)
+                        train_deltas = np.asarray(phase_deltas[:-2], dtype=np.float64)
+                        train_design = (
+                            np.column_stack([train_actions, np.ones(len(train_actions))])
+                            if self.effect_map_intercept else train_actions
+                        )
+                        validated_map, _, _, _ = np.linalg.lstsq(
+                            train_design, train_deltas, rcond=1.0e-6,
+                        )
+                        validated_map = validated_map[:2]
+                    effect_action = _effect_policy_action(reactive, validated_map)
+                    if effect_action is None:
+                        self.effect_policy_fallback_count += 1
+                        fallback = True
+                    elif not effect_quality["heldout_usable"]:
+                        self.effect_policy_validation_fallback_count += 1
+                        fallback = True
+                    elif fallback:
+                        # The local map is a repair arm, not a replacement for
+                        # the long-horizon planner. Preserve a model action
+                        # that already passes the RGB conflict gate; only use
+                        # the verified inverse when the model action was
+                        # independently rejected.
+                        output[index, :2] = effect_action
+                        self.effect_policy_count += 1
+                        fallback = False
             self.cosines.append(cosine)
             self.phases.append(phase)
             self.phase_counts_by_env[index][phase] += 1
@@ -437,6 +737,24 @@ class CandidateBankCEMSolver(swm.solver.CEMSolver):
                 elif isinstance(value_batch, np.ndarray):
                     value_batch = np.repeat(value_batch[:, None, ...], self.num_samples, axis=1)
                 expanded_infos[key] = value_batch
+            # Phase-conditioned readouts receive only an RGB-derived phase
+            # label.  The label is recomputed from current/goal pixels and is
+            # expanded across candidates; no simulator state enters the cost.
+            if "pixels" in info_dict and "goal" in info_dict:
+                phase = _task_phase_from_rgb(
+                    info_dict["pixels"][start_idx:end_idx],
+                    info_dict["goal"][start_idx:end_idx],
+                )
+                expanded_infos["_task_phase"] = phase[:, None].expand(
+                    current_bs, self.num_samples,
+                )
+                waypoint_direction = _task_waypoint_direction_from_rgb(
+                    info_dict["pixels"][start_idx:end_idx],
+                    info_dict["goal"][start_idx:end_idx],
+                )
+                expanded_infos["_task_waypoint_direction"] = waypoint_direction[:, None, :].expand(
+                    current_bs, self.num_samples, 2,
+                )
 
             final_cost = None
             final_candidates = None
@@ -968,6 +1286,39 @@ def _vision_door_point(pixels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
     return door, is_vertical
 
 
+def _task_phase_from_rgb(pixels: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:
+    """Return 0=door, 1=goal using the same RGB waypoint rule as the gate."""
+    current = _red_centroid(pixels)
+    target = _red_centroid(goal)
+    door, is_vertical = _vision_door_point(pixels)
+    side_gap = torch.where(
+        is_vertical,
+        (target[:, 0] - current[:, 0]).abs(),
+        (target[:, 1] - current[:, 1]).abs(),
+    )
+    far_from_door = torch.linalg.vector_norm(current - door, dim=-1) > 18.0
+    return ((side_gap > 35.0) & far_from_door).logical_not().to(torch.int64)
+
+
+def _task_waypoint_direction_from_rgb(
+    pixels: torch.Tensor, goal: torch.Tensor,
+) -> torch.Tensor:
+    """Return the normalized RGB direction to the active task waypoint."""
+    current = _red_centroid(pixels)
+    target = _red_centroid(goal)
+    door, is_vertical = _vision_door_point(pixels)
+    side_gap = torch.where(
+        is_vertical,
+        (target[:, 0] - current[:, 0]).abs(),
+        (target[:, 1] - current[:, 1]).abs(),
+    )
+    far_from_door = torch.linalg.vector_norm(current - door, dim=-1) > 18.0
+    door_phase = (side_gap > 35.0) & far_from_door
+    waypoint = torch.where(door_phase[:, None], door, target)
+    direction = waypoint - current
+    return direction / torch.linalg.vector_norm(direction, dim=-1, keepdim=True).clamp_min(1.0e-8)
+
+
 class VisionGeometryCostModel:
     """RGB-only task-geometry baseline for separating metric from latent ranking."""
 
@@ -1169,6 +1520,17 @@ def _planning_policy(args, device: str, action_mean: np.ndarray, action_std: np.
                 "--capacity-readout-artifact is required for capacity_safe_readout"
             )
         artifact = load_capacity_readout(Path(args.capacity_readout_artifact))
+        artifact = apply_capacity_bilinear_mode(
+            artifact, args.capacity_bilinear_mode,
+        )
+        if args.capacity_bilinear_base_cost_blend_weight is not None:
+            if not 0.0 <= args.capacity_bilinear_base_cost_blend_weight <= 1.0:
+                raise ValueError(
+                    "capacity bilinear base-cost blend weight must be in [0, 1]"
+                )
+            artifact["bilinear_base_cost_blend_weight"] = float(
+                args.capacity_bilinear_base_cost_blend_weight
+            )
         residual_start_iteration = int(artifact.get("residual_start_iteration", 0))
         if args.capacity_correction_multiplier is not None:
             if not 0.0 <= args.capacity_correction_multiplier <= 1.0:
@@ -1179,6 +1541,10 @@ def _planning_policy(args, device: str, action_mean: np.ndarray, action_std: np.
                 raise ValueError("--capacity-base-rank-quantile must be in (0, 1]")
             artifact["base_rank_quantile"] = float(args.capacity_base_rank_quantile)
         model = CapacityReadoutCostModel(model, artifact, action_mean, action_std)
+    if args.local_effect_ranker:
+        model = LocalEffectRankedCostModel(
+            model, action_mean, action_std, args.local_effect_blend_weight,
+        )
     elif args.cost_metric == "indexed_canonical_readout":
         if args.indexed_canonical_readout_artifact is None:
             raise ValueError(
@@ -1259,6 +1625,11 @@ def _run(args, policy_kind: str, action_mean: np.ndarray, action_std: np.ndarray
                 conflict_cos=args.hybrid_conflict_cos,
                 model_min_norm=args.hybrid_model_min_norm,
                 use_effect_map=args.hybrid_use_effect_map,
+                use_effect_policy=args.hybrid_use_effect_policy,
+                effect_map_intercept=args.hybrid_effect_map_intercept,
+                door_phase_reactive=args.hybrid_door_phase_reactive,
+                phase_transition_fallback=args.hybrid_phase_transition_fallback,
+                use_local_effect_ranker=args.local_effect_ranker,
             )
     world = swm.World(
         env_name="swm/TwoRoom-v1",
@@ -1278,7 +1649,11 @@ def _run(args, policy_kind: str, action_mean: np.ndarray, action_std: np.ndarray
             seed=args.seed,
             reset_mode="wait",
         )
-        if policy_kind != "random" and args.record_solver_trace:
+        if (
+            policy_kind in {"planning", "hybrid"}
+            and args.record_solver_trace
+            and hasattr(policy, "solver")
+        ):
             result["cem_trace"] = list(getattr(policy.solver, "trace", []))
     finally:
         world.close()
@@ -1296,6 +1671,19 @@ def _run(args, policy_kind: str, action_mean: np.ndarray, action_std: np.ndarray
             "conflict_cos": float(policy.conflict_cos),
             "model_min_norm": float(policy.model_min_norm),
             "use_effect_map": bool(policy.use_effect_map),
+            "use_effect_policy": bool(policy.use_effect_policy),
+            "effect_map_intercept": bool(policy.effect_map_intercept),
+            "door_phase_reactive": bool(policy.door_phase_reactive),
+            "phase_transition_fallback": bool(policy.phase_transition_fallback),
+            "effect_policy_count": int(policy.effect_policy_count),
+            "effect_policy_fallback_count": int(policy.effect_policy_fallback_count),
+            "effect_policy_validation_fallback_count": int(
+                policy.effect_policy_validation_fallback_count
+            ),
+            "effect_policy_phase_block_count": int(
+                policy.effect_policy_phase_block_count
+            ),
+            "use_local_effect_ranker": bool(policy.use_local_effect_ranker),
             "effect_map_rows_by_env": list(getattr(policy, "effect_map_rows", [])),
             "effect_map_phase_by_env": list(getattr(policy, "effect_map_phase", [])),
             "effect_map_rank_by_env": list(getattr(policy, "effect_map_rank", [])),
@@ -1324,6 +1712,16 @@ def _run(args, policy_kind: str, action_mean: np.ndarray, action_std: np.ndarray
             "cosine_mean": float(np.mean(policy.cosines)) if policy.cosines else None,
             "cosine_p10": float(np.percentile(policy.cosines, 10)) if policy.cosines else None,
         }
+    # Preserve deployment evidence for train-only readout interventions.  The
+    # TwoRoom runner previously omitted this field, making an unchanged score
+    # indistinguishable from a readout that never reached the planner.
+    policy_diagnostics = getattr(policy, "runtime_diagnostics", None)
+    if callable(policy_diagnostics):
+        output["runtime_diagnostics"] = policy_diagnostics()
+    else:
+        solver_model = getattr(getattr(policy, "solver", None), "model", None)
+        if callable(getattr(solver_model, "runtime_diagnostics", None)):
+            output["runtime_diagnostics"] = solver_model.runtime_diagnostics()
     if "cem_trace" in result:
         output["cem_trace"] = result["cem_trace"]
     return output
@@ -1392,6 +1790,31 @@ def main() -> None:
         help="frozen ablation override; do not tune from live outcome data",
     )
     parser.add_argument(
+        "--capacity-bilinear-base-cost-blend-weight",
+        type=float,
+        default=None,
+        help=(
+            "fixed conservative blend of frozen base cost into the bilinear "
+            "bank ranking; omitted means the artifact's declared value"
+        ),
+    )
+    parser.add_argument(
+        "--capacity-bilinear-mode",
+        choices=(
+            "artifact",
+            "action_only",
+            "full_predicted_dynamics",
+            "consensus",
+            "rank_fusion",
+        ),
+        default="artifact",
+        help=(
+            "explicit train-only bilinear deployment mode; artifact preserves "
+            "the saved gate, while overrides only select already-exported "
+            "coefficients"
+        ),
+    )
+    parser.add_argument(
         "--record-solver-trace", action="store_true",
         help="diagnostic only: record CEM actions/costs for solver comparison",
     )
@@ -1406,6 +1829,36 @@ def main() -> None:
     parser.add_argument(
         "--hybrid-use-effect-map", action="store_true",
         help="use an online RGB action-to-marker-displacement map as an additional fallback gate",
+    )
+    parser.add_argument(
+        "--hybrid-use-effect-policy", action="store_true",
+        help="use the verified local RGB effect map to invert the task-directed action",
+    )
+    parser.add_argument(
+        "--hybrid-effect-map-intercept", action="store_true",
+        help=(
+            "fit an affine phase-local RGB effect map; the intercept absorbs "
+            "common motion and is excluded from action inversion"
+        ),
+    )
+    parser.add_argument(
+        "--hybrid-door-phase-reactive", action="store_true",
+        help="fail closed to RGB reactive control during the detected door phase",
+    )
+    parser.add_argument(
+        "--hybrid-phase-transition-fallback", action="store_true",
+        help="fail closed for one block only when the RGB phase changes",
+    )
+    parser.add_argument(
+        "--local-effect-ranker", action="store_true",
+        help=(
+            "rank supported candidate-bank actions with a held-out-verified "
+            "local RGB effect chart before execution"
+        ),
+    )
+    parser.add_argument(
+        "--local-effect-blend-weight", type=float, default=0.5,
+        help="fixed blend weight for the local-effect candidate ranker",
     )
     args = parser.parse_args()
     if args.device.startswith("cuda") and not torch.cuda.is_available():
@@ -1500,6 +1953,10 @@ def main() -> None:
                 "conflict_cos": args.hybrid_conflict_cos,
                 "model_min_norm": args.hybrid_model_min_norm,
                 "use_effect_map": bool(args.hybrid_use_effect_map),
+                "use_effect_policy": bool(args.hybrid_use_effect_policy),
+                "effect_map_intercept": bool(args.hybrid_effect_map_intercept),
+                "door_phase_reactive": bool(args.hybrid_door_phase_reactive),
+                "phase_transition_fallback": bool(args.hybrid_phase_transition_fallback),
                 "decision_rule": "fallback if model norm < threshold or cosine(model, RGB reactive) < threshold",
                 "runtime_inputs": "raw current RGB and raw rendered RGB goal only; no simulator state",
             },
@@ -1517,6 +1974,12 @@ def main() -> None:
             ),
             "capacity_correction_multiplier_override": args.capacity_correction_multiplier,
             "capacity_base_rank_quantile_override": args.capacity_base_rank_quantile,
+            "capacity_bilinear_base_cost_blend_weight": (
+                args.capacity_bilinear_base_cost_blend_weight
+            ),
+            "capacity_bilinear_mode": args.capacity_bilinear_mode,
+            "local_effect_ranker": bool(args.local_effect_ranker),
+            "local_effect_blend_weight": float(args.local_effect_blend_weight),
             "capacity_residual_start_iteration": (
                 capacity_artifact_start_iteration
             ),

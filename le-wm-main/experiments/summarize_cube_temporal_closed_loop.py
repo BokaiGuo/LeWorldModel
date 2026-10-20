@@ -32,6 +32,9 @@ def _load(path: Path) -> dict[str, Any]:
     gate = by_seed("temporal_support_gate")
     feedback = by_seed("temporal_pixel_feedback") if "temporal_pixel_feedback" in payload else None
     feedback_local = by_seed("temporal_pixel_feedback_local") if "temporal_pixel_feedback_local" in payload else None
+    verified = by_seed("rgb_verified_effect") if "rgb_verified_effect" in payload else None
+    verified_fused = by_seed("rgb_verified_effect_fused") if "rgb_verified_effect_fused" in payload else None
+    verified_gated = by_seed("rgb_verified_effect_gated") if "rgb_verified_effect_gated" in payload else None
     temporal_delta = np.asarray(
         [temporal[int(seed)]["final_goal_distance_m"] - static[int(seed)]["final_goal_distance_m"] for seed in seeds],
         dtype=np.float64,
@@ -52,6 +55,24 @@ def _load(path: Path) -> dict[str, Any]:
             [feedback_local[int(seed)]["final_goal_distance_m"] - static[int(seed)]["final_goal_distance_m"] for seed in seeds],
             dtype=np.float64,
         )
+    verified_delta = None
+    if verified is not None:
+        verified_delta = np.asarray(
+            [verified[int(seed)]["final_goal_distance_m"] - static[int(seed)]["final_goal_distance_m"] for seed in seeds],
+            dtype=np.float64,
+        )
+    verified_fused_delta = None
+    if verified_fused is not None:
+        verified_fused_delta = np.asarray(
+            [verified_fused[int(seed)]["final_goal_distance_m"] - static[int(seed)]["final_goal_distance_m"] for seed in seeds],
+            dtype=np.float64,
+        )
+    verified_gated_delta = None
+    if verified_gated is not None:
+        verified_gated_delta = np.asarray(
+            [verified_gated[int(seed)]["final_goal_distance_m"] - static[int(seed)]["final_goal_distance_m"] for seed in seeds],
+            dtype=np.float64,
+        )
     triggered = np.asarray(
         [int(gate[int(seed)].get("support_fallback_count", 0)) > 0 for seed in seeds],
         dtype=bool,
@@ -64,6 +85,9 @@ def _load(path: Path) -> dict[str, Any]:
         "gate_delta": gate_delta,
         "feedback_delta": feedback_delta,
         "feedback_local_delta": feedback_local_delta,
+        "verified_delta": verified_delta,
+        "verified_fused_delta": verified_fused_delta,
+        "verified_gated_delta": verified_gated_delta,
         "triggered": triggered,
     }
 
@@ -109,6 +133,12 @@ def _protocol_signature(protocol: dict[str, Any]) -> tuple[Any, ...]:
         protocol.get("checkpoint"),
         protocol.get("checkpoint_frozen"),
         protocol.get("fixed_prelude"),
+        # Keep the explicit phase controls in the signature as well as the
+        # human-readable prelude string.  This prevents a future artifact
+        # writer from accidentally pooling panels that use the same label but
+        # different RGB approach durations/gains.
+        protocol.get("approach_steps", 0),
+        protocol.get("approach_gain", 1.0),
         protocol.get("support_gate"),
         protocol.get("support_threshold_m"),
         tuple(tuple(float(x) for x in row) for row in protocol.get("candidate_bank", [])),
@@ -158,6 +188,18 @@ def main() -> None:
             panel_report["pixel_feedback_local_minus_static"] = _summary(
                 panel["feedback_local_delta"], args.bootstrap_seed + 300 + index,
             )
+        if panel["verified_delta"] is not None:
+            panel_report["verified_rgb_effect_minus_static"] = _summary(
+                panel["verified_delta"], args.bootstrap_seed + 400 + index,
+            )
+        if panel["verified_fused_delta"] is not None:
+            panel_report["verified_rgb_effect_fused_minus_static"] = _summary(
+                panel["verified_fused_delta"], args.bootstrap_seed + 500 + index,
+            )
+        if panel["verified_gated_delta"] is not None:
+            panel_report["verified_rgb_effect_gated_minus_static"] = _summary(
+                panel["verified_gated_delta"], args.bootstrap_seed + 600 + index,
+            )
         panel_reports.append(panel_report)
 
     triggered_gate = gate[triggered]
@@ -181,6 +223,24 @@ def main() -> None:
         feedback_local = np.concatenate([panel["feedback_local_delta"] for panel in feedback_local_panels])
         pooled["pixel_feedback_local_minus_static"] = _summary(feedback_local, args.bootstrap_seed + 5)
         pooled["pixel_feedback_local_panel_count"] = len(feedback_local_panels)
+    verified_panels = [panel for panel in panels if panel["verified_delta"] is not None]
+    if verified_panels:
+        if len(verified_panels) != len(panels):
+            raise ValueError("cannot pool verified RGB effect arm with panels that do not contain it")
+        verified = np.concatenate([panel["verified_delta"] for panel in verified_panels])
+        pooled["verified_rgb_effect_minus_static"] = _summary(verified, args.bootstrap_seed + 6)
+    for field, key, seed_offset in (
+        ("verified_fused_delta", "verified_rgb_effect_fused_minus_static", 7),
+        ("verified_gated_delta", "verified_rgb_effect_gated_minus_static", 8),
+    ):
+        arm_panels = [panel for panel in panels if panel[field] is not None]
+        if arm_panels:
+            if len(arm_panels) != len(panels):
+                raise ValueError(f"cannot pool {key} with panels that do not contain the arm")
+            pooled[key] = _summary(
+                np.concatenate([panel[field] for panel in arm_panels]),
+                args.bootstrap_seed + seed_offset,
+            )
     report = {
         "schema": "cube_temporal_closed_loop.aggregate.v1",
         "protocol": {

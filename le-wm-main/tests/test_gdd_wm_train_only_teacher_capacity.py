@@ -179,3 +179,34 @@ def test_low_rank_bilinear_has_bounded_width_and_expected_order() -> None:
     np.testing.assert_allclose(no_dynamics, [[11.0, 13.0, 22.0, 26.0, 33.0, 39.0]])
     assert full.shape == (1, 16)
     np.testing.assert_allclose(full[:, : no_dynamics.shape[1]], no_dynamics)
+
+
+def test_low_rank_bilinear_goal_chart_is_train_runtime_symmetric() -> None:
+    source = np.asarray([[2.0, 3.0]])
+    delta = np.asarray([[5.0, 7.0]])
+    goal_relative = np.asarray([[11.0, 13.0]])
+    action = np.asarray([[17.0, 19.0]])
+    identity = np.eye(2)
+    kwargs = {
+        "source_mean": np.zeros(2),
+        "source_components": identity,
+        "delta_mean": np.zeros(2),
+        "delta_components": identity,
+        "goal": goal_relative,
+        "goal_mean": np.zeros(2),
+        "goal_components": identity,
+    }
+    no_dynamics = _low_rank_bilinear_features(
+        source, delta, action, include_predicted_dynamics=False, **kwargs,
+    )
+    full = _low_rank_bilinear_features(
+        source, delta, action, include_predicted_dynamics=True, **kwargs,
+    )
+    # [action, source-action, goal, goal-action] followed by the predicted
+    # delta blocks and goal-relative x predicted-delta interaction.
+    assert no_dynamics.shape == (1, 12)
+    assert full.shape == (1, 26)
+    np.testing.assert_allclose(no_dynamics[0, :2], action[0])
+    np.testing.assert_allclose(no_dynamics[0, 2:6], np.outer(source[0], action[0]).reshape(-1))
+    np.testing.assert_allclose(no_dynamics[0, 6:8], goal_relative[0])
+    np.testing.assert_allclose(no_dynamics[0, 8:12], np.outer(goal_relative[0], action[0]).reshape(-1))

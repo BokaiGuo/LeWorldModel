@@ -39,6 +39,7 @@ from experiments.audit_cube_rgb_observability import (  # noqa: E402
     extract_color_geometry_features,
     extract_color_geometry_temporal_features,
     _target_red_centroid,
+    _largest_effector_centroid,
     _goal_position,
     _make_env,
     _vec,
@@ -53,6 +54,10 @@ from experiments.audit_cube_temporal_action_ranking import (  # noqa: E402
     _predict,
 )
 from experiments.checkpoint_compat import load_compatible_pretrained  # noqa: E402
+from experiments.run_live_cube_rgb_macro_ranker import (  # noqa: E402
+    _fit_rgb_pixel_action_mapping,
+    _rgb_approach_action,
+)
 
 
 def _capture_initial(seed: int, task_id: int) -> dict[str, Any]:
@@ -71,11 +76,32 @@ def _capture_initial(seed: int, task_id: int) -> dict[str, Any]:
         env.close()
 
 
-def _prelude_action(step: int) -> np.ndarray:
+def _prelude_action(
+    step: int, current: np.ndarray | None = None, *, approach_steps: int = 0,
+    approach_gain: float = 1.0, pixel_action_mapping: np.ndarray | None = None,
+) -> np.ndarray:
+    """Return the shared approach/descent/close prelude.
+
+    With ``approach_steps=0`` this preserves the historical fixed prelude.
+    When enabled, the first phase descends to the working plane, then uses a
+    calibration-only RGB pixel-to-action map to align the effector with the
+    physical block before closing.  The
+    phase is shared by every controller arm, so it cannot create an arm
+    advantage through privileged state.
+    """
     action = np.zeros(5, dtype=np.float32)
+    if approach_steps < 0 or not np.isfinite(float(approach_gain)):
+        raise ValueError("approach_steps must be non-negative and gain finite")
     if step < 15:
         action[2] = -1.0
-    elif step < 20:
+    elif approach_steps > 0 and step < 15 + int(approach_steps):
+        if current is not None:
+            action = _rgb_approach_action(
+                current, pixel_action_mapping=pixel_action_mapping,
+                gain=float(approach_gain),
+            )
+        return action
+    elif step < 20 + int(approach_steps):
         # OGB-Cube uses relative gripper-opening actions: +1 closes.
         action[4] = 1.0
     return action
@@ -96,6 +122,56 @@ def _rgb_block_goal_error(current: np.ndarray, goal: np.ndarray) -> tuple[float,
     if not valid:
         return 0.0, False
     return float(np.linalg.norm(goal_xy - current_xy)), True
+
+
+def _rgb_block_goal_delta(current: np.ndarray, goal: np.ndarray) -> tuple[np.ndarray, bool]:
+    """Return the RGB-only block-to-goal vector used by verified local control."""
+    current_xy = _target_red_centroid(current)[:2]
+    goal_xy = _target_red_centroid(goal)[:2]
+    valid = bool(current_xy.shape == (2,) and goal_xy.shape == (2,))
+    valid = valid and bool(np.isfinite(current_xy).all() and np.isfinite(goal_xy).all())
+    if not valid:
+        return np.zeros(2, dtype=np.float32), False
+    return (goal_xy - current_xy).astype(np.float32), True
+
+
+def _verified_rgb_action(
+    action_history: list[np.ndarray], delta_history: list[np.ndarray],
+    desired_delta: np.ndarray, candidates: np.ndarray,
+) -> tuple[np.ndarray | None, dict[str, Any]]:
+    """Select an action only from an RGB-observed local effect map.
+
+    This is the visual analogue of the online-identification precedents in the
+    literature.  It never consumes simulator state.  Until the observed action
+    support has two independent directions and four rows, it returns ``None``
+    so the caller must use the fixed exploratory support pulse.  A local map is
+    therefore a verified update, not an unvalidated extrapolation from one
+    contact direction.
+    """
+    actions = np.asarray(action_history, dtype=np.float64)
+    deltas = np.asarray(delta_history, dtype=np.float64)
+    candidate_xy = np.asarray(candidates, dtype=np.float64)[:, :2]
+    if len(action_history) < 4 or actions.ndim != 2 or actions.shape[1] != 2:
+        return None, {"status": "insufficient_support", "rows": int(len(action_history)), "rank": 0}
+    if deltas.shape != actions.shape or not np.isfinite(actions).all() or not np.isfinite(deltas).all():
+        return None, {"status": "invalid_rgb_effect_history", "rows": int(len(action_history))}
+    rank = int(np.linalg.matrix_rank(actions))
+    if rank < 2:
+        return None, {"status": "rank_deficient_support", "rows": int(len(action_history)), "rank": rank}
+    mapping, _, _, singular_values = np.linalg.lstsq(actions, deltas, rcond=1.0e-6)
+    if len(singular_values) < 2 or singular_values[-1] <= 1.0e-6:
+        return None, {"status": "ill_conditioned_support", "rows": int(len(action_history)), "rank": rank}
+    predicted_delta = candidate_xy @ mapping
+    scores = predicted_delta @ np.asarray(desired_delta, dtype=np.float64).reshape(2)
+    selected = int(np.argmax(scores))
+    return np.asarray(candidates[selected], dtype=np.float32), {
+        "status": "ok",
+        "rows": int(len(action_history)),
+        "rank": rank,
+        "condition_number": float(singular_values[0] / singular_values[-1]),
+        "selected_index": selected,
+        "predicted_progress": scores.astype(np.float64).tolist(),
+    }
 
 
 def _robust_rank_score(scores: torch.Tensor) -> torch.Tensor:
@@ -135,6 +211,9 @@ def _run_arm(
     pixel_feedback: bool = False,
     pixel_feedback_threshold: float = 1.0e-3,
     pixel_feedback_mode: str = "persistent",
+    approach_steps: int = 0,
+    approach_gain: float = 1.0,
+    pixel_action_mapping: np.ndarray | None = None,
 ) -> dict[str, Any]:
     if pixel_feedback_mode not in {"persistent", "one_step"}:
         raise ValueError(f"unsupported pixel feedback mode: {pixel_feedback_mode}")
@@ -163,6 +242,10 @@ def _run_arm(
             last_pixel_error_norm: float | None = None
             pixel_error_trace: list[float] = []
             pixel_feedback_sign_trace: list[float] = []
+            verified_actions: list[np.ndarray] = []
+            verified_deltas: list[np.ndarray] = []
+            verified_trace: list[dict[str, Any]] = []
+            verified_model_disagreement_fallbacks = 0
             for step in range(max_steps):
                 reverse_current_pulse = False
                 current_pixel_error, current_pixel_valid = _rgb_block_goal_error(current, goal_image)
@@ -180,7 +263,11 @@ def _run_arm(
                             pixel_feedback_reversals += 1
                         last_pixel_error_norm = current_pixel_error
                 if step < prelude_steps:
-                    action = _prelude_action(step)
+                    action = _prelude_action(
+                        step, current, approach_steps=approach_steps,
+                        approach_gain=approach_gain,
+                        pixel_action_mapping=pixel_action_mapping,
+                    )
                 else:
                     n_candidates = len(candidates)
                     current_batch = np.repeat(current[None], n_candidates, axis=0)
@@ -193,7 +280,10 @@ def _run_arm(
                         previous_actions, valid, device=device, model=model,
                         batch_size=batch_size,
                     )
-                    if method in {"rgb_geometry_action", "latent_rgb_rank_consensus"}:
+                    if method in {
+                        "rgb_geometry_action", "latent_rgb_rank_consensus",
+                        "rgb_verified_effect_fused", "rgb_verified_effect_gated",
+                    }:
                         families["rgb_geometry_action"] = extract_color_geometry_features(
                             current_batch, goal_batch, candidates, device,
                         )["color_geometry_action"]
@@ -202,7 +292,15 @@ def _run_arm(
                             current_batch, previous_batch, goal_batch, candidates,
                             previous_actions, device,
                         )["color_geometry_temporal_action"]
-                    if method == "latent_rgb_rank_consensus":
+                    if method == "rgb_verified_effect":
+                        # The verified controller deliberately ignores the
+                        # frozen predictor at selection time.  Its candidate
+                        # score comes from the RGB-observed local effect map
+                        # below; keep a finite placeholder for shared logging.
+                        predicted_scores = torch.zeros(
+                            n_candidates, device=device, dtype=torch.float32,
+                        )
+                    elif method == "latent_rgb_rank_consensus":
                         if not isinstance(fit, dict):
                             raise TypeError("rank consensus requires both latent and RGB fits")
                         latent = _predict(families["latent_temporal"], fit["latent_temporal"])
@@ -213,10 +311,77 @@ def _run_arm(
                     else:
                         if not isinstance(fit, tuple):
                             raise TypeError(f"single-view method {method} requires one fit")
-                        predicted = _predict(families[method], fit)
+                        family_name = (
+                            "rgb_geometry_action"
+                            if method in {"rgb_verified_effect_fused", "rgb_verified_effect_gated"}
+                            else method
+                        )
+                        predicted = _predict(families[family_name], fit)
                         predicted_scores = torch.linalg.vector_norm(predicted, dim=1)
                     spread = float((predicted_scores.max() - predicted_scores.min()).item())
-                    if support_gate and spread < support_threshold:
+                    if method == "rgb_verified_effect":
+                        desired_delta, desired_valid = _rgb_block_goal_delta(current, goal_image)
+                        verified_action, verified_diagnostics = _verified_rgb_action(
+                            verified_actions, verified_deltas, desired_delta, candidates,
+                        ) if desired_valid else (None, {
+                            "status": "invalid_rgb_goal", "rows": len(verified_actions),
+                        })
+                        if verified_action is None:
+                            action = _support_exploration_action(step - prelude_steps, candidates)
+                            fallback_count += 1
+                        else:
+                            action = verified_action
+                        verified_trace.append(verified_diagnostics)
+                    elif method in {"rgb_verified_effect_fused", "rgb_verified_effect_gated"}:
+                        desired_delta, desired_valid = _rgb_block_goal_delta(current, goal_image)
+                        verified_action, verified_diagnostics = _verified_rgb_action(
+                            verified_actions, verified_deltas, desired_delta, candidates,
+                        ) if desired_valid else (None, {
+                            "status": "invalid_rgb_goal", "rows": len(verified_actions),
+                        })
+                        if verified_action is None:
+                            action = _support_exploration_action(step - prelude_steps, candidates)
+                            fallback_count += 1
+                        else:
+                            local_progress = np.asarray(
+                                verified_diagnostics["predicted_progress"], dtype=np.float64,
+                            )
+                            model_cost = predicted_scores.detach().cpu().numpy().astype(np.float64)
+
+                            def _robust_numpy_scale(values: np.ndarray) -> np.ndarray:
+                                median = float(np.median(values))
+                                q25, q75 = np.quantile(values, [0.25, 0.75])
+                                scale = max(float(q75 - q25), 1.0e-6)
+                                return (values - median) / scale
+
+                            verified_diagnostics = dict(verified_diagnostics)
+                            model_selected = int(np.argmin(model_cost))
+                            local_selected = int(verified_diagnostics["selected_index"])
+                            verified_diagnostics.update({
+                                "model_selected_index": model_selected,
+                                "local_selected_index": local_selected,
+                                "model_cost": model_cost.tolist(),
+                            })
+                            if method == "rgb_verified_effect_gated":
+                                action = np.asarray(candidates[local_selected], dtype=np.float32)
+                                agrees = model_selected == local_selected
+                                verified_diagnostics["status"] = (
+                                    "model_local_agreement_permit"
+                                    if agrees else "model_disagreement_local_fallback"
+                                )
+                                verified_diagnostics["model_local_agreement"] = agrees
+                                if not agrees:
+                                    verified_model_disagreement_fallbacks += 1
+                            else:
+                                fused_score = _robust_numpy_scale(local_progress) - _robust_numpy_scale(model_cost)
+                                selected = int(np.argmax(fused_score))
+                                action = np.asarray(candidates[selected], dtype=np.float32)
+                                verified_diagnostics.update({
+                                    "fusion_selected_index": selected,
+                                    "fused_score": fused_score.tolist(),
+                                })
+                        verified_trace.append(verified_diagnostics)
+                    elif support_gate and spread < support_threshold:
                         action = _support_exploration_action(step - prelude_steps, candidates)
                         fallback_count += 1
                     else:
@@ -238,6 +403,17 @@ def _run_arm(
                     pixel_feedback_sign_trace.append(float(pixel_feedback_sign))
                 actions.append(np.asarray(action, dtype=np.float32).tolist())
                 next_obs, _, terminated, truncated, next_info = env.step(action)
+                if method in {
+                    "rgb_verified_effect", "rgb_verified_effect_fused", "rgb_verified_effect_gated",
+                }:
+                    before_block = _target_red_centroid(current)[:2]
+                    after_block = _target_red_centroid(np.asarray(next_obs, dtype=np.uint8))[:2]
+                    if (
+                        np.isfinite(before_block).all() and np.isfinite(after_block).all()
+                        and (np.linalg.norm(before_block) > 0.0 or np.linalg.norm(after_block) > 0.0)
+                    ):
+                        verified_actions.append(np.asarray(action[:2], dtype=np.float64).copy())
+                        verified_deltas.append((after_block - before_block).astype(np.float64))
                 block = _vec(next_info, "privileged/block_0_pos", 3)[:2]
                 distances.append(float(np.linalg.norm(block - initial["goal"])))
                 previous, current = current, np.asarray(next_obs, dtype=np.uint8).copy()
@@ -260,6 +436,9 @@ def _run_arm(
                 "pixel_feedback_reversal_count": int(pixel_feedback_reversals),
                 "pixel_error_trace_runtime": pixel_error_trace,
                 "pixel_feedback_sign_trace_runtime": pixel_feedback_sign_trace,
+                "verified_rgb_effect_trace": verified_trace,
+                "verified_rgb_effect_rows": len(verified_actions),
+                "verified_model_disagreement_fallbacks": int(verified_model_disagreement_fallbacks),
             })
         finally:
             env.close()
@@ -282,6 +461,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episodes", type=int, default=16)
     parser.add_argument("--max-steps", type=int, default=40)
     parser.add_argument("--prelude-steps", type=int, default=20)
+    parser.add_argument("--approach-steps", type=int, default=0)
+    parser.add_argument("--approach-gain", type=float, default=1.0)
     parser.add_argument("--tasks", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--support-threshold", type=float, default=5.0e-4)
@@ -297,6 +478,10 @@ def main() -> None:
         raise ValueError("need at least 4 episodes and 8 calibration roots")
     if args.prelude_steps < 2 or args.max_steps <= args.prelude_steps:
         raise ValueError("max-steps must exceed prelude-steps >= 2")
+    if args.approach_steps < 0 or not np.isfinite(args.approach_gain):
+        raise ValueError("approach-steps must be non-negative and approach-gain finite")
+    if args.approach_steps > 0 and args.prelude_steps != args.approach_steps + 20:
+        raise ValueError("approach mode requires prelude-steps == approach-steps + 20")
     if args.support_threshold < 0.0 or not np.isfinite(args.support_threshold):
         raise ValueError("support-threshold must be finite and non-negative")
     if args.pixel_feedback_threshold < 0.0 or not np.isfinite(args.pixel_feedback_threshold):
@@ -337,6 +522,13 @@ def main() -> None:
     fits["rgb_geometry_temporal_action"] = _fit_readout(
         cal_color_temporal["color_geometry_temporal_action"], cal_target,
     )
+    pixel_action_mapping, pixel_mapping_report = _fit_rgb_pixel_action_mapping(
+        seed=args.seed + 100000,
+        tasks=args.tasks,
+        roots=args.calibration_roots,
+        descent_steps=15,
+        probe_steps=4,
+    )
     initial_conditions = [
         _capture_initial(args.seed + 1000 + index, int(args.tasks[index % len(args.tasks)]))
         for index in range(args.episodes)
@@ -346,17 +538,23 @@ def main() -> None:
         initial_conditions=initial_conditions, model=model, fit=fits["latent_static"],
         candidates=candidates, device=args.device, max_steps=args.max_steps,
         prelude_steps=args.prelude_steps, batch_size=args.batch_size, method="latent_static",
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
     )
     temporal = _run_arm(
         initial_conditions=initial_conditions, model=model, fit=fits["latent_temporal"],
         candidates=candidates, device=args.device, max_steps=args.max_steps,
         prelude_steps=args.prelude_steps, batch_size=args.batch_size, method="latent_temporal",
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
     )
     rgb_geometry = _run_arm(
         initial_conditions=initial_conditions, model=model,
         fit=fits["rgb_geometry_action"], candidates=candidates, device=args.device,
         max_steps=args.max_steps, prelude_steps=args.prelude_steps,
         batch_size=args.batch_size, method="rgb_geometry_action",
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
     )
     rgb_geometry_temporal = _run_arm(
         initial_conditions=initial_conditions, model=model,
@@ -364,6 +562,32 @@ def main() -> None:
         device=args.device, max_steps=args.max_steps,
         prelude_steps=args.prelude_steps, batch_size=args.batch_size,
         method="rgb_geometry_temporal_action",
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
+    )
+    verified_rgb_effect = _run_arm(
+        initial_conditions=initial_conditions, model=model,
+        fit=fits["rgb_geometry_action"], candidates=candidates, device=args.device,
+        max_steps=args.max_steps, prelude_steps=args.prelude_steps,
+        batch_size=args.batch_size, method="rgb_verified_effect",
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
+    )
+    verified_rgb_effect_fused = _run_arm(
+        initial_conditions=initial_conditions, model=model,
+        fit=fits["rgb_geometry_action"], candidates=candidates, device=args.device,
+        max_steps=args.max_steps, prelude_steps=args.prelude_steps,
+        batch_size=args.batch_size, method="rgb_verified_effect_fused",
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
+    )
+    verified_rgb_effect_gated = _run_arm(
+        initial_conditions=initial_conditions, model=model,
+        fit=fits["rgb_geometry_action"], candidates=candidates, device=args.device,
+        max_steps=args.max_steps, prelude_steps=args.prelude_steps,
+        batch_size=args.batch_size, method="rgb_verified_effect_gated",
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
     )
     temporal_support_gate = _run_arm(
         initial_conditions=initial_conditions, model=model, fit=fits["latent_temporal"],
@@ -371,6 +595,8 @@ def main() -> None:
         prelude_steps=args.prelude_steps, batch_size=args.batch_size,
         method="latent_temporal", support_gate=True,
         support_threshold=args.support_threshold,
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
     )
     temporal_pixel_feedback = _run_arm(
         initial_conditions=initial_conditions, model=model, fit=fits["latent_temporal"],
@@ -378,6 +604,8 @@ def main() -> None:
         prelude_steps=args.prelude_steps, batch_size=args.batch_size,
         method="latent_temporal", pixel_feedback=True,
         pixel_feedback_threshold=args.pixel_feedback_threshold,
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
     )
     temporal_pixel_feedback_local = _run_arm(
         initial_conditions=initial_conditions, model=model, fit=fits["latent_temporal"],
@@ -386,6 +614,8 @@ def main() -> None:
         method="latent_temporal", pixel_feedback=True,
         pixel_feedback_threshold=args.pixel_feedback_threshold,
         pixel_feedback_mode="one_step",
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
     )
     temporal_rgb_rank_consensus = _run_arm(
         initial_conditions=initial_conditions, model=model,
@@ -395,12 +625,23 @@ def main() -> None:
         }, candidates=candidates, device=args.device, max_steps=args.max_steps,
         prelude_steps=args.prelude_steps, batch_size=args.batch_size,
         method="latent_rgb_rank_consensus",
+        approach_steps=args.approach_steps, approach_gain=args.approach_gain,
+        pixel_action_mapping=pixel_action_mapping,
     )
     static_by_seed = {row["seed"]: row for row in static["episodes"]}
     temporal_by_seed = {row["seed"]: row for row in temporal["episodes"]}
     rgb_by_seed = {row["seed"]: row for row in rgb_geometry["episodes"]}
     rgb_temporal_by_seed = {
         row["seed"]: row for row in rgb_geometry_temporal["episodes"]
+    }
+    verified_by_seed = {
+        row["seed"]: row for row in verified_rgb_effect["episodes"]
+    }
+    fused_by_seed = {
+        row["seed"]: row for row in verified_rgb_effect_fused["episodes"]
+    }
+    gated_by_seed = {
+        row["seed"]: row for row in verified_rgb_effect_gated["episodes"]
     }
     gate_by_seed = {row["seed"]: row for row in temporal_support_gate["episodes"]}
     pixel_feedback_by_seed = {row["seed"]: row for row in temporal_pixel_feedback["episodes"]}
@@ -418,6 +659,21 @@ def main() -> None:
     ], dtype=np.float64)
     rgb_temporal_deltas = np.asarray([
         rgb_temporal_by_seed[seed]["final_goal_distance_m"]
+        - static_by_seed[seed]["final_goal_distance_m"]
+        for seed in static_by_seed
+    ], dtype=np.float64)
+    verified_deltas = np.asarray([
+        verified_by_seed[seed]["final_goal_distance_m"]
+        - static_by_seed[seed]["final_goal_distance_m"]
+        for seed in static_by_seed
+    ], dtype=np.float64)
+    fused_deltas = np.asarray([
+        fused_by_seed[seed]["final_goal_distance_m"]
+        - static_by_seed[seed]["final_goal_distance_m"]
+        for seed in static_by_seed
+    ], dtype=np.float64)
+    gated_deltas = np.asarray([
+        gated_by_seed[seed]["final_goal_distance_m"]
         - static_by_seed[seed]["final_goal_distance_m"]
         for seed in static_by_seed
     ], dtype=np.float64)
@@ -455,22 +711,49 @@ def main() -> None:
             "same_initial_state_pairing": True,
             "runtime_input": "live current/previous RGB, rendered goal, previous action, fixed candidate bank",
             "runtime_policy_state_access": False,
-            "fixed_prelude": "15 descent actions then 5 gripper-close actions",
+            "fixed_prelude": (
+                "15 descent actions, RGB pixel-action approach for "
+                f"{args.approach_steps} steps, then 5 gripper-close actions"
+                if args.approach_steps > 0
+                else "15 descent actions then 5 gripper-close actions"
+            ),
+            "approach_steps": int(args.approach_steps),
+            "approach_gain": float(args.approach_gain),
             "support_gate": "if predicted candidate-score spread < fixed threshold, cycle x+/x-/y+/y-",
             "support_threshold_m": float(args.support_threshold),
             "pixel_feedback": "after the fixed prelude, reverse the next latent-temporal XY pulse when RGB block-goal error increases",
             "pixel_feedback_threshold": float(args.pixel_feedback_threshold),
             "pixel_feedback_mode": "persistent",
             "additional_feedback_arm": "one_step",
+            "verified_rgb_effect_arm": (
+                "RGB-only local action-effect fit after >=4 observed rows, rank-two support, "
+                "and finite condition number; fixed four-direction fallback otherwise"
+            ),
+            "verified_rgb_effect_fused_arm": (
+                "rank-normalized fusion of the verified RGB local map and frozen RGB geometry "
+                "prediction under the same candidate bank and action budget"
+            ),
+            "verified_rgb_effect_gated_arm": (
+                "permit only when local observed-effect and frozen RGB geometry select the same "
+                "candidate; otherwise retain the local action and log a model-disagreement fallback"
+            ),
             "candidate_bank": candidates.tolist(),
             "readout_fit": "calibration roots only; no test outcomes",
             "evaluator_state_role": "initial-state pairing and final goal-distance scoring only",
         },
         "calibration": {"frames": int(len(cal_current)), "roots": int(args.calibration_roots)},
+        "pixel_action_mapping": {
+            "matrix": np.asarray(pixel_action_mapping, dtype=np.float64).tolist(),
+            "fit_report": pixel_mapping_report,
+            "fit_roots": int(args.calibration_roots),
+        },
         "static": static,
         "temporal": temporal,
         "rgb_geometry_action": rgb_geometry,
         "rgb_geometry_temporal_action": rgb_geometry_temporal,
+        "rgb_verified_effect": verified_rgb_effect,
+        "rgb_verified_effect_fused": verified_rgb_effect_fused,
+        "rgb_verified_effect_gated": verified_rgb_effect_gated,
         "temporal_support_gate": temporal_support_gate,
         "temporal_pixel_feedback": temporal_pixel_feedback,
         "temporal_pixel_feedback_local": temporal_pixel_feedback_local,
@@ -497,6 +780,21 @@ def main() -> None:
             "rgb_geometry_temporal_wins": int(np.sum(rgb_temporal_deltas < 0.0)),
             "rgb_geometry_temporal_losses": int(np.sum(rgb_temporal_deltas > 0.0)),
             "rgb_geometry_temporal_ties": int(np.sum(rgb_temporal_deltas == 0.0)),
+            "verified_rgb_effect_final_distance_delta_vs_static_m": verified_deltas.tolist(),
+            "verified_rgb_effect_mean_final_distance_delta_m": float(verified_deltas.mean()),
+            "verified_rgb_effect_wins": int(np.sum(verified_deltas < 0.0)),
+            "verified_rgb_effect_losses": int(np.sum(verified_deltas > 0.0)),
+            "verified_rgb_effect_ties": int(np.sum(verified_deltas == 0.0)),
+            "verified_rgb_effect_fused_final_distance_delta_vs_static_m": fused_deltas.tolist(),
+            "verified_rgb_effect_fused_mean_final_distance_delta_m": float(fused_deltas.mean()),
+            "verified_rgb_effect_fused_wins": int(np.sum(fused_deltas < 0.0)),
+            "verified_rgb_effect_fused_losses": int(np.sum(fused_deltas > 0.0)),
+            "verified_rgb_effect_fused_ties": int(np.sum(fused_deltas == 0.0)),
+            "verified_rgb_effect_gated_final_distance_delta_vs_static_m": gated_deltas.tolist(),
+            "verified_rgb_effect_gated_mean_final_distance_delta_m": float(gated_deltas.mean()),
+            "verified_rgb_effect_gated_wins": int(np.sum(gated_deltas < 0.0)),
+            "verified_rgb_effect_gated_losses": int(np.sum(gated_deltas > 0.0)),
+            "verified_rgb_effect_gated_ties": int(np.sum(gated_deltas == 0.0)),
             "pixel_feedback_final_distance_delta_vs_static_m": pixel_feedback_deltas.tolist(),
             "pixel_feedback_mean_final_distance_delta_m": float(pixel_feedback_deltas.mean()),
             "pixel_feedback_wins": int(np.sum(pixel_feedback_deltas < 0.0)),

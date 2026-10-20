@@ -143,6 +143,10 @@ def join_artifact(
                 raise ValueError(f"refusing to overwrite existing realized_latent_ref for {key}")
             joined = dict(row)
             joined["realized_latent_ref"] = refs[key]
+            # Keep the source of predicted arrays explicit. Downstream
+            # teacher/feature builders must not infer predicted arrays from
+            # the newly created realized_latents.npz artifact.
+            joined["source_candidate_dataset"] = str(candidate_dataset.resolve())
             for field in PROTECTED_FIELDS:
                 if joined.get(field) != row.get(field):
                     raise ValueError(f"protected field changed during join: {field} at {key}")

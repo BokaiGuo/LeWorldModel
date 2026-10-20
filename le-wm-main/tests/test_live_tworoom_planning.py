@@ -1,13 +1,16 @@
 import numpy as np
 import torch
+import experiments.run_live_tworoom_planning as tw_room
 
 from experiments.run_live_tworoom_planning import (
     _candidate_bank,
+    LocalEffectRankedCostModel,
     RiskGatedRGBPolicy,
     VisionGeometryCostModel,
     _vision_door_candidate_bank,
     _vision_door_point,
     _vision_goal_candidate_bank,
+    _effect_policy_action,
 )
 
 
@@ -147,6 +150,58 @@ def test_tworoom_rgb_gate_keeps_agreeing_action() -> None:
     assert policy.fallback_count == 0
 
 
+def test_tworoom_phase_gate_fails_closed_during_door_phase(monkeypatch) -> None:
+    current = np.full((16, 16, 3), 255, dtype=np.uint8)
+    goal = current.copy()
+    policy = RiskGatedRGBPolicy(
+        _FakeModelPolicy([[1.0, 0.0]]), door_phase_reactive=True,
+    )
+    policy.set_env(_FakeEnv())
+    monkeypatch.setattr(
+        tw_room,
+        "_rgb_reactive_action",
+        lambda _current, _goal: (np.asarray([1.0, 0.0], dtype=np.float32), "door"),
+    )
+    action = policy.get_action({"pixels": current[None], "goal": goal[None]})
+    np.testing.assert_allclose(action, [[1.0, 0.0]])
+    assert policy.fallback_count == 1
+
+
+def test_tworoom_door_phase_gate_cannot_be_overridden_by_effect_policy(monkeypatch) -> None:
+    current = np.full((16, 16, 3), 255, dtype=np.uint8)
+    goal = current.copy()
+    policy = RiskGatedRGBPolicy(
+        _FakeModelPolicy([[1.0, 0.0]]),
+        door_phase_reactive=True,
+        use_effect_policy=True,
+    )
+    policy.set_env(_FakeEnv())
+    monkeypatch.setattr(
+        tw_room,
+        "_rgb_reactive_action",
+        lambda _current, _goal: (np.asarray([1.0, 0.0], dtype=np.float32), "door"),
+    )
+    monkeypatch.setattr(
+        policy,
+        "_effect_map",
+        lambda _index, _phase: (
+            np.asarray([[-1.0, 0.0], [0.0, 1.0]], dtype=np.float32), 2
+        ),
+    )
+    monkeypatch.setattr(
+        policy,
+        "_effect_map_quality",
+        lambda _index, _phase: {"usable": True, "heldout_usable": True},
+    )
+    action = policy.get_action({"pixels": current[None], "goal": goal[None]})
+    # The inverse local map would point in the negative x direction.  The
+    # declared door-phase fail-closed rule must keep the RGB reactive action.
+    np.testing.assert_allclose(action, [[1.0, 0.0]])
+    assert policy.effect_policy_count == 0
+    assert policy.effect_policy_phase_block_count == 1
+    assert policy.fallback_count == 1
+
+
 def test_tworoom_rgb_effect_map_rejects_nonprogressing_model_effect() -> None:
     goal = _red_frame(12)
     # The observed local chart has a deliberately reversed x effect: positive
@@ -171,6 +226,22 @@ def test_tworoom_rgb_effect_map_rejects_nonprogressing_model_effect() -> None:
     assert policy.effect_map_quality[0]["usable"] is True
     assert action[0, 0] > 0.0
     assert policy.fallback_count >= 1
+
+
+def test_effect_policy_inverts_verified_local_map_and_fails_closed() -> None:
+    action = _effect_policy_action(
+        np.asarray([1.0, 0.0]),
+        np.asarray([[-2.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+    )
+    assert action is not None
+    assert action[0] < 0.0
+    predicted = np.asarray(action, dtype=np.float64) @ np.asarray(
+        [[-2.0, 0.0], [0.0, 1.0]], dtype=np.float64,
+    )
+    assert predicted[0] > 0.0
+    assert _effect_policy_action(
+        np.asarray([1.0, 0.0]), np.zeros((2, 2), dtype=np.float32),
+    ) is None
 
 
 def test_tworoom_effect_maps_are_root_local() -> None:
@@ -221,3 +292,53 @@ def test_tworoom_effect_maps_do_not_borrow_between_phases() -> None:
     assert door_rank == 2 and goal_rank == 2
     assert door_map is not None and goal_map is not None
     assert door_map[0, 0] < 0.0 < goal_map[0, 0]
+
+
+def test_tworoom_affine_effect_map_removes_common_motion_from_slope() -> None:
+    actions = [
+        np.asarray([1.0, 0.0]), np.asarray([0.0, 1.0]),
+        np.asarray([-1.0, 0.0]), np.asarray([0.0, -1.0]),
+        np.asarray([1.0, 0.0]), np.asarray([0.0, 1.0]),
+    ]
+    slope = np.asarray([[2.0, 0.0], [0.0, 3.0]])
+    intercept = np.asarray([5.0, -4.0])
+    deltas = [action @ slope + intercept for action in actions]
+    linear = RiskGatedRGBPolicy(_FakeModelPolicy([[1.0, 0.0]]), use_effect_map=True)
+    affine = RiskGatedRGBPolicy(
+        _FakeModelPolicy([[1.0, 0.0]]), use_effect_map=True,
+        effect_map_intercept=True,
+    )
+    linear.set_env(_FakeEnv())
+    affine.set_env(_FakeEnv())
+    linear.effect_actions_by_env[0] = actions
+    linear.effect_deltas_by_env[0] = deltas
+    affine.effect_actions_by_env[0] = actions
+    affine.effect_deltas_by_env[0] = deltas
+    linear_map, _ = linear._effect_map(0)
+    affine_map, _ = affine._effect_map(0)
+    assert linear_map is not None and affine_map is not None
+    assert not np.allclose(linear_map, slope)
+    np.testing.assert_allclose(affine_map, slope, atol=1.0e-6)
+
+
+def test_local_effect_ranker_records_when_it_changes_the_candidate_argmin() -> None:
+    class Base:
+        def get_cost(self, _info, _actions):
+            return torch.tensor([[0.0, 0.1]], dtype=torch.float32)
+
+    ranker = LocalEffectRankedCostModel(
+        Base(), np.zeros(2, dtype=np.float32), np.ones(2, dtype=np.float32), 1.0,
+    )
+    actions = torch.tensor([[[[1.0, 0.0]], [[-1.0, 0.0]]]])
+    info = {
+        "_local_effect_map": np.asarray([[[[-1.0, 0.0], [0.0, 1.0]],
+                                           [[-1.0, 0.0], [0.0, 1.0]]]], dtype=np.float32),
+        "_local_effect_target": np.asarray([[[1.0, 0.0], [1.0, 0.0]]], dtype=np.float32),
+        "_local_effect_valid": np.asarray([[True, True]]),
+        "_candidate_bank_mask": np.asarray([[True, True]]),
+    }
+    costs = ranker.get_cost(info, actions)
+    assert int(torch.argmin(costs, dim=1).item()) == 1
+    diagnostics = ranker.runtime_diagnostics()
+    assert diagnostics["local_effect_ranker_decisions"] == 1
+    assert diagnostics["local_effect_ranker_argmin_changes"] == 1

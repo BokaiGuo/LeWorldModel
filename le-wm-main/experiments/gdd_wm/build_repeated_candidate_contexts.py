@@ -93,6 +93,13 @@ def main() -> None:
             row["candidate_bank_hash"] = source_bank_hash or source.get("candidate_bank_hash")
             row["source_candidate_id"] = source.get("candidate_id")
             row["source_candidate_dataset"] = str(path)
+            # Preserve the separate source used to resolve predicted latent
+            # arrays.  The context manifest itself is a copied/joined
+            # artifact and must not be mistaken for the model export.
+            row["predicted_latent_source_dataset"] = source.get(
+                "predicted_latent_source_dataset",
+                source.get("source_candidate_dataset"),
+            )
             row["matched_action_hash"] = action_hash
             records.append(row)
 

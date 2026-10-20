@@ -5,6 +5,7 @@ import torch
 from experiments.capacity_readout_runtime import (
     CapacityReadoutCostModel,
     IndexedCanonicalReadoutCostModel,
+    apply_capacity_bilinear_mode,
     capacity_action_summary,
     load_capacity_readout,
     load_indexed_canonical_readout,
@@ -35,6 +36,59 @@ def test_capacity_action_summary_matches_train_time_shape_and_order() -> None:
     # component is the mean over all low-level horizon/block action frames.
     expected = candidates.reshape(2, 3, 5, 5, 2).reshape(2, 3, 25, 2).mean(dim=2)
     torch.testing.assert_close(summary[..., :2], expected)
+
+
+def test_capacity_bilinear_override_selects_exported_full_mode() -> None:
+    values = _arrays(gate=0)
+    values.update({
+        "bilinear_no_dynamics_coefficient": np.zeros(61, dtype=np.float32),
+        "bilinear_no_dynamics_mean": np.zeros(60, dtype=np.float32),
+        "bilinear_no_dynamics_scale": np.ones(60, dtype=np.float32),
+        "bilinear_full_coefficient": np.zeros(129, dtype=np.float32),
+        "bilinear_full_mean": np.zeros(128, dtype=np.float32),
+        "bilinear_full_scale": np.ones(128, dtype=np.float32),
+        "bilinear_source_mean": np.zeros(192, dtype=np.float32),
+        "bilinear_source_components": np.zeros((4, 192), dtype=np.float32),
+        "bilinear_delta_mean": np.zeros(192, dtype=np.float32),
+        "bilinear_delta_components": np.zeros((4, 192), dtype=np.float32),
+        "bilinear_goal_mean": np.zeros(192, dtype=np.float32),
+        "bilinear_goal_components": np.zeros((4, 192), dtype=np.float32),
+        "goal_conditioning": np.asarray(["none"]),
+        "phase_conditioning": np.asarray(["none"]),
+    })
+    artifact = {}
+    for key, value in values.items():
+        if isinstance(value, np.ndarray) and value.dtype.kind in "fiu":
+            artifact[key] = torch.as_tensor(value)
+        elif key not in {"goal_conditioning", "phase_conditioning"}:
+            artifact[key] = value
+    artifact.update({
+        "bilinear_gate_enabled": False,
+        "bilinear_selected": "action_only",
+        "goal_conditioning": "none",
+        "phase_conditioning": "none",
+    })
+    configured = apply_capacity_bilinear_mode(artifact, "full_predicted_dynamics")
+    assert configured["bilinear_selected"] == "bilinear_full_predicted_dynamics"
+    assert configured["bilinear_gate_enabled"] is True
+    assert artifact["bilinear_gate_enabled"] is False
+    consensus = apply_capacity_bilinear_mode(artifact, "consensus")
+    assert consensus["bilinear_selected"] == "bilinear_consensus"
+    assert consensus["bilinear_gate_enabled"] is True
+    fusion = apply_capacity_bilinear_mode(artifact, "rank_fusion")
+    assert fusion["bilinear_selected"] == "bilinear_rank_fusion"
+    assert fusion["bilinear_gate_enabled"] is True
+
+
+def test_capacity_bilinear_override_fails_closed_for_goal_conditioning() -> None:
+    values = _arrays(gate=0)
+    artifact = {
+        "bilinear_source_components": torch.zeros(4, 192),
+        "goal_conditioning": "latent_relative",
+        "phase_conditioning": "none",
+    }
+    with pytest.raises(ValueError, match="goal-conditioned"):
+        apply_capacity_bilinear_mode(artifact, "full_predicted_dynamics")
 
 
 def test_capacity_readout_loader_rejects_non_raw_runtime_artifact(tmp_path) -> None:
@@ -166,7 +220,48 @@ def test_capacity_runtime_uses_base_cost_for_unsupported_without_additive_mode()
     )
     info = {"_candidate_bank_mask": torch.tensor([[False, True, False]])}
     costs = model.get_cost(info, torch.zeros(1, 3, 5, 10))
-    torch.testing.assert_close(costs, torch.tensor([[0.0, 0.5, 2.0]]))
+    # A one-element supported bank has no nontrivial affine spread, so its
+    # mapped value remains the corresponding frozen cost rather than exposing
+    # the readout's unrelated absolute scale.
+    torch.testing.assert_close(costs, torch.tensor([[0.0, 1.0, 2.0]]))
+
+
+def test_goal_conditioned_supported_readout_is_rank_mapped_to_base_scale() -> None:
+    values = _arrays(gate=1)
+    # latent-relative features are [source, delta, action, goal-source,
+    # predicted-goal] = 780 features; the coefficient includes an intercept.
+    values["residual_coefficient"] = np.zeros(781, dtype=np.float32)
+    values["residual_mean"] = np.zeros(780, dtype=np.float32)
+    values["residual_scale"] = np.ones(780, dtype=np.float32)
+    # Make the supported candidate with larger action summary strictly better
+    # in the train-only readout, but on a scale unrelated to frozen costs.
+    values["residual_coefficient"][1 + 384] = -100.0
+    artifact = {
+        key: torch.as_tensor(value)
+        for key, value in values.items()
+        if key not in {"gate_enabled", "action_frame", "feature_family", "goal_conditioning"}
+    }
+    artifact.update({
+        "gate_enabled": True,
+        "action_frame": "raw",
+        "feature_family": "source_delta_action",
+        "goal_conditioning": "latent_relative",
+        "action_correction_enabled": False,
+        "base_cost_correction": False,
+    })
+    model = CapacityReadoutCostModel(
+        _RankedBase(), artifact,
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    actions = torch.zeros(1, 3, 5, 10)
+    actions[0, 1] = 100.0
+    costs = model.get_cost(
+        {"_candidate_bank_mask": torch.tensor([[True, True, False]])},
+        actions,
+    )
+    # Candidate 1 wins within the supported bank; the bank is then mapped to
+    # the frozen costs [0, 1], while the unsupported candidate stays at 2.
+    torch.testing.assert_close(costs, torch.tensor([[1.0, 0.0, 2.0]]))
 
 
 def test_capacity_runtime_rejects_malformed_candidate_bank_mask() -> None:
@@ -547,6 +642,29 @@ def test_low_rank_bilinear_readout_rank_maps_bank_and_preserves_gaussian() -> No
     # The readout reverses the supported bank order on the frozen base-cost
     # scale, while the unsupported Gaussian/mean slot remains exactly frozen.
     torch.testing.assert_close(costs, torch.tensor([[0.0, 2.0, 1.0]]))
+
+
+def test_low_rank_bilinear_terminal_gate_reorders_only_stable_base_candidates() -> None:
+    artifact = _low_rank_bilinear_artifact()
+    artifact["bilinear_no_dynamics_coefficient"][1] = -1.0
+    artifact["base_rank_quantile"] = 0.5
+    model = CapacityReadoutCostModel(
+        _RankedBase(), artifact,
+        np.zeros(10, dtype=np.float32), np.ones(10, dtype=np.float32),
+    )
+    actions = torch.zeros(1, 4, 5, 10)
+    actions[0, 1, :, 0::2] = 1.0
+    actions[0, 2, :, 0::2] = 2.0
+    actions[0, 3, :, 0::2] = 3.0
+    info = {"_candidate_bank_mask": torch.tensor([[False, True, True, True]])}
+    costs = model.get_cost(info, actions)
+    # The frozen base costs are [0, 1, 2, 3].  The 50th-percentile gate
+    # permits only candidates 1 and 2 to be reordered; candidate 3 remains
+    # on the frozen score and the unsupported candidate remains untouched.
+    torch.testing.assert_close(costs, torch.tensor([[0.0, 2.0, 1.0, 3.0]]))
+    diagnostics = model.runtime_diagnostics()
+    assert diagnostics["bilinear_stability_gate_rows"] == 1
+    assert diagnostics["bilinear_stability_gate_abstentions"] == 0
 
 
 def test_low_rank_bilinear_readout_fails_closed_without_bank_mask() -> None:

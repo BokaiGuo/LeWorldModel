@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 from experiments.decision_benchmark.fit_pointmaze_online_effect_policy import (
     OnlineEffectPolicy,
     fit_nearest_support,
     support_distance,
+    validate_runtime_candidate_chart,
 )
 from experiments.decision_benchmark.train_candidate_effect_adapter import EffectMLP
 
@@ -31,6 +33,18 @@ def test_nearest_support_accepts_training_point_and_rejects_far_query() -> None:
 
     assert support_distance(model, values[0]) == 0.0
     assert support_distance(model, np.asarray([100.0, -100.0])) > model["threshold"]
+
+
+def test_online_effect_training_rejects_mismatched_action_chart() -> None:
+    validate_runtime_candidate_chart({
+        "candidate_family": "runtime_repeated_pulse_v1",
+        "candidate_bank_coordinate_frame": "goal_relative",
+    })
+    with pytest.raises(ValueError, match="exact runtime chart"):
+        validate_runtime_candidate_chart({
+            "candidate_family": "paired_order_v2",
+            "candidate_bank_coordinate_frame": "world_fixed",
+        })
 
 
 def test_online_effect_policy_scores_repeated_pulse_candidates() -> None:

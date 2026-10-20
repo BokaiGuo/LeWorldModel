@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from experiments.evaluate_cube_spatial_adapter_transfer import (
     _fit_local_probe_map,
@@ -20,11 +21,20 @@ def test_pairwise_agreement_is_one_for_same_ordering():
 
 def test_local_probe_map_requires_two_action_directions():
     mapping, report = _fit_local_probe_map(
+        np.asarray([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]),
+        np.asarray([[2.0, 0.0], [0.0, 3.0], [2.0, 3.0]]),
+    )
+    np.testing.assert_allclose(mapping, [[2.0, 0.0], [0.0, 3.0]], atol=1.0e-12)
+    assert report["status"] == "ok"
+
+
+def test_local_probe_map_rejects_exact_rank_two_interpolation():
+    mapping, report = _fit_local_probe_map(
         np.asarray([[1.0, 0.0], [0.0, 1.0]]),
         np.asarray([[2.0, 0.0], [0.0, 3.0]]),
     )
-    np.testing.assert_allclose(mapping, [[2.0, 0.0], [0.0, 3.0]])
-    assert report["status"] == "ok"
+    assert mapping is None
+    assert report["status"] == "insufficient_probe_redundancy"
 
 
 def test_eight_action_protocol_leaves_unprobed_candidates_for_ranking():
@@ -39,10 +49,10 @@ def test_eight_action_protocol_leaves_unprobed_candidates_for_ranking():
 
 def test_local_probe_map_fails_closed_on_quantization_scale_effects():
     mapping, report = _fit_local_probe_map(
-        np.asarray([[1.0, 0.0], [0.0, 1.0]]),
-        np.asarray([[1.0e-4, 0.0], [0.0, 1.0e-4]]),
+        np.asarray([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]),
+        np.asarray([[1.0e-4, 0.0], [0.0, 1.0e-4], [1.0e-4, 1.0e-4]]),
         min_effect_norm=5.0e-4,
     )
     assert mapping is None
     assert report["status"] == "unstable_or_weak_probe_map"
-    assert report["probe_effect_norm"] == 1.0e-4
+    assert report["probe_effect_norm"] == pytest.approx(1.138071187e-4)

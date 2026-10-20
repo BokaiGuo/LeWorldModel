@@ -9,6 +9,7 @@ from experiments.run_live_cube_rgb_macro_panel import (
     _paired_summary,
     _summarize,
 )
+from experiments.summarize_cube_rgb_macro_panel import summarize
 
 
 def test_panel_declares_four_paired_arms_with_shared_runner() -> None:
@@ -160,3 +161,28 @@ def test_panel_reports_root_paired_arm_deltas() -> None:
     assert row["mean_final_distance_reduction_vs_fullscale"] == pytest.approx(0.075)
     assert row["success_delta_sum_vs_fullscale"] == 1.0
     assert row["contact_delta_sum_vs_fullscale"] == 0.0
+
+
+def test_macro_panel_summary_reports_paired_bootstrap_and_claim_boundary(tmp_path):
+    panel = {
+        "schema": "live_cube_rgb_macro_paired_panel.v1",
+        "protocol": {"root_disjoint": True, "outcome_used_for_arm_selection": False},
+        "paired_vs_fullscale_reclose": {
+            "lowgain_effect_adaptive": {
+                "root_rows": [
+                    {"final_distance_reduction_vs_fullscale": 0.2, "success_delta_vs_fullscale": 1.0},
+                    {"final_distance_reduction_vs_fullscale": 0.1, "success_delta_vs_fullscale": 0.0},
+                    {"final_distance_reduction_vs_fullscale": -0.1, "success_delta_vs_fullscale": -1.0},
+                ],
+            },
+        },
+    }
+    path = tmp_path / "panel.json"
+    path.write_text(json.dumps(panel))
+    report = summarize(path, seed=3)
+    arm = report["arms"]["lowgain_effect_adaptive"]
+    assert arm["n"] == 3
+    assert arm["distance_wins"] == 2
+    assert arm["distance_losses"] == 1
+    assert len(arm["bootstrap_ci95"]) == 2
+    assert "not frozen LeWM teacher evidence" in report["claim_boundary"]

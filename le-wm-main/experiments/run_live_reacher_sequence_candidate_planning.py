@@ -35,7 +35,11 @@ import stable_worldmodel as swm
 from experiments.audit_live_reacher_shared_candidate_ranking import _candidate_bank
 from experiments.audit_reacher_sequence_candidate_ranking import _sequence_bank
 from experiments.checkpoint_compat import load_compatible_pretrained
-from experiments.capacity_readout_runtime import CapacityReadoutCostModel, load_capacity_readout
+from experiments.capacity_readout_runtime import (
+    CapacityReadoutCostModel,
+    apply_capacity_bilinear_mode,
+    load_capacity_readout,
+)
 from experiments.run_live_cube_action_adapter_planning import ActionNormalizer
 from experiments.run_live_reacher_planning import (
     ReacherGoalImageWrapper,
@@ -44,6 +48,38 @@ from experiments.run_live_reacher_planning import (
     install_missing_field_compat,
 )
 from experiments.run_live_tworoom_planning import CandidateBankCEMSolver
+
+
+def validate_reacher_capacity_contract(
+    artifact: dict[str, object],
+) -> None:
+    """Reject readouts trained for a different task/phase contract."""
+    expected = {
+        "target_mode": "absolute",
+        "goal_conditioning": "none",
+        "phase_conditioning": "none",
+        "action_frame": {"raw", "proposal_relative"},
+    }
+    mismatches = {
+        key: (artifact.get(key), value)
+        for key, value in expected.items()
+        if (
+            artifact.get(key, "none") not in value
+            if isinstance(value, set)
+            else artifact.get(key, "none") != value
+        )
+    }
+    if mismatches:
+        details = ", ".join(
+            f"{key}={actual!r} (expected {sorted(wanted)!r})"
+            if isinstance(wanted, set)
+            else f"{key}={actual!r} (expected {wanted!r})"
+            for key, (actual, wanted) in mismatches.items()
+        )
+        raise ValueError(
+            "capacity readout violates the Reacher absolute-qpos contract: "
+            + details
+        )
 
 
 def _planning_policy(args, action_mean: np.ndarray, action_std: np.ndarray):
@@ -72,6 +108,18 @@ def _planning_policy(args, action_mean: np.ndarray, action_std: np.ndarray):
                 "--capacity-readout-artifact is required for capacity_safe_readout"
             )
         artifact = load_capacity_readout(Path(args.capacity_readout_artifact))
+        validate_reacher_capacity_contract(artifact)
+        artifact = apply_capacity_bilinear_mode(
+            artifact, args.capacity_bilinear_mode,
+        )
+        if args.capacity_bilinear_base_cost_blend_weight is not None:
+            artifact["bilinear_base_cost_blend_weight"] = float(
+                args.capacity_bilinear_base_cost_blend_weight
+            )
+        if args.capacity_bilinear_start_iteration is not None:
+            artifact["bilinear_start_iteration"] = int(
+                args.capacity_bilinear_start_iteration
+            )
         if args.capacity_correction_multiplier is not None:
             if not 0.0 <= args.capacity_correction_multiplier <= 1.0:
                 raise ValueError("capacity correction multiplier must be in [0, 1]")
@@ -273,6 +321,39 @@ def main() -> None:
     )
     parser.add_argument("--capacity-readout-artifact", type=Path, default=None)
     parser.add_argument(
+        "--capacity-bilinear-mode",
+        choices=(
+            "artifact",
+            "action_only",
+            "full_predicted_dynamics",
+            "consensus",
+            "rank_fusion",
+        ),
+        default="artifact",
+        help=(
+            "frozen exported bilinear component; use artifact for the train-only "
+            "selection, or an explicit component ablation"
+        ),
+    )
+    parser.add_argument(
+        "--capacity-bilinear-base-cost-blend-weight",
+        type=float,
+        default=None,
+        help=(
+            "fixed conservative blend of frozen base cost into the bilinear "
+            "bank ranking; omitted means the artifact's declared value"
+        ),
+    )
+    parser.add_argument(
+        "--capacity-bilinear-start-iteration",
+        type=int,
+        default=None,
+        help=(
+            "fixed CEM iteration at which bilinear bank ranking starts; "
+            "use with candidate-bank-iterations covering the final stage"
+        ),
+    )
+    parser.add_argument(
         "--capacity-correction-multiplier", type=float, default=None,
         help="optional predeclared conservative override for a capacity readout",
     )
@@ -346,6 +427,11 @@ def main() -> None:
                 str(args.capacity_readout_artifact)
                 if args.capacity_readout_artifact else None
             ),
+            "capacity_bilinear_mode": args.capacity_bilinear_mode,
+            "capacity_bilinear_base_cost_blend_weight": (
+                args.capacity_bilinear_base_cost_blend_weight
+            ),
+            "capacity_bilinear_start_iteration": args.capacity_bilinear_start_iteration,
             "capacity_correction_multiplier_override": args.capacity_correction_multiplier,
             "capacity_base_rank_quantile_override": args.capacity_base_rank_quantile,
             "capacity_base_cost_correction": args.capacity_base_cost_correction,

@@ -76,6 +76,19 @@ def support_distance(model: dict[str, Any], value: np.ndarray) -> float:
     return float(_nearest_distances(query[None], references).min())
 
 
+def validate_runtime_candidate_chart(metadata: dict[str, Any]) -> None:
+    """Reject a training bank whose action chart differs from live scoring."""
+
+    family = str(metadata.get("candidate_family", "unknown"))
+    frame = str(metadata.get("candidate_bank_coordinate_frame", "unknown"))
+    if family != "runtime_repeated_pulse_v1" or frame != "goal_relative":
+        raise ValueError(
+            "online effect policy must be trained on the exact runtime chart "
+            "runtime_repeated_pulse_v1/goal_relative; refusing a paired-order "
+            "or world-fixed candidate-bank mismatch"
+        )
+
+
 @dataclass
 class OnlineEffectPolicy:
     models: list[EffectMLP]
@@ -89,6 +102,10 @@ class OnlineEffectPolicy:
     feature_mode: str
     history_windows: int
     device: torch.device
+    candidate_family: str = "unknown"
+    candidate_bank_coordinate_frame: str = "unknown"
+    verification_threshold: float = 0.25
+    verification_direction_threshold: float | None = None
 
     @classmethod
     def load(cls, path: Path, device: torch.device) -> "OnlineEffectPolicy":
@@ -117,6 +134,13 @@ class OnlineEffectPolicy:
             action_steps=int(payload["action_steps"]),
             feature_mode=str(payload.get("feature_mode", "frozen_latent_action_basis")),
             history_windows=int(payload.get("history_windows", 1)),
+            verification_threshold=float(payload.get("verification_threshold", 0.25)),
+            candidate_family=str(payload.get("candidate_family", payload.get("protocol", {}).get("candidate_family", "unknown"))),
+            candidate_bank_coordinate_frame=str(payload.get("candidate_bank_coordinate_frame", payload.get("protocol", {}).get("candidate_bank_coordinate_frame", "unknown"))),
+            verification_direction_threshold=(
+                None if payload.get("verification_direction_threshold") is None
+                else float(payload["verification_direction_threshold"])
+            ),
             device=device,
         )
 
@@ -190,6 +214,10 @@ def build(
 ) -> dict[str, Any]:
     payload = json.loads(candidate_dataset.read_text(encoding="utf-8"))
     records = payload["records"]
+    candidate_metadata = dict(payload.get("metadata", {}))
+    candidate_family = str(candidate_metadata.get("candidate_family", "unknown"))
+    candidate_bank_coordinate_frame = str(candidate_metadata.get("candidate_bank_coordinate_frame", "unknown"))
+    validate_runtime_candidate_chart(candidate_metadata)
     arrays_payload = np.load(arrays, allow_pickle=False)
     if feature_mode not in {"frozen_latent_action_basis", "history_latent_action_basis"}:
         raise ValueError("online effect policy requires latent-only deployment features")
@@ -204,9 +232,15 @@ def build(
     calibration_payload = json.loads(
         calibration_dataset_path.read_text(encoding="utf-8")
     )
+    calibration_metadata = dict(calibration_payload.get("metadata", {}))
+    if (
+        str(calibration_metadata.get("candidate_family", "unknown")) != candidate_family
+        or str(calibration_metadata.get("candidate_bank_coordinate_frame", "unknown")) != candidate_bank_coordinate_frame
+    ):
+        raise ValueError("training and calibration candidate charts do not match the runtime effect chart")
     calibration_all_records = calibration_payload["records"]
     calibration_array_payload = np.load(calibration_arrays_path, allow_pickle=False)
-    calibration_features, _calibration_effects, _calibration_roots, calibration_goals = _features(
+    calibration_features, calibration_effects, _calibration_roots, calibration_goals = _features(
         calibration_all_records, calibration_array_payload, feature_mode,
     )
     calibration_split_set = {str(value) for value in calibration_splits}
@@ -243,6 +277,59 @@ def build(
             "normalization": metadata,
         })
     mean_effect = np.mean(np.stack(predictions), axis=0)
+    calibration_effect_errors = np.linalg.norm(
+        mean_effect[calibration_mask] - calibration_effects[calibration_mask], axis=1,
+    )
+    if len(calibration_effect_errors) < 4 or not np.isfinite(calibration_effect_errors).all():
+        raise ValueError("calibration split requires at least four finite effect errors")
+    verification_quantile = 0.90
+    verification_threshold = float(np.quantile(
+        calibration_effect_errors, verification_quantile, method="higher",
+    ))
+    verification_calibration = {
+        "source": "calibration_predicted_vs_realized_effect",
+        "outcome_labels_used": False,
+        "count": int(len(calibration_effect_errors)),
+        "mean": float(np.mean(calibration_effect_errors)),
+        "p50": float(np.quantile(calibration_effect_errors, 0.50, method="higher")),
+        "p90": float(np.quantile(calibration_effect_errors, 0.90, method="higher")),
+        "p95": float(np.quantile(calibration_effect_errors, 0.95, method="higher")),
+        "max": float(np.max(calibration_effect_errors)),
+        "threshold": verification_threshold,
+        "quantile": verification_quantile,
+    }
+    predicted_calibration_effect = mean_effect[calibration_mask]
+    realized_calibration_effect = calibration_effects[calibration_mask]
+    predicted_norm = np.linalg.norm(predicted_calibration_effect, axis=1)
+    realized_norm = np.linalg.norm(realized_calibration_effect, axis=1)
+    direction_mask = (predicted_norm > 1.0e-8) & (realized_norm > 1.0e-8)
+    direction_cosines = np.sum(
+        predicted_calibration_effect[direction_mask]
+        * realized_calibration_effect[direction_mask], axis=1,
+    ) / (predicted_norm[direction_mask] * realized_norm[direction_mask])
+    if len(direction_cosines) < 4 or not np.isfinite(direction_cosines).all():
+        raise ValueError("calibration split requires at least four finite direction scores")
+    verification_direction_quantile = 0.10
+    raw_verification_direction_threshold = float(np.quantile(
+        direction_cosines, verification_direction_quantile, method="lower",
+    ))
+    direction_mean = float(np.mean(direction_cosines))
+    direction_gate_permitted = bool(
+        direction_mean > 0.0 and raw_verification_direction_threshold > 0.0
+    )
+    verification_direction_threshold = (
+        raw_verification_direction_threshold if direction_gate_permitted else None
+    )
+    verification_calibration.update({
+        "direction_count": int(len(direction_cosines)),
+        "direction_mean": direction_mean,
+        "direction_p10": float(np.quantile(direction_cosines, 0.10, method="lower")),
+        "direction_p50": float(np.quantile(direction_cosines, 0.50, method="lower")),
+        "direction_threshold_raw": raw_verification_direction_threshold,
+        "direction_threshold": verification_direction_threshold,
+        "direction_quantile": verification_direction_quantile,
+        "direction_gate_permitted": direction_gate_permitted,
+    })
 
     by_train_root: dict[str, np.ndarray] = {}
     for row, keep in zip(records, train_mask):
@@ -310,9 +397,18 @@ def build(
         "action_steps": 20,
         "feature_mode": feature_mode,
         "history_windows": history_windows,
+        "candidate_family": candidate_family,
+        "candidate_bank_coordinate_frame": candidate_bank_coordinate_frame,
+        "verification_threshold": verification_threshold,
+        "verification_quantile": verification_quantile,
+        "verification_direction_threshold": verification_direction_threshold,
+        "verification_direction_quantile": verification_direction_quantile,
+        "verification_calibration": verification_calibration,
         "protocol": {
             "feature_mode": feature_mode,
             "history_windows": history_windows,
+            "candidate_family": candidate_family,
+            "candidate_bank_coordinate_frame": candidate_bank_coordinate_frame,
             "adapter_seeds": list(SEEDS),
             "epochs": int(epochs),
             "device": device,
@@ -329,6 +425,11 @@ def build(
                 "runtime repeated-pulse candidates require both latent and action-basis "
                 "support; calibration is fixed-bank marginal and does not certify adaptive MPC"
             ),
+            "verification_threshold_source": "calibration_predicted_vs_realized_effect_p90",
+            "verification_outcome_labels_used": False,
+            "verification_direction_threshold_source": "calibration_effect_direction_cosine_p10",
+            "verification_direction_outcome_labels_used": False,
+            "verification_calibration_summary": verification_calibration,
         },
     }
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -345,6 +446,11 @@ def build(
         "feature_mode": feature_mode,
         "latent_support_threshold": float(latent_support["threshold"]),
         "action_support_threshold": float(action_support["threshold"]),
+        "verification_threshold": verification_threshold,
+        "verification_quantile": verification_quantile,
+        "verification_direction_threshold": verification_direction_threshold,
+        "verification_direction_quantile": verification_direction_quantile,
+        "verification_calibration": verification_calibration,
         "regret_calibration": regret_calibration,
         "claim_boundary": (
             "deployable train/calibration-only repair artifact; online consequence remains "

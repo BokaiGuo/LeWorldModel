@@ -8,6 +8,54 @@ import numpy as np
 import torch
 
 
+def apply_capacity_bilinear_mode(
+    artifact: dict[str, torch.Tensor | bool | str | float | int],
+    mode: str,
+) -> dict[str, torch.Tensor | bool | str | float | int]:
+    """Apply an explicit, auditable bilinear deployment mode.
+
+    ``load_capacity_readout`` preserves the train-only artifact declaration.
+    This helper is the only sanctioned runtime override: it can select the
+    exported action-only or full predicted-dynamics bilinear coefficients, but
+    never fits or changes coefficients.  The caller must record ``mode`` in
+    the experiment protocol.
+    """
+    if mode not in {
+        "artifact",
+        "action_only",
+        "full_predicted_dynamics",
+        "consensus",
+        "rank_fusion",
+    }:
+        raise ValueError(
+            "capacity bilinear mode must be one of: artifact, action_only, "
+            "full_predicted_dynamics, consensus, rank_fusion"
+        )
+    configured = dict(artifact)
+    if mode == "artifact":
+        return configured
+    if "bilinear_source_components" not in configured:
+        raise ValueError("capacity bilinear override requires exported bilinear arrays")
+    if mode == "full_predicted_dynamics":
+        if (
+            configured.get("goal_conditioning", "none") != "none"
+            and configured.get("bilinear_goal_conditioning", "none") != "latent_relative"
+        ):
+            raise ValueError(
+                "full predicted-dynamics override for goal-conditioned artifacts "
+                "requires a matching exported goal-relative bilinear feature chart"
+            )
+        configured["bilinear_selected"] = "bilinear_full_predicted_dynamics"
+    elif mode == "consensus":
+        configured["bilinear_selected"] = "bilinear_consensus"
+    elif mode == "rank_fusion":
+        configured["bilinear_selected"] = "bilinear_rank_fusion"
+    else:
+        configured["bilinear_selected"] = "bilinear_no_dynamics_source_action"
+    configured["bilinear_gate_enabled"] = True
+    return configured
+
+
 def capacity_action_summary(action_candidates: torch.Tensor) -> torch.Tensor:
     """Convert raw flattened action blocks to the 12-D train-time summary."""
     if action_candidates.ndim != 4 or action_candidates.shape[-1] % 2:
@@ -84,6 +132,12 @@ def load_capacity_readout(path: Path) -> dict[str, torch.Tensor | bool | str | f
         artifact["gate_enabled"] = bool(gate)
         artifact["action_frame"] = action_frame
         artifact["feature_family"] = feature_family
+        artifact["target_mode"] = str(
+            np.asarray(data["target_mode"]).reshape(-1)[0]
+        ) if "target_mode" in data.files else "unknown"
+        artifact["phase_conditioning"] = str(
+            np.asarray(data["phase_conditioning"]).reshape(-1)[0]
+        ) if "phase_conditioning" in data.files else "none"
         artifact["support_scope"] = str(
             np.asarray(data["support_scope"]).reshape(-1)[0]
         ) if "support_scope" in data.files else "explicit_candidate_bank_only"
@@ -107,6 +161,9 @@ def load_capacity_readout(path: Path) -> dict[str, torch.Tensor | bool | str | f
         artifact["action_correction_enabled"] = bool(
             int(np.asarray(data["action_correction_enabled"]).reshape(-1)[0])
         ) if "action_correction_enabled" in data.files else True
+        artifact["residual_correction_enabled"] = bool(
+            int(np.asarray(data["residual_correction_enabled"]).reshape(-1)[0])
+        ) if "residual_correction_enabled" in data.files else True
         artifact["correction_multiplier"] = float(
             np.asarray(data["correction_multiplier"]).reshape(-1)[0]
         ) if "correction_multiplier" in data.files else 1.0
@@ -138,6 +195,21 @@ def load_capacity_readout(path: Path) -> dict[str, torch.Tensor | bool | str | f
                 artifact[key] = torch.as_tensor(
                     np.asarray(data[key]).copy(), dtype=torch.float32,
                 )
+            artifact["bilinear_goal_conditioning"] = str(
+                np.asarray(data["bilinear_goal_conditioning"]).reshape(-1)[0]
+            ) if "bilinear_goal_conditioning" in data.files else "none"
+            if "bilinear_goal_conditioning" in data.files:
+                goal_fields = ("bilinear_goal_mean", "bilinear_goal_components")
+                missing_goal = sorted(set(goal_fields).difference(data.files))
+                if missing_goal:
+                    raise ValueError(
+                        "capacity readout is missing goal-conditioned bilinear arrays: "
+                        f"{missing_goal}"
+                    )
+                for key in goal_fields:
+                    artifact[key] = torch.as_tensor(
+                        np.asarray(data[key]).copy(), dtype=torch.float32,
+                    )
             artifact["bilinear_selected"] = str(
                 np.asarray(data["bilinear_selected"]).reshape(-1)[0]
             ) if "bilinear_selected" in data.files else "action_only"
@@ -337,6 +409,14 @@ def _validate_indexed_readout_shapes(artifact: dict, path: Path) -> None:
             f"{path}: unsupported indexed goal_conditioning "
             f"{artifact['goal_conditioning']!r}"
         )
+        if artifact["phase_conditioning"] not in (
+            "none", "tworoom_rgb_phase_action",
+            "tworoom_rgb_phase_waypoint_action",
+        ):
+            raise ValueError(
+                "runtime capacity readout has unsupported phase_conditioning: "
+                f"{artifact['phase_conditioning']!r}"
+            )
     if not isinstance(artifact["gate_enabled"], bool):
         raise ValueError(f"{path}: indexed gate_enabled must be boolean")
 
@@ -392,8 +472,36 @@ def _validate_capacity_shapes(
             raise ValueError(f"{path}: bilinear PCA means/components are incompatible")
         if int(artifact.get("bilinear_rank", rank)) != rank:
             raise ValueError(f"{path}: bilinear_rank does not match PCA components")
-        no_dynamics_width = 12 + rank * 12
-        full_width = no_dynamics_width + rank + rank * 12 + rank * rank
+        bilinear_goal_conditioning = str(
+            artifact.get("bilinear_goal_conditioning", "none")
+        )
+        if bilinear_goal_conditioning not in ("none", "latent_relative"):
+            raise ValueError(
+                f"{path}: unsupported bilinear_goal_conditioning={bilinear_goal_conditioning!r}"
+            )
+        if bilinear_goal_conditioning == "latent_relative":
+            goal_mean = artifact.get("bilinear_goal_mean")
+            goal_components = artifact.get("bilinear_goal_components")
+            if not isinstance(goal_mean, torch.Tensor) or not isinstance(goal_components, torch.Tensor):
+                raise ValueError(f"{path}: goal-conditioned bilinear chart is incomplete")
+            if goal_mean.shape != (latent_width,) or goal_components.shape != source_components.shape:
+                raise ValueError(f"{path}: goal-conditioned bilinear chart has incompatible shapes")
+        # The action block is normally the 12-D capacity summary, but a
+        # phase-conditioned teacher appends a 2-D phase one-hot and a
+        # 24-D phase/action interaction.  Do not hard-code 12 here: the
+        # exported bilinear artifact is the source of truth for the action
+        # feature width, and the runtime constructs the same augmented block.
+        no_dynamics_width = int(artifact["bilinear_no_dynamics_mean"].numel())
+        if bilinear_goal_conditioning == "latent_relative":
+            # [action, source x action, goal, goal x action]
+            action_width, remainder = divmod(no_dynamics_width - rank, 2 * rank + 1)
+        else:
+            action_width, remainder = divmod(no_dynamics_width, rank + 1)
+        if remainder or action_width < 1:
+            raise ValueError(f"{path}: bilinear action/readout width is incompatible")
+        full_width = no_dynamics_width + rank + rank * action_width + rank * rank
+        if bilinear_goal_conditioning == "latent_relative":
+            full_width += rank * rank
         for prefix, width in (
             ("bilinear_no_dynamics", no_dynamics_width),
             ("bilinear_full", full_width),
@@ -414,6 +522,8 @@ def _validate_capacity_shapes(
             "action_only",
             "bilinear_no_dynamics_source_action",
             "bilinear_full_predicted_dynamics",
+            "bilinear_consensus",
+            "bilinear_rank_fusion",
         ):
             raise ValueError(f"{path}: unsupported bilinear_selected value")
     if "mlp_no_dynamics_feature_mean" in artifact:
@@ -426,11 +536,15 @@ def _validate_capacity_shapes(
             feature_mean, feature_scale, support_mean, support_scale, support_radius,
         )):
             raise TypeError(f"{path}: deployment MLP statistics must be tensors")
-        latent_width = feature_mean.numel() - 12
-        if latent_width < 1 or feature_scale.shape != feature_mean.shape:
+        if feature_mean.numel() < 1 or feature_scale.shape != feature_mean.shape:
             raise ValueError(f"{path}: deployment MLP feature statistics are incompatible")
         expected = {
-            "mlp_no_dynamics_layer_0_weight": (64, latent_width + 12),
+            # ``feature_mean`` already includes the complete runtime input
+            # [source_latent, phase-augmented action].  The latter is 12-D
+            # for the unconditioned artifact and 38-D for the TwoRoom
+            # phase-conditioned artifact, so deriving the layer width from
+            # the exported feature statistics keeps both contracts aligned.
+            "mlp_no_dynamics_layer_0_weight": (64, int(feature_mean.numel())),
             "mlp_no_dynamics_layer_0_bias": (64,),
             "mlp_no_dynamics_layer_2_weight": (32, 64),
             "mlp_no_dynamics_layer_2_bias": (32,),
@@ -477,6 +591,12 @@ class CapacityReadoutCostModel(torch.nn.Module):
         if action_frame not in ("raw", "proposal_relative"):
             raise ValueError(f"unsupported runtime action frame: {action_frame!r}")
         self.action_frame = action_frame
+        self.phase_conditioning = str(artifact.get("phase_conditioning", "none"))
+        if self.phase_conditioning not in (
+            "none", "tworoom_rgb_phase_action",
+            "tworoom_rgb_phase_waypoint_action",
+        ):
+            raise ValueError(f"unsupported runtime phase_conditioning: {self.phase_conditioning!r}")
         self.support_scope = str(
             artifact.get("support_scope", "explicit_candidate_bank_only")
         )
@@ -490,6 +610,9 @@ class CapacityReadoutCostModel(torch.nn.Module):
             )
         self.base_cost_correction = bool(artifact.get("base_cost_correction", False))
         self.action_correction_enabled = bool(artifact.get("action_correction_enabled", True))
+        self.residual_correction_enabled = bool(
+            artifact.get("residual_correction_enabled", True)
+        )
         self.correction_multiplier = float(artifact.get("correction_multiplier", 1.0))
         self.base_rank_quantile = float(artifact.get("base_rank_quantile", 1.0))
         self.residual_start_iteration = int(artifact.get("residual_start_iteration", 0))
@@ -510,6 +633,24 @@ class CapacityReadoutCostModel(torch.nn.Module):
         self.gate_enabled = bool(artifact["gate_enabled"])
         self.bilinear_gate_enabled = bool(artifact.get("bilinear_gate_enabled", False))
         self.bilinear_selected = str(artifact.get("bilinear_selected", "action_only"))
+        self.bilinear_base_cost_blend_weight = float(
+            artifact.get("bilinear_base_cost_blend_weight", 0.0)
+        )
+        self.bilinear_start_iteration = int(
+            artifact.get("bilinear_start_iteration", 0)
+        )
+        self.bilinear_base_rank_quantile = float(
+            artifact.get("base_rank_quantile", 1.0)
+        )
+        if self.bilinear_start_iteration < 0:
+            raise ValueError("bilinear start iteration must be nonnegative")
+        if not 0.0 <= self.bilinear_base_cost_blend_weight <= 1.0:
+            raise ValueError("bilinear base-cost blend weight must be in [0, 1]")
+        if not 0.0 < self.bilinear_base_rank_quantile <= 1.0:
+            raise ValueError("bilinear base rank quantile must be in (0, 1]")
+        self.bilinear_goal_conditioning = str(
+            artifact.get("bilinear_goal_conditioning", "none")
+        )
         self.has_bilinear_readout = "bilinear_source_components" in artifact
         if self.has_bilinear_readout:
             for name in (
@@ -528,6 +669,15 @@ class CapacityReadoutCostModel(torch.nn.Module):
                 if not isinstance(value, torch.Tensor):
                     raise TypeError(f"capacity artifact field {name!r} is not a tensor")
                 self.register_buffer(name, value.detach().clone())
+            if self.bilinear_goal_conditioning == "latent_relative":
+                for name in ("bilinear_goal_mean", "bilinear_goal_components"):
+                    value = artifact.get(name)
+                    if not isinstance(value, torch.Tensor):
+                        raise ValueError(
+                            "goal-conditioned bilinear runtime requires exported "
+                            f"field {name!r}"
+                        )
+                    self.register_buffer(name, value.detach().clone())
         if self.bilinear_gate_enabled and (
             not self.has_bilinear_readout or self.bilinear_selected == "action_only"
         ):
@@ -551,6 +701,14 @@ class CapacityReadoutCostModel(torch.nn.Module):
         self.mlp_base_cost_elite_k = int(
             artifact.get("mlp_base_cost_elite_k", 1)
         )
+        # A separate terminal-stability gate: the learned readout may only
+        # reorder candidates that are already in the frozen model's declared
+        # base-cost quantile.  This is a deployment-time conservative proxy
+        # for terminal stability; it is fixed from calibration metadata and
+        # never uses privileged runtime qpos or held-out outcomes.
+        self.mlp_base_rank_quantile = float(
+            artifact.get("base_rank_quantile", 1.0)
+        )
         if self.mlp_residual_start_iteration < 0 or self.mlp_planner_call_index < 0:
             raise ValueError("MLP residual iteration/call gates must be nonnegative")
         if not 0.0 <= self.proposal_support_min_fraction <= 1.0:
@@ -559,6 +717,8 @@ class CapacityReadoutCostModel(torch.nn.Module):
             raise ValueError("MLP base-cost blend weight must be in [0, 1]")
         if self.mlp_base_cost_elite_k < 1:
             raise ValueError("MLP base-cost elite k must be positive")
+        if not 0.0 < self.mlp_base_rank_quantile <= 1.0:
+            raise ValueError("MLP base rank quantile must be in (0, 1]")
         if (
             self.mlp_shuffle_base_cost_control
             and self.mlp_base_cost_blend_weight <= 0.0
@@ -593,6 +753,11 @@ class CapacityReadoutCostModel(torch.nn.Module):
         self.bilinear_evaluated_rows = 0
         self.bilinear_bank_argmin_changes = 0
         self.bilinear_bank_beats_gaussian_rows = 0
+        self.bilinear_stability_gate_rows = 0
+        self.bilinear_stability_gate_abstentions = 0
+        self.bilinear_consensus_abstentions = 0
+        self.readout_evaluated_rows = 0
+        self.readout_bank_argmin_changes = 0
         self.mlp_evaluated_rows = 0
         self.mlp_abstained_low_support_rows = 0
         self.mlp_active_rows = 0
@@ -602,12 +767,22 @@ class CapacityReadoutCostModel(torch.nn.Module):
         self.mlp_support_fraction_min = 1.0
         self.mlp_support_fraction_max = 0.0
         self.mlp_argmin_changes = 0
+        self.mlp_terminal_gate_rows = 0
+        self.mlp_terminal_gate_abstentions = 0
 
     def runtime_diagnostics(self) -> dict[str, int | float | str | bool]:
         rows = int(self.bilinear_evaluated_rows)
         return {
             "bilinear_gate_enabled": self.bilinear_gate_enabled,
             "bilinear_selected": self.bilinear_selected,
+            "bilinear_base_cost_blend_weight": float(
+                self.bilinear_base_cost_blend_weight
+            ),
+            "bilinear_start_iteration": int(self.bilinear_start_iteration),
+            "bilinear_base_rank_quantile": float(
+                self.bilinear_base_rank_quantile
+            ),
+            "bilinear_goal_conditioning": self.bilinear_goal_conditioning,
             "evaluated_candidate_rows": rows,
             "bank_argmin_changes": int(self.bilinear_bank_argmin_changes),
             "bank_argmin_change_rate": (
@@ -617,6 +792,22 @@ class CapacityReadoutCostModel(torch.nn.Module):
             "bank_beats_gaussian_rate": (
                 float(self.bilinear_bank_beats_gaussian_rows / rows) if rows else 0.0
             ),
+            "bilinear_stability_gate_rows": int(
+                self.bilinear_stability_gate_rows
+            ),
+            "bilinear_stability_gate_abstentions": int(
+                self.bilinear_stability_gate_abstentions
+            ),
+            "bilinear_consensus_abstentions": int(
+                self.bilinear_consensus_abstentions
+            ),
+            "readout_evaluated_rows": int(self.readout_evaluated_rows),
+            "readout_bank_argmin_changes": int(self.readout_bank_argmin_changes),
+            "readout_bank_argmin_change_rate": float(
+                self.readout_bank_argmin_changes
+                / max(self.readout_evaluated_rows, 1)
+            ),
+            "residual_correction_enabled": self.residual_correction_enabled,
             "mlp_no_dynamics_gate_enabled": self.mlp_no_dynamics_gate_enabled,
             "mlp_residual_start_iteration": self.mlp_residual_start_iteration,
             "mlp_planner_call_index": self.mlp_planner_call_index,
@@ -635,6 +826,11 @@ class CapacityReadoutCostModel(torch.nn.Module):
                 self.mlp_shuffle_base_cost_control
             ),
             "mlp_base_cost_elite_k": int(self.mlp_base_cost_elite_k),
+            "mlp_base_rank_quantile": float(self.mlp_base_rank_quantile),
+            "mlp_terminal_gate_rows": int(self.mlp_terminal_gate_rows),
+            "mlp_terminal_gate_abstentions": int(
+                self.mlp_terminal_gate_abstentions
+            ),
             "mlp_proposal_support_rate": float(
                 self.mlp_supported_candidates / max(self.mlp_total_candidates, 1)
             ),
@@ -670,6 +866,7 @@ class CapacityReadoutCostModel(torch.nn.Module):
         delta: torch.Tensor,
         action_summary: torch.Tensor,
         *,
+        info_dict: dict,
         include_predicted_dynamics: bool,
     ) -> torch.Tensor:
         source_projected = (
@@ -682,6 +879,29 @@ class CapacityReadoutCostModel(torch.nn.Module):
             source_projected.unsqueeze(-1) * action_summary.unsqueeze(-2)
         ).flatten(start_dim=-2)
         blocks = [action_summary, source_action]
+        goal_projected = None
+        if self.bilinear_goal_conditioning == "latent_relative":
+            goal_embedding = info_dict.get("goal_emb")
+            if goal_embedding is None or not torch.is_tensor(goal_embedding):
+                raise ValueError(
+                    "goal-conditioned bilinear runtime requires info_dict['goal_emb']"
+                )
+            if goal_embedding.ndim == 4:
+                goal = goal_embedding[:, :, -1, :]
+            elif goal_embedding.ndim == 3:
+                goal = goal_embedding if goal_embedding.shape[1] == source.shape[1] else goal_embedding[:, -1, :].unsqueeze(1)
+            elif goal_embedding.ndim == 2:
+                goal = goal_embedding.unsqueeze(1)
+            else:
+                raise ValueError(f"unsupported goal_emb rank: {goal_embedding.ndim}")
+            goal = goal.expand_as(source)
+            goal_projected = (
+                goal - source - self.bilinear_goal_mean.to(source)
+            ) @ self.bilinear_goal_components.to(source).transpose(0, 1)
+            goal_action = (
+                goal_projected.unsqueeze(-1) * action_summary.unsqueeze(-2)
+            ).flatten(start_dim=-2)
+            blocks.extend([goal_projected, goal_action])
         if include_predicted_dynamics:
             delta_action = (
                 delta_projected.unsqueeze(-1) * action_summary.unsqueeze(-2)
@@ -690,6 +910,11 @@ class CapacityReadoutCostModel(torch.nn.Module):
                 source_projected.unsqueeze(-1) * delta_projected.unsqueeze(-2)
             ).flatten(start_dim=-2)
             blocks.extend([delta_projected, delta_action, source_delta])
+            if goal_projected is not None:
+                goal_delta = (
+                    goal_projected.unsqueeze(-1) * delta_projected.unsqueeze(-2)
+                ).flatten(start_dim=-2)
+                blocks.append(goal_delta)
         return torch.cat(blocks, dim=-1)
 
     def _mlp_no_dynamics_residual(self, features: torch.Tensor) -> torch.Tensor:
@@ -719,6 +944,47 @@ class CapacityReadoutCostModel(torch.nn.Module):
             normalized * self.mlp_no_dynamics_residual_scale.to(features)
             + self.mlp_no_dynamics_residual_mean.to(features)
         )
+
+    def _phase_augmented_action(
+        self, info_dict: dict, action_summary: torch.Tensor,
+    ) -> torch.Tensor:
+        """Append outcome-free door/goal one-hot and phase-action terms."""
+        if self.phase_conditioning == "none":
+            return action_summary
+        phase = info_dict.get("_task_phase")
+        if phase is None or not torch.is_tensor(phase):
+            raise ValueError(
+                "phase-conditioned capacity readout requires info_dict['_task_phase']"
+            )
+        if tuple(phase.shape) != tuple(action_summary.shape[:2]):
+            raise ValueError("_task_phase must have shape [batch, candidates]")
+        phase = phase.to(device=action_summary.device)
+        door = (phase == 0).to(action_summary.dtype)
+        goal = (phase == 1).to(action_summary.dtype)
+        onehot = torch.stack([door, goal], dim=-1)
+        interaction = torch.einsum("bnk,bna->bnka", onehot, action_summary).flatten(-2)
+        blocks = [action_summary, onehot, interaction]
+        if self.phase_conditioning == "tworoom_rgb_phase_waypoint_action":
+            direction = info_dict.get("_task_waypoint_direction")
+            if direction is None or not torch.is_tensor(direction):
+                raise ValueError(
+                    "waypoint-conditioned capacity readout requires "
+                    "info_dict['_task_waypoint_direction']"
+                )
+            if tuple(direction.shape) != tuple(action_summary.shape[:2]) + (2,):
+                raise ValueError(
+                    "_task_waypoint_direction must have shape [batch, candidates, 2]"
+                )
+            direction = direction.to(device=action_summary.device, dtype=action_summary.dtype)
+            direction = direction / torch.linalg.vector_norm(
+                direction, dim=-1, keepdim=True
+            ).clamp_min(1.0e-8)
+            perpendicular = torch.stack([-direction[..., 1], direction[..., 0]], dim=-1)
+            pairs = action_summary.reshape(*action_summary.shape[:-1], 6, 2)
+            along = (pairs * direction.unsqueeze(-2)).sum(dim=-1)
+            cross = (pairs * perpendicular.unsqueeze(-2)).sum(dim=-1)
+            blocks.append(torch.stack([along, cross], dim=-1).flatten(-2))
+        return torch.cat(blocks, dim=-1)
 
     @staticmethod
     def _rank_affine_bank_cost(
@@ -769,6 +1035,8 @@ class CapacityReadoutCostModel(torch.nn.Module):
         action_summary = capacity_action_summary(raw_candidates)
         if self.action_frame == "proposal_relative":
             action_summary = proposal_relative_action_summary(action_summary)
+        action_features = self._phase_augmented_action(info_dict, action_summary)
+        phase_features = action_features[..., action_summary.shape[-1]:]
         source = info_dict["emb"][:, :, -1, :]
         predicted = info_dict["predicted_emb"][:, :, -1, :]
         if self.mlp_no_dynamics_gate_enabled:
@@ -801,13 +1069,13 @@ class CapacityReadoutCostModel(torch.nn.Module):
                 support_distance <= self.proposal_support_radius_sq.to(action_summary)
             ) & active_iteration
             action_cost = self._readout(
-                action_summary,
+                action_features,
                 self.action_coefficient,
                 self.action_mean,
                 self.action_scale,
             )
             residual = self._mlp_no_dynamics_residual(
-                torch.cat([source, action_summary], dim=-1)
+                torch.cat([source, action_features], dim=-1)
             )
             task_cost = action_cost + residual
             support_fraction = raw_support_mask.to(base_cost).mean(dim=1)
@@ -831,6 +1099,34 @@ class CapacityReadoutCostModel(torch.nn.Module):
                     float(active_fraction.max().item()),
                 )
             support_mask = raw_support_mask & valid_rows.unsqueeze(1)
+            # Double-objective deployment gate.  The proposal-relative MLP
+            # improves short-horizon reachability, but can move the selected
+            # action away from a terminally stable frozen candidate.  Keep
+            # only supported candidates within the frozen-cost quantile and
+            # fail closed if that intersection is too small.
+            if self.mlp_base_rank_quantile < 1.0:
+                support_count = support_mask.sum(dim=1)
+                # All rows in a CEM batch share the same explicit bank
+                # support count after the validity gate.  Sort only the
+                # supported values so unsupported Gaussian proposals cannot
+                # create an artificial zero/inf quantile.
+                supported_base = base_cost.masked_fill(~support_mask, torch.inf)
+                sorted_base = torch.sort(supported_base, dim=1).values
+                cutoff_index = torch.floor(
+                    self.mlp_base_rank_quantile * (support_count.to(base_cost) - 1.0)
+                ).to(torch.long).clamp_min(0)
+                cutoff = torch.gather(
+                    sorted_base,
+                    1,
+                    cutoff_index.unsqueeze(1),
+                )
+                stable_mask = support_mask & (base_cost <= cutoff)
+                stable_valid = stable_mask.sum(dim=1) >= 2
+                self.mlp_terminal_gate_rows += int(stable_valid.sum().item())
+                self.mlp_terminal_gate_abstentions += int(
+                    (valid_rows & ~stable_valid).sum().item()
+                )
+                support_mask = stable_mask & stable_valid.unsqueeze(1)
             mapped = self._rank_affine_bank_cost(task_cost, base_cost, support_mask)
             model_component = (
                 torch.roll(base_cost, shifts=1, dims=1)
@@ -874,6 +1170,16 @@ class CapacityReadoutCostModel(torch.nn.Module):
             )
             return torch.where(support_mask, final_supported_cost, base_cost)
         if self.bilinear_gate_enabled:
+            iteration = info_dict.get("_cem_iteration")
+            if iteration is None:
+                if self.bilinear_start_iteration > 0:
+                    return base_cost
+            elif not torch.is_tensor(iteration):
+                return base_cost
+            if iteration is not None and torch.all(
+                iteration < self.bilinear_start_iteration
+            ):
+                return base_cost
             candidate_bank_mask = info_dict["_candidate_bank_mask"]
             if not torch.is_tensor(candidate_bank_mask):
                 raise TypeError("_candidate_bank_mask must be a tensor when provided")
@@ -883,21 +1189,89 @@ class CapacityReadoutCostModel(torch.nn.Module):
                     f"got {tuple(candidate_bank_mask.shape)}, expected {tuple(base_cost.shape)}"
                 )
             support_mask = candidate_bank_mask.to(device=base_cost.device, dtype=torch.bool)
-            include_dynamics = self.bilinear_selected == "bilinear_full_predicted_dynamics"
-            features = self._bilinear_features(
-                source,
-                predicted - source,
-                action_summary,
-                include_predicted_dynamics=include_dynamics,
+            consensus = self.bilinear_selected == "bilinear_consensus"
+            rank_fusion = self.bilinear_selected == "bilinear_rank_fusion"
+            include_dynamics = self.bilinear_selected in (
+                "bilinear_full_predicted_dynamics",
+                "bilinear_consensus",
+                "bilinear_rank_fusion",
             )
-            prefix = "bilinear_full" if include_dynamics else "bilinear_no_dynamics"
-            task_cost = self._readout(
-                features,
-                getattr(self, f"{prefix}_coefficient"),
-                getattr(self, f"{prefix}_mean"),
-                getattr(self, f"{prefix}_scale"),
-            )
+
+            def _bilinear_cost(with_predicted_dynamics: bool) -> torch.Tensor:
+                features = self._bilinear_features(
+                    source,
+                    predicted - source,
+                    action_features,
+                    info_dict=info_dict,
+                    include_predicted_dynamics=with_predicted_dynamics,
+                )
+                prefix = (
+                    "bilinear_full"
+                    if with_predicted_dynamics
+                    else "bilinear_no_dynamics"
+                )
+                return self._readout(
+                    features,
+                    getattr(self, f"{prefix}_coefficient"),
+                    getattr(self, f"{prefix}_mean"),
+                    getattr(self, f"{prefix}_scale"),
+                )
+
+            task_cost = _bilinear_cost(include_dynamics)
+            consensus_cost = _bilinear_cost(False) if (consensus or rank_fusion) else None
+            if self.bilinear_base_rank_quantile < 1.0:
+                support_count = support_mask.sum(dim=1)
+                supported_base = base_cost.masked_fill(~support_mask, torch.inf)
+                sorted_base = torch.sort(supported_base, dim=1).values
+                cutoff_index = torch.floor(
+                    self.bilinear_base_rank_quantile
+                    * (support_count.to(base_cost) - 1.0)
+                ).to(torch.long).clamp_min(0)
+                cutoff = torch.gather(
+                    sorted_base, 1, cutoff_index.unsqueeze(1)
+                )
+                stable_mask = support_mask & (base_cost <= cutoff)
+                stable_valid = stable_mask.sum(dim=1) >= 2
+                self.bilinear_stability_gate_rows += int(
+                    stable_valid.sum().item()
+                )
+                self.bilinear_stability_gate_abstentions += int(
+                    (~stable_valid).sum().item()
+                )
+                support_mask = stable_mask & stable_valid.unsqueeze(1)
+            if consensus:
+                assert consensus_cost is not None
+                supported_task = task_cost.masked_fill(~support_mask, torch.inf)
+                supported_consensus = consensus_cost.masked_fill(
+                    ~support_mask, torch.inf
+                )
+                task_best = torch.argmin(supported_task, dim=1)
+                consensus_best = torch.argmin(supported_consensus, dim=1)
+                agreement = task_best == consensus_best
+                self.bilinear_consensus_abstentions += int((~agreement).sum().item())
+                support_mask = support_mask & agreement.unsqueeze(1)
+            elif rank_fusion:
+                assert consensus_cost is not None
+
+                def _normalized_rank(cost: torch.Tensor) -> torch.Tensor:
+                    masked = cost.masked_fill(~support_mask, torch.inf)
+                    order = torch.argsort(masked, dim=1)
+                    rank = torch.argsort(order, dim=1).to(cost.dtype)
+                    denominator = (support_mask.sum(dim=1, keepdim=True) - 1).clamp_min(1)
+                    return rank / denominator.to(cost.dtype)
+
+                # Average ranks, rather than raw costs, because the two
+                # readouts have different feature dimensions and regression
+                # scales.  Unsupported Gaussian proposals remain untouched.
+                task_cost = 0.5 * (
+                    _normalized_rank(task_cost)
+                    + _normalized_rank(consensus_cost)
+                )
             mapped = self._rank_affine_bank_cost(task_cost, base_cost, support_mask)
+            mapped = (
+                (1.0 - self.bilinear_base_cost_blend_weight) * mapped
+                + self.bilinear_base_cost_blend_weight * base_cost
+            )
             supported_base = base_cost.masked_fill(~support_mask, torch.inf)
             supported_task = task_cost.masked_fill(~support_mask, torch.inf)
             base_best = torch.argmin(supported_base, dim=1)
@@ -934,16 +1308,22 @@ class CapacityReadoutCostModel(torch.nn.Module):
             latent_features = torch.cat(
                 [latent_features, goal - source, predicted - goal], dim=-1
             )
+        if phase_features.shape[-1]:
+            latent_features = torch.cat([latent_features, phase_features], dim=-1)
         action_cost = self._readout(
-            action_summary, self.action_coefficient, self.action_mean, self.action_scale,
+            action_features, self.action_coefficient, self.action_mean, self.action_scale,
         )
         if not self.gate_enabled:
             return base_cost if self.base_cost_correction else action_cost
-        residual_cost = self._readout(
-            latent_features,
-            self.residual_coefficient,
-            self.residual_mean,
-            self.residual_scale,
+        residual_cost = (
+            self._readout(
+                latent_features,
+                self.residual_coefficient,
+                self.residual_mean,
+                self.residual_scale,
+            )
+            if self.residual_correction_enabled
+            else torch.zeros_like(base_cost)
         )
         if not self.action_correction_enabled:
             action_cost = torch.zeros_like(base_cost)
@@ -1017,10 +1397,28 @@ class CapacityReadoutCostModel(torch.nn.Module):
             # ``correction`` is already zero for unsupported proposals.
             return base_cost + readout_cost
         if support_mask is not None:
-            # The readout is calibrated only on the explicit bank.  Off-bank
-            # Gaussian proposals must retain the frozen model cost rather than
-            # becoming artificial zero-cost candidates.
-            return torch.where(support_mask, readout_cost, base_cost)
+            # The readout is calibrated only on the explicit bank.  Its
+            # numerical scale is not the frozen model's cost scale, so raw
+            # replacement would make every supported bank candidate compete
+            # against Gaussian candidates with incomparable units.  Preserve
+            # the learned within-bank ordering, but map that ordering onto
+            # the frozen-cost scale before merging with off-bank proposals.
+            # This is especially important for goal-conditioned residuals:
+            # the goal feature can improve ranking while its regression target
+            # is still not a calibrated absolute planning cost.
+            mapped = self._rank_affine_bank_cost(
+                readout_cost, base_cost, support_mask,
+            )
+            supported_base = base_cost.masked_fill(~support_mask, torch.inf)
+            supported_readout = mapped.masked_fill(~support_mask, torch.inf)
+            self.readout_evaluated_rows += int(base_cost.shape[0])
+            self.readout_bank_argmin_changes += int(
+                (
+                    torch.argmin(supported_base, dim=1)
+                    != torch.argmin(supported_readout, dim=1)
+                ).sum().item()
+            )
+            return torch.where(support_mask, mapped, base_cost)
         return readout_cost
 
 

@@ -5,7 +5,7 @@ import pytest
 from experiments.summarize_cube_temporal_closed_loop import main
 
 
-def _artifact(path, seeds, static, temporal, gate, fallback, feedback=None):
+def _artifact(path, seeds, static, temporal, gate, fallback, feedback=None, *, approach_steps=0):
     rows = lambda values, counts=None: [
         {
             "seed": seed,
@@ -19,6 +19,8 @@ def _artifact(path, seeds, static, temporal, gate, fallback, feedback=None):
         "checkpoint": "cube",
         "checkpoint_frozen": True,
         "fixed_prelude": "fixed",
+        "approach_steps": approach_steps,
+        "approach_gain": 1.0,
         "support_gate": "fixed",
         "support_threshold_m": 0.0005,
         "candidate_bank": [[0.0], [1.0]],
@@ -84,3 +86,17 @@ def test_closed_loop_aggregate_reports_optional_pixel_feedback(tmp_path, monkeyp
     report = json.loads(output.read_text())
     assert report["pooled"]["pixel_feedback_minus_static"]["wins_improvement"] == 2
     assert report["pooled"]["pixel_feedback_minus_static"]["losses_deterioration"] == 0
+
+
+def test_closed_loop_aggregate_rejects_mismatched_approach_protocol(tmp_path, monkeypatch):
+    first = tmp_path / "no_approach.json"
+    second = tmp_path / "approach.json"
+    args = ([1], [1.0], [0.5], [0.5], [0])
+    _artifact(first, *args, approach_steps=0)
+    _artifact(second, *args, approach_steps=10)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["summarize", "--input", str(first), "--input", str(second), "--output", str(tmp_path / "x.json")],
+    )
+    with pytest.raises(ValueError, match="protocol mismatch"):
+        main()

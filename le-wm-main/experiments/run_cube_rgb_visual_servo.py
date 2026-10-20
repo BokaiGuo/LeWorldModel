@@ -14,6 +14,7 @@ import argparse
 import copy
 import json
 import os
+import random
 import sys
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,14 @@ GRIPPER_OPEN_ACTION = -1.0
 
 
 def _capture_initial(seed: int, task_id: int) -> dict[str, Any]:
+    # Some OGB-Cube variation/renderer paths consult process-global RNGs in
+    # addition to Gym's per-environment generator.  Seeding only reset(seed=)
+    # therefore produced different initial RGB charts across host processes.
+    # Make the serialized root a genuine deterministic function of (seed, task)
+    # before constructing the environment.
+    random.seed(int(seed))
+    np.random.seed(int(seed))
+    torch.manual_seed(int(seed))
     env = _make_env()
     try:
         _, info = env.reset(seed=int(seed), options={"task_id": int(task_id), "render_goal": True})

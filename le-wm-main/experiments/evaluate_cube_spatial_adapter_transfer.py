@@ -43,6 +43,7 @@ def _score_rows(actions: np.ndarray, effects: np.ndarray) -> np.ndarray:
 
 def _fit_local_probe_map(
     actions: np.ndarray, effects: np.ndarray, min_effect_norm: float = 1.0e-4,
+    min_probe_count: int = 3,
 ) -> tuple[np.ndarray | None, dict[str, float | int | str]]:
     """Fit an action-to-front-effect map from probe rows only."""
     x = np.asarray(actions, dtype=np.float64)
@@ -50,6 +51,18 @@ def _fit_local_probe_map(
     rank = int(np.linalg.matrix_rank(x)) if x.ndim == 2 else 0
     if x.ndim != 2 or x.shape[1] != 2 or y.shape != x.shape or rank < 2:
         return None, {"status": "insufficient_probe_support", "rank": rank}
+    # A rank-2 fit from exactly two probes interpolates every observed point
+    # and has no residual degree of freedom.  Its zero training residual is
+    # therefore not evidence that the local map transfers to held actions.
+    # Require one redundant probe before allowing a local update; otherwise
+    # fail closed to the calibrated carrier.
+    if x.shape[0] < int(min_probe_count):
+        return None, {
+            "status": "insufficient_probe_redundancy",
+            "rank": rank,
+            "probe_count": int(x.shape[0]),
+            "minimum_probe_count": int(min_probe_count),
+        }
     mapping, _, _, singular = np.linalg.lstsq(x, y, rcond=1.0e-6)
     condition = float(singular[0] / max(singular[-1], 1.0e-8))
     norm = float(np.linalg.norm(mapping, ord="fro"))
@@ -89,11 +102,14 @@ def evaluate(
     device: str = "cuda",
     min_probe_effect: float = DEFAULT_MIN_PROBE_EFFECT,
     max_front_contact_distance: float = DEFAULT_MAX_FRONT_CONTACT_DISTANCE,
+    min_probe_count: int = 3,
 ) -> dict[str, object]:
     if not np.isfinite(float(min_probe_effect)) or float(min_probe_effect) < 0.0:
         raise ValueError("min_probe_effect must be finite and non-negative")
     if not np.isfinite(float(max_front_contact_distance)) or float(max_front_contact_distance) < 0.0:
         raise ValueError("max_front_contact_distance must be finite and non-negative")
+    if int(min_probe_count) < 3:
+        raise ValueError("min_probe_count must be at least 3 for a redundant 2D local fit")
     data = np.load(npz_path)
     test_features = np.asarray(data["test_features"], dtype=np.float32)
     test_targets = np.asarray(data["test_targets"], dtype=np.float32)
@@ -169,7 +185,9 @@ def evaluate(
             contact_gate_failures += 1
         else:
             mapping, diagnostics = _fit_local_probe_map(
-                actions[probe], test_targets[probe], min_effect_norm=float(min_probe_effect),
+                actions[probe], test_targets[probe],
+                min_effect_norm=float(min_probe_effect),
+                min_probe_count=int(min_probe_count),
             )
         if mapping is None:
             gate_failures += 1
@@ -209,6 +227,7 @@ def evaluate(
         "reprobe_or_fallback_rate": float(gate_failures / max(len(local_top1), 1)),
         "minimum_probe_effect_norm": float(min_probe_effect),
         "maximum_front_contact_distance": float(max_front_contact_distance),
+        "minimum_probe_count": int(min_probe_count),
         "support_eligible_groups": int(len(support_top1)),
         "support_coverage": float(len(support_top1) / max(len(local_top1), 1)),
         "support_conditioned_top1_agreement": (
@@ -239,6 +258,7 @@ def evaluate(
             "probe_candidates_excluded_from_ranking": True,
             "minimum_probe_effect_norm": float(min_probe_effect),
             "maximum_front_contact_distance": float(max_front_contact_distance),
+            "minimum_probe_count": int(min_probe_count),
         },
         "adapter": reports["adapter"],
         "zero_baseline": reports["zero_baseline"],
@@ -271,6 +291,10 @@ def main() -> None:
         default=DEFAULT_MAX_FRONT_CONTACT_DISTANCE,
         help="RGB front-view effector/object distance gate",
     )
+    parser.add_argument(
+        "--min-probe-count", type=int, default=3,
+        help="minimum redundant probe count required for a local 2D map",
+    )
     args = parser.parse_args()
     if args.device == "cuda":
         from experiments.gpu_preflight import require_cuda_allocation
@@ -279,6 +303,7 @@ def main() -> None:
         args.data, args.checkpoint, args.device,
         min_probe_effect=float(args.min_probe_effect),
         max_front_contact_distance=float(args.max_front_contact_distance),
+        min_probe_count=int(args.min_probe_count),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")

@@ -356,10 +356,14 @@ def _fit_listwise_mlp_predictions(
     grouped: dict[str, list[int]] = defaultdict(list)
     for position, root in enumerate(train_groups):
         grouped[str(root)].append(position)
-    group_sizes = {len(indices) for indices in grouped.values()}
-    if len(group_sizes) != 1 or not group_sizes or min(group_sizes) < 2:
-        raise ValueError("listwise training requires equal candidate counts >=2 per train cell")
-    group_index = np.asarray([grouped[root] for root in sorted(grouped)], dtype=np.int64)
+    # Candidate banks can legitimately have different cardinalities after
+    # support filtering (for example, 8 candidates in one cell and 11 in
+    # another).  A rectangular tensor silently encourages padding or dropping
+    # candidates, both of which change the decision problem.  Keep variable
+    # length cells and compute the listwise loss cell-by-cell instead.
+    group_index = [np.asarray(grouped[root], dtype=np.int64) for root in sorted(grouped)]
+    if not group_index or min(len(indices) for indices in group_index) < 2:
+        raise ValueError("listwise training requires at least two candidates per train cell")
     target_scale = max(float(np.std(train_target)), 1.0e-6)
     normalized_target = np.asarray(train_target, dtype=np.float64) / target_scale
 
@@ -374,19 +378,26 @@ def _fit_listwise_mlp_predictions(
         device=device,
     )
     train_y = torch.as_tensor(normalized_target, dtype=torch.float32, device=device)
-    tensor_group_index = torch.as_tensor(group_index, dtype=torch.long, device=device)
-    grouped_target = train_y[tensor_group_index]
-    target_probability = torch.softmax(-grouped_target / float(temperature), dim=1)
+    tensor_group_index = [
+        torch.as_tensor(indices, dtype=torch.long, device=device)
+        for indices in group_index
+    ]
     model.train()
     for _ in range(int(epochs)):
         optimizer.zero_grad(set_to_none=True)
         prediction = model(train_x)
-        grouped_prediction = prediction[tensor_group_index]
-        ranking_loss = -torch.mean(torch.sum(
-            target_probability
-            * torch.log_softmax(-grouped_prediction / float(temperature), dim=1),
-            dim=1,
-        ))
+        ranking_terms = []
+        for indices in tensor_group_index:
+            grouped_target = train_y[indices]
+            target_probability = torch.softmax(-grouped_target / float(temperature), dim=0)
+            grouped_prediction = prediction[indices]
+            ranking_terms.append(
+                -torch.sum(
+                    target_probability
+                    * torch.log_softmax(-grouped_prediction / float(temperature), dim=0)
+                )
+            )
+        ranking_loss = torch.mean(torch.stack(ranking_terms))
         loss = ranking_loss + float(mse_weight) * torch.mean((prediction - train_y) ** 2)
         loss.backward()
         optimizer.step()
@@ -503,6 +514,9 @@ def _low_rank_bilinear_features(
     source_components: np.ndarray,
     delta_mean: np.ndarray,
     delta_components: np.ndarray,
+    goal: np.ndarray | None = None,
+    goal_mean: np.ndarray | None = None,
+    goal_components: np.ndarray | None = None,
     include_predicted_dynamics: bool,
 ) -> np.ndarray:
     """Build deployable low-rank state/action transfer features."""
@@ -515,6 +529,15 @@ def _low_rank_bilinear_features(
         "ni,nj->nij", source_projected, action,
     ).reshape(len(action), -1)
     blocks = [action, source_action]
+    goal_projected = None
+    if goal is not None:
+        if goal_mean is None or goal_components is None:
+            raise ValueError("goal PCA statistics are required when goal features are enabled")
+        goal_projected = _project_pca(goal, goal_mean, goal_components)
+        goal_action = np.einsum(
+            "ni,nj->nij", goal_projected, action,
+        ).reshape(len(action), -1)
+        blocks.extend([goal_projected, goal_action])
     if include_predicted_dynamics:
         delta_action = np.einsum(
             "ni,nj->nij", delta_projected, action,
@@ -523,6 +546,11 @@ def _low_rank_bilinear_features(
             "ni,nj->nij", source_projected, delta_projected,
         ).reshape(len(action), -1)
         blocks.extend([delta_projected, delta_action, source_delta])
+        if goal_projected is not None:
+            goal_delta = np.einsum(
+                "ni,nj->nij", goal_projected, delta_projected,
+            ).reshape(len(action), -1)
+            blocks.append(goal_delta)
     return np.concatenate(blocks, axis=1)
 
 
@@ -575,6 +603,7 @@ def _crossfit_low_rank_bilinear_predictions(
     group_roots: list[str],
     base_roots: list[str],
     *,
+    goal: np.ndarray | None = None,
     include_predicted_dynamics: bool,
     alpha: float,
     rank: int = _BILINEAR_PCA_RANK,
@@ -600,6 +629,10 @@ def _crossfit_low_rank_bilinear_predictions(
         fit_mask = train_mask & ~validation_mask
         source_mean, source_components = _fit_train_pca(source, fit_mask, rank)
         delta_mean, delta_components = _fit_train_pca(delta, fit_mask, rank)
+        if goal is not None:
+            goal_mean, goal_components = _fit_train_pca(goal, fit_mask, rank)
+        else:
+            goal_mean, goal_components = None, None
         features = _low_rank_bilinear_features(
             source,
             delta,
@@ -608,6 +641,9 @@ def _crossfit_low_rank_bilinear_predictions(
             source_components=source_components,
             delta_mean=delta_mean,
             delta_components=delta_components,
+            goal=goal,
+            goal_mean=goal_mean,
+            goal_components=goal_components,
             include_predicted_dynamics=include_predicted_dynamics,
         )
         fit_target = np.asarray(target[fit_mask], dtype=np.float64).copy()
@@ -647,6 +683,29 @@ def _goalframe_action_summary(row: dict[str, Any]) -> np.ndarray:
     ])
 
 
+def _waypoint_frame_action_summary(
+    row: dict[str, Any], action: np.ndarray,
+) -> np.ndarray:
+    """Express the 12-D action summary in the current RGB waypoint frame."""
+    direction = np.asarray(row.get("task_waypoint_direction"), dtype=np.float64)
+    if direction.shape != (2,):
+        raise ValueError(
+            "waypoint-conditioned features require task_waypoint_direction [2]"
+        )
+    norm = float(np.linalg.norm(direction))
+    if norm <= 1.0e-8:
+        raise ValueError("task_waypoint_direction must be nonzero")
+    direction = direction / norm
+    perpendicular = np.asarray([-direction[1], direction[0]], dtype=np.float64)
+    action = np.asarray(action, dtype=np.float64)
+    if action.shape != (12,):
+        raise ValueError("waypoint action projection requires a 12-D action summary")
+    return np.stack([
+        action[0::2] * direction[0] + action[1::2] * direction[1],
+        action[0::2] * perpendicular[0] + action[1::2] * perpendicular[1],
+    ], axis=-1).reshape(-1)
+
+
 def _proposal_relative_action_summaries(
     actions: np.ndarray,
     group_roots: list[str],
@@ -673,6 +732,7 @@ def _proposal_relative_action_summaries(
 def _feature_vector(
     row: dict[str, Any], predicted: np.ndarray, action_frame: str,
     goal_conditioning: str = "none",
+    phase_conditioning: str = "none",
 ) -> np.ndarray:
     if action_frame in ("raw", "proposal_relative"):
         base = _record_features(row, predicted, "source_delta_action")
@@ -683,15 +743,34 @@ def _feature_vector(
         base = np.concatenate([source, predicted - source, _goalframe_action_summary(row)])
     else:
         raise ValueError(f"unsupported action frame: {action_frame!r}")
-    if goal_conditioning == "none":
-        return base
-    if goal_conditioning != "latent_relative":
+    if goal_conditioning == "latent_relative":
+        source = np.asarray(row.get("source_latent_model"), dtype=np.float64)
+        goal = np.asarray(row.get("goal_latent_model"), dtype=np.float64)
+        if source.ndim != 1 or source.shape != predicted.shape or goal.shape != predicted.shape:
+            raise ValueError("goal_latent_model must match source/predicted latent dimensions")
+        base = np.concatenate([base, goal - source, predicted - goal])
+    elif goal_conditioning != "none":
         raise ValueError(f"unsupported goal conditioning: {goal_conditioning!r}")
-    source = np.asarray(row.get("source_latent_model"), dtype=np.float64)
-    goal = np.asarray(row.get("goal_latent_model"), dtype=np.float64)
-    if source.ndim != 1 or source.shape != predicted.shape or goal.shape != predicted.shape:
-        raise ValueError("goal_latent_model must match source/predicted latent dimensions")
-    return np.concatenate([base, goal - source, predicted - goal])
+    if phase_conditioning == "none":
+        return base
+    if phase_conditioning not in {
+        "tworoom_rgb_phase_action",
+        "tworoom_rgb_phase_waypoint_action",
+    }:
+        raise ValueError(f"unsupported phase conditioning: {phase_conditioning!r}")
+    phase = str(row.get("task_phase", ""))
+    if phase not in {"door", "goal"}:
+        raise ValueError("phase-conditioned features require task_phase='door' or 'goal'")
+    phase_onehot = np.asarray([float(phase == "door"), float(phase == "goal")])
+    action = (
+        _goalframe_action_summary(row)
+        if action_frame == "goal_relative"
+        else _action_summary(row["action_sequence"])
+    )
+    blocks = [base, phase_onehot, np.outer(phase_onehot, action).reshape(-1)]
+    if phase_conditioning == "tworoom_rgb_phase_waypoint_action":
+        blocks.append(_waypoint_frame_action_summary(row, action))
+    return np.concatenate(blocks)
 
 
 def _load_context_rows(
@@ -742,6 +821,7 @@ def run(
     margin: float = 1.0e-3, draws: int = 10000, seed: int = 20261016,
     action_frame: str = "raw", target_mode: str = "absolute",
     goal_conditioning: str = "none",
+    phase_conditioning: str = "none",
     require_multiple_contexts: bool = True,
     mlp_residual_start_iteration: int = 7,
     mlp_planner_call_index: int = 1,
@@ -749,6 +829,8 @@ def run(
 ) -> dict[str, Any]:
     if fit_device not in {"auto", "cpu", "cuda"}:
         raise ValueError("fit_device must be one of: auto, cpu, cuda")
+    if phase_conditioning != "none" and action_frame != "raw":
+        raise ValueError("phase-conditioned action features currently require action_frame='raw'")
     cuda_available = bool(torch.cuda.is_available())
     if fit_device == "cuda" and not cuda_available:
         raise RuntimeError("CUDA requested but torch.cuda.is_available() is false")
@@ -790,15 +872,46 @@ def run(
                 "A realized-only array cannot be substituted for predicted dynamics."
             )
         value = np.asarray(arrays[context_index][key], dtype=np.float64)
-        features.append(_feature_vector(row, value, action_frame, goal_conditioning))
+        features.append(_feature_vector(
+            row, value, action_frame, goal_conditioning, phase_conditioning,
+        ))
         action_feature = (
             _goalframe_action_summary(row)
             if action_frame == "goal_relative"
             else _action_summary(row["action_sequence"])
         )
         source_feature = np.asarray(row["source_latent_model"], dtype=np.float64)
-        no_dynamics_features.append(np.concatenate([source_feature, action_feature]))
-        actions.append(action_feature)
+        phase_augmented_action = action_feature
+        no_dynamics_feature = np.concatenate([source_feature, action_feature])
+        if phase_conditioning in {
+            "tworoom_rgb_phase_action",
+            "tworoom_rgb_phase_waypoint_action",
+        }:
+            phase = str(row.get("task_phase", ""))
+            if phase not in {"door", "goal"}:
+                raise ValueError("phase-conditioned features require task_phase")
+            phase_onehot = np.asarray([float(phase == "door"), float(phase == "goal")])
+            phase_augmented_action = np.concatenate([
+                action_feature,
+                phase_onehot,
+                np.outer(phase_onehot, action_feature).reshape(-1),
+            ])
+            no_dynamics_feature = np.concatenate([
+                no_dynamics_feature,
+                phase_onehot,
+                np.outer(phase_onehot, action_feature).reshape(-1),
+            ])
+            if phase_conditioning == "tworoom_rgb_phase_waypoint_action":
+                no_dynamics_feature = np.concatenate([
+                    no_dynamics_feature,
+                    _waypoint_frame_action_summary(row, action_feature),
+                ])
+                phase_augmented_action = np.concatenate([
+                    phase_augmented_action,
+                    _waypoint_frame_action_summary(row, action_feature),
+                ])
+        no_dynamics_features.append(no_dynamics_feature)
+        actions.append(phase_augmented_action)
         targets.append(float(row["real_task_cost"]))
         context_id = str(row["candidate_bank_context_id"])
         group_roots.append(f"{context_id}::{row['instance_id']}")
@@ -808,6 +921,13 @@ def run(
     no_dynamics_x = np.asarray(no_dynamics_features, dtype=np.float64)
     action_x = np.asarray(actions, dtype=np.float64)
     latent_dimension = int(np.asarray(rows[0]["source_latent_model"]).size)
+    goal_relative_block = None
+    if goal_conditioning == "latent_relative":
+        goal_relative_block = np.asarray([
+            np.asarray(row["goal_latent_model"], dtype=np.float64)
+            - np.asarray(row["source_latent_model"], dtype=np.float64)
+            for row in rows
+        ], dtype=np.float64)
     if action_frame == "proposal_relative":
         action_x = _proposal_relative_action_summaries(action_x, group_roots)
         x[:, 2 * latent_dimension : 2 * latent_dimension + action_x.shape[1]] = action_x
@@ -835,17 +955,29 @@ def run(
     source_block = x[:, :latent_dimension]
     delta_block = x[:, latent_dimension : 2 * latent_dimension]
     shuffled_delta_block = shuffled_x[:, latent_dimension : 2 * latent_dimension]
+    if goal_relative_block is not None and goal_relative_block.shape != source_block.shape:
+        raise ValueError("goal-relative bilinear context must match source latent shape")
     source_pca_mean, source_pca_components = _fit_train_pca(
         source_block, train_mask, _BILINEAR_PCA_RANK,
     )
     delta_pca_mean, delta_pca_components = _fit_train_pca(
         delta_block, train_mask, _BILINEAR_PCA_RANK,
     )
+    if goal_relative_block is not None:
+        goal_pca_mean, goal_pca_components = _fit_train_pca(
+            goal_relative_block, train_mask, _BILINEAR_PCA_RANK,
+        )
+    else:
+        goal_pca_mean = np.zeros_like(source_pca_mean)
+        goal_pca_components = np.zeros_like(source_pca_components)
     low_rank_kwargs = {
         "source_mean": source_pca_mean,
         "source_components": source_pca_components,
         "delta_mean": delta_pca_mean,
         "delta_components": delta_pca_components,
+        "goal": goal_relative_block,
+        "goal_mean": goal_pca_mean if goal_relative_block is not None else None,
+        "goal_components": goal_pca_components if goal_relative_block is not None else None,
     }
     bilinear_no_dynamics_x = _low_rank_bilinear_features(
         source_block, delta_block, action_x,
@@ -882,6 +1014,7 @@ def run(
         train_mask,
         group_roots,
         base_roots,
+        goal=goal_relative_block,
         include_predicted_dynamics=False,
         alpha=1.0e-2,
     )
@@ -893,6 +1026,7 @@ def run(
         train_mask,
         group_roots,
         base_roots,
+        goal=goal_relative_block,
         include_predicted_dynamics=True,
         alpha=1.0e-2,
     )
@@ -941,6 +1075,15 @@ def run(
         "bilinear_full_predicted_dynamics": bilinear_full_pred,
         "bilinear_shuffled_prediction": bilinear_shuffled_pred,
     }
+    # The frozen LeWM score is available in the offline panel as a provenance
+    # field.  Treat it as a separate baseline so an action-only task readout
+    # can be authorized when it beats the frozen model on calibration roots;
+    # previously ``gate_enabled`` conflated this case with a latent residual
+    # gate and therefore discarded useful task features.
+    frozen_cost = -np.asarray(
+        [float(row["teacher_score"]) for row in rows], dtype=np.float64,
+    )
+    predictions["frozen_model_cost"] = frozen_cost
 
     calibration_selection: dict[str, Any] | None = None
     nonlinear_calibration_selection: dict[str, Any] | None = None
@@ -948,6 +1091,9 @@ def run(
     nonlinear_selected = "action_only"
     selected_alpha_for_artifact = 1.0e-2
     gate_passed = False
+    residual_gate_passed = False
+    action_gate_passed = False
+    action_gate_delta: dict[str, Any] | None = None
     if calibration_mask.any():
         # The grid is fixed before looking at outcome roots.  Calibration is
         # used only to control the high-dimensional latent residual's
@@ -1005,7 +1151,21 @@ def run(
             np.random.default_rng(seed + 991),
             draws,
         )
-        gate_passed = bool(calibration_delta_ci["ci95"][1] < 0.0)
+        residual_gate_passed = bool(calibration_delta_ci["ci95"][1] < 0.0)
+        frozen_calibration_roots = _macro_root_regrets(
+            frozen_cost, y, group_roots, base_roots, calibration_mask, margin,
+        )
+        action_vs_frozen_delta = np.asarray([
+            action_calibration_roots[root] - frozen_calibration_roots[root]
+            for root in sorted(set(action_calibration_roots) & set(frozen_calibration_roots))
+        ], dtype=np.float64)
+        action_gate_delta = _bootstrap(
+            action_vs_frozen_delta,
+            np.random.default_rng(seed + 992),
+            draws,
+        )
+        action_gate_passed = bool(action_gate_delta["ci95"][1] < 0.0)
+        gate_passed = bool(residual_gate_passed or action_gate_passed)
         predictions["calibration_safe_gate"] = (
             candidate_predictions[selected_alpha] if gate_passed else action_pred
         )
@@ -1024,7 +1184,10 @@ def run(
                 "rule": "enable residual only when calibration paired regret CI95 upper bound < 0",
                 "passed": gate_passed,
                 "fallback": not gate_passed,
-                "fallback_target": "action_only",
+                "fallback_target": "frozen_model",
+                "residual_gate_passed": residual_gate_passed,
+                "action_only_gate_passed": action_gate_passed,
+                "action_only_minus_frozen_regret_delta": action_gate_delta,
             },
             "selection_split": "calibration",
             "evaluation_split": "outcome",
@@ -1378,19 +1541,27 @@ def run(
             train_mask,
             selected_alpha_for_artifact,
         )
-        proposal_support_mean = np.mean(action_x[train_mask], axis=0)
+        support_action_x = (
+            action_x[:, :12]
+            if phase_conditioning in {
+                "tworoom_rgb_phase_action",
+                "tworoom_rgb_phase_waypoint_action",
+            }
+            else action_x
+        )
+        proposal_support_mean = np.mean(support_action_x[train_mask], axis=0)
         proposal_support_scale = np.maximum(
-            np.std(action_x[train_mask], axis=0), 1.0e-6,
+            np.std(support_action_x[train_mask], axis=0), 1.0e-6,
         )
         proposal_support_distance = np.sum(
-            ((action_x[train_mask] - proposal_support_mean) / proposal_support_scale) ** 2,
+            ((support_action_x[train_mask] - proposal_support_mean) / proposal_support_scale) ** 2,
             axis=1,
         )
         proposal_support_radius_sq = float(
             np.quantile(proposal_support_distance, 0.99)
         )
         all_proposal_support_distance = np.sum(
-            ((action_x - proposal_support_mean) / proposal_support_scale) ** 2,
+            ((support_action_x - proposal_support_mean) / proposal_support_scale) ** 2,
             axis=1,
         )
         all_proposal_support = all_proposal_support_distance <= proposal_support_radius_sq
@@ -1417,6 +1588,16 @@ def run(
             np.quantile(np.asarray(calibration_support_lower_bounds), 0.05)
         )
         readout_path = output / "capacity_readout.npz"
+        # The bilinear artifact now carries the same train-only goal-relative
+        # chart used by the goal-conditioned readout.  It is enabled only when
+        # the calibration gate selects it; older artifacts without the chart
+        # remain fail-closed in the runtime loader.
+        runtime_bilinear_gate_enabled = bool(
+            crossfit_selected != "action_only"
+        )
+        runtime_bilinear_selected = (
+            crossfit_selected if runtime_bilinear_gate_enabled else "action_only"
+        )
         np.savez_compressed(
             readout_path,
             action_coefficient=np.asarray(action_fit["coefficients"], dtype=np.float32),
@@ -1444,15 +1625,24 @@ def run(
             bilinear_source_components=np.asarray(source_pca_components, dtype=np.float32),
             bilinear_delta_mean=np.asarray(delta_pca_mean, dtype=np.float32),
             bilinear_delta_components=np.asarray(delta_pca_components, dtype=np.float32),
+            bilinear_goal_mean=np.asarray(goal_pca_mean, dtype=np.float32),
+            bilinear_goal_components=np.asarray(goal_pca_components, dtype=np.float32),
+            bilinear_goal_conditioning=np.asarray([
+                "latent_relative" if goal_relative_block is not None else "none"
+            ]),
             bilinear_rank=np.asarray([source_pca_components.shape[0]], dtype=np.int64),
-            bilinear_selected=np.asarray([crossfit_selected]),
+            bilinear_selected=np.asarray([runtime_bilinear_selected]),
             bilinear_gate_enabled=np.asarray(
-                [int(crossfit_selected != "action_only")], dtype=np.int8
+                [int(runtime_bilinear_gate_enabled)], dtype=np.int8
             ),
             selected_alpha=np.asarray([selected_alpha_for_artifact], dtype=np.float64),
             feature_family=np.asarray(["source_delta_action"]),
             action_frame=np.asarray([action_frame]),
             goal_conditioning=np.asarray([goal_conditioning]),
+            phase_conditioning=np.asarray([phase_conditioning]),
+            residual_correction_enabled=np.asarray(
+                [int(residual_gate_passed)], dtype=np.int8
+            ),
             target_mode=np.asarray([target_mode]),
             mlp_no_dynamics_gate_enabled=np.asarray(
                 [int(nonlinear_selected == "mlp_no_dynamics_source_action")],
@@ -1488,6 +1678,14 @@ def run(
             "feature_family": "source_delta_action",
             "action_frame": action_frame,
             "goal_conditioning": goal_conditioning,
+            "phase_conditioning": phase_conditioning,
+            "runtime_bilinear_gate_enabled": runtime_bilinear_gate_enabled,
+            "runtime_bilinear_selected": runtime_bilinear_selected,
+            "goal_conditioned_bilinear_boundary": (
+                "enabled_with_train_only_goal_relative_pca_chart"
+                if goal_relative_block is not None
+                else "not_applicable"
+            ),
             "target_mode": target_mode,
             "multiple_contexts_required": bool(require_multiple_contexts),
             "mlp_residual_start_iteration": int(mlp_residual_start_iteration),
@@ -1508,12 +1706,22 @@ def run(
             },
             "bilinear_transfer": {
                 "ridge_alpha": 0.01,
-                "no_dynamics_terms": ["action", "source_x_action"],
-                "predicted_dynamics_terms": [
+                "no_dynamics_terms": (
+                    ["action", "source_x_action", "goal_relative", "goal_relative_x_action"]
+                    if goal_relative_block is not None
+                    else ["action", "source_x_action"]
+                ),
+                "predicted_dynamics_terms": (
+                    [
+                        "predicted_delta", "predicted_delta_x_action",
+                        "source_x_predicted_delta", "goal_relative_x_predicted_delta",
+                    ]
+                    if goal_relative_block is not None else [
                     "predicted_delta",
                     "predicted_delta_x_action",
                     "source_x_predicted_delta",
-                ],
+                    ]
+                ),
             },
             "family_or_capacity_selection": "not_performed",
             "requested_device": fit_device,
@@ -1562,6 +1770,14 @@ def main() -> int:
     parser.add_argument("--target-mode", choices=("absolute", "root_centered"), default="absolute")
     parser.add_argument("--goal-conditioning", choices=("none", "latent_relative"), default="none")
     parser.add_argument(
+        "--phase-conditioning",
+        choices=(
+            "none", "tworoom_rgb_phase_action",
+            "tworoom_rgb_phase_waypoint_action",
+        ),
+        default="none",
+    )
+    parser.add_argument(
         "--allow-single-context", action="store_true",
         help="allow one root-disjoint panel when no cross-context intersection is required",
     )
@@ -1584,6 +1800,7 @@ def main() -> int:
         action_frame=args.action_frame,
         target_mode=args.target_mode,
         goal_conditioning=args.goal_conditioning,
+        phase_conditioning=args.phase_conditioning,
         require_multiple_contexts=not args.allow_single_context,
         mlp_residual_start_iteration=args.mlp_residual_start_iteration,
         mlp_planner_call_index=args.mlp_planner_call_index,

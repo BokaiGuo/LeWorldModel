@@ -16,6 +16,8 @@
 | `le-wm-main/experiments/run_live_cube_rgb_macro_panel.py --resume` | arm-level checkpoint reuse for the paired RGB panel | implemented / protocol-compatible resume only |
 | `le-wm-main/experiments/run_live_cube_rgb_macro_ranker.py --factorized-bank` | deployable finite bank with independent approach/push directions and phase-local action summaries | new predeclared support intervention; GPU held-out consequence pending |
 | `le-wm-main/experiments/run_unified_research_protocol.py` | geometry、memory、contact-control 和显式 claim workflow | 正在接入统一 runtime |
+| `docs/PUSHT_LITERATURE_TO_PROTOCOL_20261019.md` | 将局部视觉动力学、信息性探针、观测后验证、mode chart 与 fail-closed 机制映射到 PushT 实验约束 | literature-to-protocol evidence map / no independent result claim |
+| `le-wm-main/experiments/audit_pusht_verified_orientation_linesearch.py` | XY 已闭合后的 active signed pulse、RGB/状态重观测和局部方向更新上限诊断 | new privileged mechanism audit / CUDA allocation required / not LeWM evidence |
 | `le-wm-main/experiments/run_full_spectral_transfer.sh` | full-data spectral transfer 兼容入口 | 保留 CLI，逐步变薄 |
 | `le-wm-main/experiments/empirical_spectral_audit/` | learned latent 与 transfer diagnostics | active |
 | `le-wm-main/experiments/empirical_spectral_audit/run_pointmaze_support_matched_panel.py` | corrected root-disjoint PointMaze support-matched external panel；five-step action clock and repaired labels | 50-checkpoint CUDA panel completed；replay closed，planning/identifiability gate failed |
@@ -37,7 +39,32 @@
 | `le-wm-main/experiments/audit_cube_rgb_observability.py` | root-disjoint RGB versus frozen-LeWM geometry and one-step block-effect readouts; generic, guided-intervention, and color-geometry controls | 80-root CUDA/EGL mechanism panels completed; sparse contact support and goal-conditioned effect boundary retained; not planning evidence |
 | `le-wm-main/experiments/audit_pusht_orientation_response.py` | same-edge zero/+moment/-moment orientation-response identifiability audit；`edge_boundary` edge/fraction protocol；CUDA aggregate diagnostics | active / partial positive / cross-edge transfer gate not passed |
 | `le-wm-main/experiments/calibrate_pusht_orientation_gate.py` | calibration-only edge/fraction support gate with root-disjoint transfer audit | active / partial positive / 6–8 strata released per seed |
-| `le-wm-main/experiments/gdd_wm/` | GDD-WM D0-D2 proposed workstream | proposed / not yet validated |
+| `le-wm-main/experiments/gdd_wm/` | GDD-WM D0-D2 proposed workstream | D1 control executed; standalone GDD closed-loop negative; guarded fail-closed recovery reaches `12/20` at zero tolerance but trails visual dynamics `14/20` |
+| `le-wm-main/results/gdd_wm_teacher_goal_latent_cuda_20261019/` | goal-latent/goal-relative CUDA teacher-capacity intervention plus raw deployable readout | TwoRoom calibration fallback; Reacher raw predicted-dynamics gate passes; no universal teacher claim |
+| `le-wm-main/experiments/run_live_reacher_sequence_candidate_planning.py` with `gdd_wm_teacher_goal_latent_cuda_20261019/reacher_raw_latentrelative_v2/capacity_readout.npz` | independent frozen RGB Reacher consequence for the train-only goal-aware capacity readout | v4 rank-affine repair: `35/64 -> 38/64`, distance delta `-0.02616` with CI excluding zero; success CI crosses zero; Reacher-scoped positive consequence, not statistically established GDD gain; TwoRoom smoke `3/8` |
+| `le-wm-main/experiments/gdd_wm/summarize_live_teacher_consequence.py` | paired bootstrap and exact McNemar summary for frozen-teacher live consequences | implemented; preserves same-seed pairing and fail-closed claim boundary |
+| `le-wm-main/experiments/gdd_wm/summarize_tworoom_teacher_consequence.py` | paired TwoRoom consequence summary with runtime activation diagnostics | fresh 32-seed CUDA panel: `6/32 -> 7/32`, `p=1.0`; confirms cross-environment ranking boundary |
+| `le-wm-main/experiments/run_live_tworoom_planning.py --hybrid-door-phase-reactive` | phase-conditioned fail-closed recovery: RGB waypoint control during door phase, GDD readout retained during goal phase | same 32 roots: `11/32`; improves over unrestricted GDD `7/32`, but remains below RGB reactive `12/32`; recovery diagnostic only |
+| `le-wm-main/experiments/gdd_wm/build_frozen_predictive_teacher_package.py` | train-root-only frozen predicted-latent→task-cost teacher; separates teacher score from realized outcome cost | CUDA-compatible control artifact; D-JEPA claim not established |
+| `le-wm-main/results/gdd_wm_runtime_teacher_20261019_cpu_diagnostic/` | exact runtime repeated-pulse chart teacher and root-local capacity re-audit | global teacher correlation `0.049`; root-local action-only regret `0.01278`; predicted-dynamics increment fails calibration; CPU diagnostic only |
+| `le-wm-main/results/gdd_wm_history4_teacher_20261019_cpu_diagnostic/` | genuine predictor-history-4 teacher plus root-local observed-effect audit | teacher correlation `0.402`, consistency `0.455`; frozen regret `0.2166` vs local observed-effect `0.01069`; diagnostic only |
+| `le-wm-main/results/gdd_wm_runtime_history4_teacher_20261019_cpu_diagnostic/` | genuine history-4 predictor on exact runtime repeated-pulse chart | consistency `0.656`; frozen regret `0.2071` vs local observed-effect `0.0220`; diagnostic only |
+| `le-wm-main/experiments/gdd_wm/run_formal_online_local_effect_history2_cuda.sh` | regenerate true history-2 runtime bank, fit train-only effect policy, and run fresh-root online verification panel | fail-closed CUDA protocol; queued until host device nodes are exposed |
+| `le-wm-main/experiments/gdd_wm/run_formal_online_local_effect_history4_cuda.sh` | regenerate genuine history-4 runtime bank, fit train-only effect policy, and run fresh-root online verification panel | matched-contract re-audit completed on CUDA: support/release restored; HTSC `20/20`, visual baseline also `20/20` |
+| `le-wm-main/experiments/gdd_wm/run_formal_online_local_effect_history4_matched_cuda.sh` | one-command deployment-matched history-4 teacher, effect policy, and fresh-root CUDA panel | reproducible matched-contract runner; final panel `20/20` HTSC and `20/20` visual baseline |
+| `effect_adapter_rgb_online_probe` in `le-wm-main/experiments/run_live_pointmaze_planning.py` | four predeclared cardinal RGB probes followed by local observed-effect update | same fresh 20-root CUDA panel: `19/20` at tolerance `0.5`; positive versus frozen effect, not versus visual baseline |
+| `effect_adapter_rgb_online_verified_local` in `le-wm-main/experiments/run_live_pointmaze_planning.py` | probe-verified local residual may release only when episode-local verification and support pass, while global teacher-bound failure remains explicit | history-4 strict `0.25` CUDA fresh-20: `18/20`, mean final distance `0.2005`, fallback `40.0%`; below visual dynamics `20/20`, no independent GDD gain |
+| `effect_adapter_rgb_online_local_jacobian` in `le-wm-main/experiments/run_live_pointmaze_planning.py` | low-dimensional observed RGB effect Jacobian plus frozen task-consistency gate | history-4 gated CUDA fresh-20: `20/20`, mean final distance `0.1352` versus visual `0.1633`, but only `8.1%` local exploitation and paired bootstrap CI crosses zero; fresh external 12-root check also `12/12` but remains small |
+| `experiments/run_tworoom_effect_map_panel.py` | root/phase-local RGB effect-map veto versus direction-only gate | CUDA fresh-32 rerun: both `14/32`, paired `0/0/32`; effect-map gate adds no planning gain |
+| `le-wm-main/experiments/gdd_wm/audit_active_probe_support.py` | verifies active probes remain inside frozen runtime action support | 100-root/400-probe diagnostic: 99% support pass; no planning claim |
+| `le-wm-main/experiments/gdd_wm/build_predicted_latent_feature_table.py` | provenance-checked student feature export with candidate context/rank/outcome inputs forbidden | projection-control input; no planning claim |
+| `le-wm-main/experiments/gdd_wm/merge_rgb_successor_splits.py` | strict merge of disjoint train/calibration/outcome RGB successor artifacts with exact key/array coverage | implemented; removed successor-ref plumbing gap |
+| `le-wm-main/experiments/gdd_wm/audit_gdd_projection_rgb_selection.py` | frozen projection evaluation on independent RGB successor predictions and held-out task costs | offline RGB-compatible consequence; closed-loop gate still missing |
+| `le-wm-main/experiments/gdd_wm/train_projection_distillation.py` | projection-only GDD diagnostic with nested repairability-panel compatibility | completed diagnostic; prediction-preservation and independent planning gates missing |
+| `le-wm-main/experiments/run_live_pointmaze_planning.py --gdd-score-horizons` | explicit train/deployment horizon contract for frozen GDD projection scoring | CUDA fresh-20 matched audit: `h=4` `3/20`, legacy `h=1,2,4` `3/20`; protocol mismatch fixed, independent planning gain still absent |
+| `le-wm-main/experiments/run_live_pointmaze_planning.py --gdd-candidate-count` | explicit candidate-support contract for frozen GDD projection scoring | training-consistent 11-candidate CUDA fresh-20: `3/20`, mean distance `1.6679`; improves continuous error but no success gain over 16-candidate control |
+| `le-wm-main/results/gdd_wm_frozen_predictive_teacher_20261020_full16_cuda/capacity_audit/` | full 16-candidate train-only CUDA teacher-capacity audit | predicted-dynamics outcome regret delta `+0.0481` vs action-only, CI crosses zero; teacher increment remains unverified |
+| `docs/GDD_WM_PROGRESS_20261019.md` | reader-facing record of frozen predictive teacher, projection diagnostic, runtime contract repairs, and independent PointMaze RGB consequences | 2026-10-19; standalone GDD gain not established; fail-closed boundary documented |
 | `le-wm-main/experiments/gdd_wm/join_rgb_realized_refs.py` | provenance-safe join of dataset-matched realized RGB references into a copied candidate bank | audit utility / D1 still gated |
 | `le-wm-main/experiments/gdd_wm/audit_nonleaking_teacher_control.py` | train-only predicted-latent task-readout control for separating label leakage from transfer failure | diagnostic only / not D-JEPA or planning evidence |
 | `le-wm-main/experiments/gdd_wm/audit_transfer_sufficient_feature_families.py` | fixed train-only source/latent/action feature-family comparison | diagnostic only / no stable family yet |
@@ -2156,3 +2183,147 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   the negative result. The surviving boundary is that RGB carried-object
   effect information is not independently transferable to task closure under
   this protocol. Artifact: `results/cube_action_effect_panel_20261018_v6/`.
+- Cube calibrated RGB approach and verified local-effect panel (2026-10-19,
+  CUDA/EGL, fresh 8-root paired panel): the prior approach implementation
+  conflated image displacement with action displacement and approached before
+  descending. The repaired protocol uses a calibration-only pixel/action
+  Jacobian, shared by all arms, with `15 descent -> 10 RGB approach -> 5
+  close`. Verified local RGB effect improved over the paired static carrier
+  on `4/8` roots, tied `4/8`, lost `0/8`, with mean final-distance delta
+  `-0.05925 m`. The frozen-WM agreement gate was identical and recorded
+  disagreement fallbacks; rank-normalized fusion was weaker at `-0.03930 m`.
+  RGB geometry alone remained non-robust (`3/8` losses, `+0.01035 m`). This
+  repairs a control-interface bottleneck and supports local verified transfer;
+  it does not establish independent frozen-WM causal dynamics or universal
+  planning. Artifact:
+  `results/cube_rgb_calibrated_approach_20261019_fresh8/closed_loop.json`.
+- TwoRoom observed-effect gate and inverse-policy audit (2026-10-19, CUDA,
+  root-disjoint): the 32-root gate-only panel was neutral (`0/0/32` paired
+  wins/losses/ties). Replacing the frozen planner action with a locally
+  inverted RGB effect map was harmful (`0/10/22`), and adding rolling
+  two-step hold-out verification reduced but did not remove the harm
+  (`0/3/29`). The cause is task-level door/wall waypoint semantics not
+  represented by instantaneous marker displacement. The formal TwoRoom
+  controller therefore stays fail-closed: use the observed map only to veto a
+  conflicting model action, then use the reactive fallback; never overwrite a
+  planner action that already passes the gate. Artifacts:
+  `results/tworoom_verified_effect_20261019_fresh32/`,
+  `results/tworoom_verified_effect_policy_20261019_fresh32/`, and
+  `results/tworoom_verified_effect_policy_holdout_20261019_fresh32/`.
+- PointMaze held-out support/risk-gate consequence (2026-10-19, CUDA,
+  root-disjoint): calibration/readout roots were `1800--1849` and the fresh
+  test roots were `1870--1889`. Raw `wm_rgb` achieved `2/20` success and mean
+  final distance `1.0186`; visual-dynamics achieved `14/20`, `0.2813 m`; the
+  RGB support/dynamics-gated frozen-WM arm achieved `15/20`, `0.2927 m`; the
+  ungated effect adapter achieved `11/20`; HTSC consistency achieved `14/20`,
+  `0.2810 m`. The gate rejected `78.7%` of WM decisions and consistency
+  rejected `93.3%`. This is a positive selective-repair result for raw WM
+  failure, not proof of independent frozen-WM causal dynamics: most decisions
+  used the calibration-only visual-dynamics fallback. Artifact:
+  `results/pointmaze_verified_effect_20261019_test1870_1889/report.json`.
+- PushT active observed-effect orientation line search (2026-10-19--22,
+  CUDA, privileged mechanism audit): the first large-force protocol preserved
+  boundary contact on `16/16` roots but drove mean XY error to `181.61 px` and
+  achieved only `3/16` orientation successes. Reducing the normal/tangent
+  pulse to `(0.02, 0.04)` reduced mean XY error to `21.17 px` but left only
+  `2/16` orientation successes; a pure tangent pulse `(0.00, 0.08)` kept mean
+  XY error at `3.57 px` but achieved `0/16` orientation successes. The
+  balanced `(0.03, 0.12)` panel also achieved `0/16`. This is a decisive
+  mechanism boundary: contact retention alone is insufficient; orientation
+  requires normal force that creates translation, so a valid controller must
+  add task-level XY restoration/phase planning rather than only improve sign
+  estimation. Artifacts:
+  `results/pusht_verified_orientation_linesearch_20261019_cuda/`,
+  `results/pusht_verified_orientation_linesearch_20261020_small_cuda/`,
+  `results/pusht_verified_orientation_linesearch_20261021_tangent_cuda/`,
+  `results/pusht_verified_orientation_linesearch_20261022_balanced_cuda/`.
+  Adding an observed XY-restoration phase to the balanced protocol did not
+  close the gap: the fresh 16-root CUDA panel reached `2/16` orientation
+  successes, mean final angle error `1.6164 rad`, mean XY error `28.15 px`,
+  and preserved the boundary contact on `16/16`. The restoration loop only
+  preserved the declared XY budget on `4/16` roots, so it is not promoted to
+  the formal controller. Artifact:
+  `results/pusht_verified_orientation_linesearch_20261023_restore_cuda/`.
+  An observed-effect XY restoration variant lowered mean XY error further to
+  `9.90 px` but lost contact on `7/16` roots, confirming that unconstrained
+  residual minimization selects separation actions. Enforcing an inward
+  contact lease restored contact to `16/16`, but mean XY error increased to
+  `61.36 px` and orientation success remained `1/16`. Artifact:
+  `results/pusht_verified_orientation_linesearch_20261024_observed_restore_cuda/`
+  and `results/pusht_verified_orientation_linesearch_20261025_contact_lease_cuda/`.
+- PushT matched orientation response ceiling (2026-10-25, CUDA, 16
+  edge/fraction roots): equal-norm opposite-moment pairs were valid on
+  `16/16` roots, but signed response consistency was only `9/16`; the mean
+  paired angular separation was `0.00995 rad` and common drift `0.00558 rad`.
+  Thus a local paired probe contains a small orientation signal, but its sign
+  is not uniformly transferable across contact strata. Artifact:
+  `results/pusht_orientation_ceiling_20261025_cuda/orientation_response_audit.json`.
+- PushT literature-derived three-arm matched benchmark (2026-10-19, CUDA,
+  boundary-contact, 16 train and 16 held-out roots): the shared candidate
+  panel reached mode accuracy `0.9978` and boundary-contact loss `0/16` for
+  the frozen state-chart predictor, state-only fallback, and adaptive local
+  effect arms. The predictor arm had pose success `1/16`, final XY `55.48 px`,
+  final angle `1.101 rad`, and predicted/observed effect error `0.222`; the
+  adaptive local-effect arm had `4/16`, `38.86 px`, `1.203 rad`, and `0.174`,
+  respectively. The safe fallback had `2/16` pose success and `39.18 px`
+  final XY. Thus local probing reduced effect residual and improved pose count
+  relative to the predictor arm in this privileged panel, but the predictor
+  did not beat the fallback on pose/XY and the paired confidence intervals
+  remain wide. This is selective local-repair / permission-to-act evidence,
+  not frozen RGB/LeWM independent gain or universal transfer. Artifact:
+  `le-wm-main/results/pusht_literature_three_arm_cuda_20261019/`;
+  machine-readable decision:
+  `three_arm_summary.json`.
+- PushT phase-level contact-repair intervention (2026-10-19, CUDA,
+  independent 12-root panel): enabling ordered paired orientation contrast,
+  reverse phase gating, XY shielding, and contact relocation produced `4/12`
+  pose successes, `18.26 px` final XY error, and `0.860 rad` final angle
+  error. The matched state-only fallback produced `3/12`, `56.35 px`, and
+  `0.706 rad`. The improvement is therefore concentrated in translation and
+  strict pose count, while angle error itself is not improved. This identifies
+  the remaining bottleneck as phase-level task utility/translation coupling,
+  not simply sign estimation. The intervention is retained as a conditional
+  privileged repair candidate; it is not evidence for frozen RGB/LeWM gain.
+  Artifact: `le-wm-main/results/pusht_contact_relocation_cuda_20261019/`;
+  paired summary: `phase_repair_summary.json`.
+- PushT phase-shield and action-support follow-up (2026-10-19, CUDA):
+  tightening the XY shield from `2 px` to `0 px` on an independent high-angle
+  8-root panel did not restore pose closure (`0/8`); adding three declared
+  normal magnitudes (`0.02/0.04/0.08`) reduced held-out ranking regret to
+  `0.0615` but also remained `0/8` pose success. Extending the same roots
+  from 16 to 36 closure steps still remained `0/8`. The high-angle roots had
+  mean initial angle error `1.87 rad`, versus `0.95 rad` in the earlier
+  positive-count panel. This separates three effects: support coverage can
+  improve one-step ranking, horizon can reduce XY error, but neither resolves
+  within-contact orientation identifiability at high initial angle. Artifacts:
+  `le-wm-main/results/pusht_phase_shield0_cuda_20261019/`,
+  `le-wm-main/results/pusht_multinormal_support_cuda_20261019/`, and
+  `le-wm-main/results/pusht_multinormal_extended_cuda_20261019/`.
+- PushT high-angle support-coverage intervention (2026-10-19, CUDA): using
+  the same difficult 8 held-out roots (mean initial angle error `1.870 rad`)
+  while increasing training roots from `8` to `32` raised mode accuracy from
+  `0.919` to `0.969` and reduced predicted/observed effect error to `0.095`
+  for the state-chart arm. Nevertheless, every closed-loop arm remained
+  `0/8` pose success; the best paired phase macro reached `17.41 px` XY but
+  retained `1.617 rad` angle error. This rules out small training support as
+  the sole cause and narrows the boundary to high-angle within-contact
+  controllability/action-effect identifiability. Artifact:
+  `le-wm-main/results/pusht_highangle_train32_cuda_20261019/`.
+- PushT dense-bank relocation ablation (2026-10-19, CUDA, high-angle 8-root matched panel): relocation-enabled focused three-arm learned run had `0/8` pose success for predictor/fallback/local repair, with final XY `61.01/57.13/61.50` px and local-repair angle `1.959` rad. The predeclared no-relocation repeat remained `0/8` for all arms, but reduced final XY to `30.69/28.73/25.53` px and local-repair angle to `1.641` rad. Local observed-effect residual remained lower (`0.174`) than predictor (`0.210`) without producing pose closure; wrong-sign events remained `4.25/root`. This isolates relocation drift as a translation confound, not the sole cause: within-contact action-effect identifiability remains unresolved. Artifacts: `le-wm-main/results/pusht_highangle_densebank_focused8_cuda_20261019/` and `le-wm-main/results/pusht_highangle_densebank_norelocation_focused8_cuda_20261019/`.
+- PushT contact-lease and active-excitation follow-up (2026-10-19, CUDA, same high-angle 8-root panel): explicit contact lease produced `0/8` pose, `22.96 px` local-repair final XY, `1.840 rad` final angle, and residual `0.154`. Adding maximum-moment escalation after wrong-sign reduced wrong-sign events from about `5.00` to `1.625/root`, but worsened local-repair final XY to `44.60 px` and remained `0/8` pose. A privileged horizon-2 beam ceiling with 18-step budget reached `2/8` pose, `5.81 px` XY, and `1.245 rad` angle; it is an upper-bound diagnostic with a different budget, not learned or frozen-LeWM evidence. Artifacts: `le-wm-main/results/pusht_highangle_densebank_contactlease_focused8_cuda_20261019/`, `le-wm-main/results/pusht_highangle_densebank_contactlease_escalate_focused8_cuda_20261019/`, and `le-wm-main/results/pusht_highangle_successor_beam_cuda_20261019/`.
+- PushT observed local-Jacobian follow-up (2026-10-19, CUDA, no-relocation high-angle 8-root panel): fail-closed local action-effect Jacobian reduced local-repair predicted/observed residual to `0.138` and final XY to `14.19 px`, but final angle remained `1.750 rad` and strict pose remained `0/8`; online Jacobian exploitation rate was `0` because deployed roots lacked same-region paired rank-2 support. Artifact: `le-wm-main/results/pusht_highangle_densebank_localjac_focused8_cuda_20261019/`.
+- PushT terminal observed-effect control-flow repair (2026-10-19, CUDA, same no-relocation 8-root panel): high-angle roots had been skipping adaptive observed-effect during `terminal_handoff`; enabling `--terminal-observed-effect` raised paired probe rate to `0.930` and reduced residual to `0.108`, with final XY `11.79 px`, but online Jacobian exploitation remained `0`, final angle `1.844 rad`, and pose remained `0/8`. This fixes an implementation omission without closing the within-contact identifiability boundary. Artifact: `le-wm-main/results/pusht_highangle_densebank_terminal_localjac_focused8_cuda_20261019/`.
+- PushT stiction probe-scale audit (2026-10-19, CUDA, same no-relocation 8-root panel): `breakaway-paired-probe` increased probe strength but produced local-repair residual `0.357`, XY `33.87 px`, angle `1.783 rad`, and pose `0/8`; lowering informative threshold `0.005 -> 0.001` retained residual `0.108`, XY `11.79 px`, angle `1.844 rad`, Jacobian exploitation `0`, and pose `0/8`. Strong probes leave the local chart while weak probes lack stable task-direction information. Artifacts: `le-wm-main/results/pusht_highangle_densebank_breakawaypair_focused8_cuda_20261019/` and `le-wm-main/results/pusht_highangle_densebank_terminal_localjac_threshold001_focused8_cuda_20261019/`.
+- PushT extended action-support matched audit (2026-10-19, CUDA, same high-angle 8-root manifest): privileged extended-bank successor oracle reached `4/8` pose, `8.53 px` XY, and `1.072 rad` angle; the matched learned panel remained `0/8` pose, with predictor angle `1.657 rad`, local-repair angle `1.844 rad`, and local residual `0.077`. This rules out action-bank size as the sole cause and isolates sequence-level contact-conditioned ranking failure. Artifacts: `le-wm-main/results/pusht_highangle_successor_oracle_extended_cuda_20261019/` and `le-wm-main/results/pusht_highangle_extendedbank_terminal_focused8_cuda_20261019/`.
+- PushT literature-derived train-root-only sequence-ranking intervention (2026-10-19, CUDA, boundary-contact, matched 8/8 panel): a joint two-pulse ExtraTrees preference model was fitted only on training-root outcomes; deployment re-observed after the first pulse before scoring the second. The sequence arm remained `0/8` pose, `37.22 px` final XY, and `1.900 rad` final angle, worse than frozen predictor (`0/8`, `11.66 px`, `1.815 rad`) and adaptive local repair (`0/8`, `11.16 px`, `1.817 rad`). The phase-repair arm reached `1/8` pose and `1.510 rad` angle. This is a negative but diagnostic result: re-observation alone does not repair out-of-support sequence preferences; the joint ranker trained on privileged state transitions is not a frozen RGB/LeWM transfer certificate. Artifact: `le-wm-main/results/pusht_highangle_densebank_sequence_ranker_focused8_cuda_20261019_v2/`.
+- PushT sequence-ranker context-matching repair (2026-10-19, CUDA, same boundary-contact 8/8 panel): macro-ranker training now uses the frozen train-only predictor's imagined first state for first-pulse candidate generation, matching deployment; real first successors remain labels only. This reduced sequence-arm angle from `1.900` to `1.630 rad` and XY from `37.22` to `33.48 px`, but strict pose remained `0/8`. A sequence-first/phase-second hybrid further reached `1.561 rad` and `27.43 px`, still `0/8`, while the fixed phase arm remained `1/8`. Therefore train/deploy context shift is real but not sufficient; residual failure is sequence-risk calibration/action-effect transfer. Artifacts: `le-wm-main/results/pusht_highangle_densebank_sequence_ranker_contextmatched_focused8_cuda_20261019/` and `le-wm-main/results/pusht_highangle_densebank_sequence_phase_hybrid_contextmatched_focused8_cuda_20261019/`.
+- PushT paired/unpaired local-chart diagnostic (2026-10-19, CUDA, same high-angle 8/8 panel): strict same-region +/- paired probes forced identification-probe rate to `1.0` but online Jacobian exploitation remained `0` and pose `0/8`; allowing same-region rank-2 unpaired effects did not change exploitation or pose. This rules out strict sign pairing alone as the sole failure: observed probe effects do not form a reusable action-effect chart under the current high-angle contact transitions. Artifacts: `le-wm-main/results/pusht_highangle_densebank_paired_localjac_focused8_cuda_20261019/` and `le-wm-main/results/pusht_highangle_densebank_unpaired_localjac_focused8_cuda_20261019/`.
+- Cube phase-entry repair (2026-10-19, CUDA, fresh 16-root paired panel): the original verified-local protocol changed actions but produced 13/16 tied outcomes and mean final-distance delta `-0.00423 m`, identifying ineffective pre-contact phase entry as a bottleneck. A fixed RGB-only approach phase was added before the unchanged descent/closure prelude, with 40 calibration roots and 16 new test roots. Verified RGB local effect achieved `9/16` wins, `0` losses, `7` ties, mean delta `-0.03053 m`, bootstrap 95% CI `[-0.05193,-0.01299]`, exact sign-test `p=0.00390625`; fusion achieved `-0.03019 m` with the same win/loss pattern. Temporal-only and support-only controls were non-positive. This is a scoped cross-environment repair consequence for phase-entry plus verified-local action effect, not universal GDD-WM or causal latent-dynamics evidence. Artifacts: `le-wm-main/results/gdd_wm_cube_verified_local_approach_20261019_cuda_fresh16/` and `le-wm-main/results/gdd_wm_cube_verified_local_approach_20261019_cuda_fresh16/aggregate.json`.
+- Cube RGB-successor-only preference-transfer panel (2026-10-19, CUDA, 40 calibration and 16 fresh test roots): `rgb_goal` calibration used realized RGB successor goal error without privileged task labels. Low-gain effect-adaptive versus fullscale reclose improved final distance by `0.03441 m` on average (intervention-minus-baseline delta `-0.03441`, bootstrap CI `[-0.06709,-0.00590]`), with 10/16 root improvements and 6/16 degradations; exact two-sided sign test `p=0.4545`. Success was `2/16` versus `0/16`, not sufficient for a success-rate claim. Effect-stop was weaker (`-0.01708 m`, CI `[-0.04610,0.00487]`). This is evidence for RGB realized-effect preference plus low-gain contact adaptation, not frozen LeWM/D-JEPA teacher validation or universal transfer. Artifacts: `le-wm-main/results/gdd_wm_cube_rgb_goal_teacher_20261019_cuda_fresh16/panel.json` and `.../paired_summary.json`; adjudicator: `le-wm-main/experiments/summarize_cube_rgb_macro_panel.py`.
+- Cube RGB approach-horizon replication (2026-10-19, CUDA, fresh 16-root panel): increasing the fixed RGB approach from 10 to 20 steps raised adaptive contact observation to `13/16` (`0.8125`) and improved task-4 contact from `1/3` to `2/3`, while task 5 remained `1/3`. Adaptive final-distance delta was `-0.03441 m`, bootstrap CI `[-0.05458,-0.01598]`, 12/16 wins and 4/16 losses, exact sign-test `p=0.0768`; endpoint success was only `1/16`. This confirms partial phase-entry repair and leaves a task-specific contact/geometry boundary. Artifacts: `le-wm-main/results/gdd_wm_cube_rgb_goal_teacher_approach20_20261019_cuda_fresh16/`.
+- Cube task-5 GDD-WM teacher-to-effect closed-loop repair (2026-10-19, CUDA, fresh 16-root panel): a calibration-only RGB approach sweep selected 20 approach steps at gain 1.0, yielding front contact-proxy support on `15/16` calibration roots. On 16 new test roots, the frozen temporal ranker alone had mean final-distance delta `+0.00896 m` versus the static carrier (bootstrap CI `[-0.00482,0.02252]`, 5 wins/9 losses/2 ties), so the teacher was not released as a standalone controller. Adding a fail-closed RGB observed-effect map after the same frozen candidate proposal produced `7` improvements, `0` degradations, and `9` ties, mean delta `-0.01742 m`, bootstrap CI `[-0.03025,-0.00601]`, exact sign-test `p=0.015625`. This validates a scoped recovery chain—frozen proposal -> realized RGB effect verification -> fallback—at distance level, not D-JEPA teacher correctness, task-success improvement, or universal transfer. Artifacts: `le-wm-main/results/gdd_wm_cube_task5_teacher_closed_loop_20261019_cuda_fresh16/closed_loop.json` and `aggregate.json`; protocol and claim boundary: `docs/GDD_WM_PROGRESS_20261019.md`.
+- PointMaze GDD projection verified-local replication (2026-10-19, CUDA, root-disjoint 20-root panel): the new runtime arm first proposed with the frozen D2 projection, then used four waypoint-aligned RGB probes, an observed affine action-effect chart, and a fixed `0.10` local-versus-visual consistency gate. The initial dispatch/coordinate-contract failure was repaired and excluded. Final results were visual dynamics `20/20`, frozen GDD projection `3/20` with mean final distance `2.300`, and GDD plus verified-local `3/20` with mean final distance `1.347` and mean progress `0.322` versus `-0.631` for standalone GDD. This materially repairs distance failure relative to the frozen student but does not beat the saturated RGB dynamics baseline; the probe budget and residual task-level mismatch remain boundaries. Artifact: `le-wm-main/results/gdd_wm_pointmaze_gdd_verified_local_20261019_cuda_v8_waypoint_consistency.json`.
+- PointMaze GDD action-support gate follow-up (2026-10-19, CUDA, same 20-root paired panel): because the frozen paired action family reaches magnitude `1.0` while the local chart is identified with fixed `0.25` probes, release was restricted to candidates within `1.5x` probe support and fallback actions were excluded from local-chart updates. The verified-local arm changed from `3/20` to `4/20` success and mean final distance `1.347 -> 1.343`; paired distance change was only `-0.00358 m` (`10/20` improvements, `10/20` degradations). Standalone GDD remained `3/20`, `2.300 m`; visual dynamics remained `20/20`, `0.143 m`. This repairs an extrapolation mechanism but does not establish independent planning gain. Artifact: `le-wm-main/results/gdd_wm_pointmaze_gdd_verified_local_20261019_cuda_v9_support_gate.json`.
+- PointMaze disagreement-triggered verified-local follow-up (2026-10-19, CUDA, fresh root-disjoint 20-root panel): the new `gdd_wm_rgb_disagreement_verified_local` arm performs the four fixed RGB probes only when the frozen GDD and calibration-only visual-dynamics proposals have cosine below the predeclared `0.80` threshold. It triggered on `15/20` roots, executed a mean `3.0` probes, and reached `11/20` success with mean final distance `0.8136`, versus frozen GDD `6/20`, `1.7400`; visual dynamics remained `20/20`, `0.1631`. Paired distance improved on `16/20` roots versus frozen GDD, but the arm still lost to visual dynamics (`9` baseline-only successes, `0` intervention-only). Skipped probe records are excluded from the executed budget counter. This repairs the GDD failure and isolates the remaining ceiling boundary; it is not independent GDD gain or universal transfer evidence. Artifact: `le-wm-main/results/gdd_wm_pointmaze_gdd_disagreement_verified_local_20261019_cuda_fresh20.json`.
+- PointMaze post-action verification and RGB path-gate follow-up (2026-10-19, CUDA, same root-disjoint 20-root panel): after each released local action, the RGB successor effect is checked against the local prediction with fixed tolerance `0.25`; failed charts are quarantined and failed transitions are not added back to the chart. A calibration-only RGB occupancy segment gate rejects predicted endpoints outside free-cell support. The complete arm reached `13/20` success and mean final distance `0.6906`, versus frozen GDD `6/20`, `1.7400` and visual dynamics `20/20`, `0.1631`; post-action verification passed `98.35%` of checks, chart quarantine occurred on `40%` of roots, and the path gate rejected all local candidates on `39` calls. Paired distance improved on `15/20` roots versus frozen GDD (`8` intervention-only versus `1` baseline-only success transitions), but there was still no gain over the saturated visual baseline. This validates a stronger fail-closed recovery chain, not a universal teacher or transfer certificate. Artifact: `le-wm-main/results/gdd_wm_pointmaze_gdd_pathgated_20261019_cuda_fresh20_correct.json`.
+- PointMaze route-phase quarantine follow-up (2026-10-19, CUDA, same root-disjoint 20-root panel): a waypoint change now quarantines the episode-local effect chart, executes that transition with the RGB visual-dynamics fallback, and prevents stale local releases in the new phase. The phase-gated arm reached `15/20` success and mean final distance `0.4863`, versus frozen GDD `6/20`, `1.7400` and visual dynamics `20/20`, `0.1631`; distance improved on `16/20` roots versus frozen GDD, with `10` intervention-only and `1` baseline-only success transitions. The gate was invoked on `25` transition blocks. This is the strongest scoped repair and supports phase-conditional action-effect transfer, but it remains below the saturated visual baseline and is not universal teacher evidence. Artifact: `le-wm-main/results/gdd_wm_pointmaze_gdd_phasegated_20261019_cuda_fresh20.json`.
