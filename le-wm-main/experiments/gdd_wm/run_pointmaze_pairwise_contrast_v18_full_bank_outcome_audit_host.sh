@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${ROOT}"
+for node in /dev/nvidia0 /dev/nvidiactl /dev/nvidia-uvm; do
+  [[ -c "${node}" ]] || { echo "missing host CUDA node: ${node}" >&2; exit 3; }
+done
+"${ROOT}/.venv/bin/python" -m experiments.gpu_preflight --device cuda --recurrent-cell-smoke
+exec "${ROOT}/.venv/bin/python" -m experiments.gdd_wm.audit_pointmaze_pairwise_contrast_v18_full_bank_outcome

@@ -71,3 +71,41 @@ universal world model.
 - GDD-WM remains `Proposed / Not Yet Validated` until its teacher provenance,
   student-generated candidates, and independent planning consequence are all
   present.
+
+## PlanWAM-relative execution update — 2026-10-23
+
+PlanWAM is treated as a strong planning-shaped future representation plus
+candidate-scoring reference, not as a failed baseline. The next claim is
+narrower: pre-outcome diagnostics should predict whether a learned visual
+world-model decision error is repairable under a declared support and repair
+function class.
+
+The paper is organized as one regularity with a contact-domain boundary:
+
+- PointMaze V17/V18 supplies the replicated renderer-visible velocity-alias
+  mechanism in which history adds fixed-bank action-ranking information.
+- PointMaze V7/S1-S3 are prospective router protocols. Their raw outcome
+  diagnostics are not promoted to efficacy evidence unless the calibration
+  certificate and independent outcome audit both pass.
+- TwoRoom V4 is the independent contact/action-effect replication. Its matched
+  controls are action-only and no-dynamics, and its three panels are the
+  independent replication units. TwoRoom remains a boundary test, not a
+  guaranteed second positive method result.
+- PushT remains an orientation/contact stress test; offline mechanics and
+  contact retention cannot substitute for strict pose closure.
+
+The V4 aggregate now reports both root-paired uncertainty nested within each
+panel and low-resolution panel-level inference. It also rejects any root reuse
+across train, calibration, or outcome roles, including reuse across panels.
+The fresh host-CUDA panels have now completed: the full adapter improved
+terminal distance in all three panels, but worsened root-paired candidate
+ranking regret versus both matched controls and did not improve success. With
+only three independent panels, its panel-level sign-flip p value is 0.25.
+Therefore TwoRoom is retained as a contact/action-effect boundary, and V5
+support-gate tuning on these opened outcomes is forbidden.
+
+PointMaze now has a separate prospective comparison-matrix audit contract:
+the route and all candidate scores must be sealed before outcome generation,
+then compared root-paired against uniform history repair, ordinary preference,
+and visible-motion/MSE/support/ATM controls with Holm correction. This fills a
+protocol gap but has no fresh-root result yet.

@@ -107,18 +107,95 @@ def require_cuda_allocation(device: str | torch.device = "cuda") -> dict[str, ob
     }
 
 
+def require_cuda_recurrent(device: str | torch.device = "cuda") -> dict[str, object]:
+    """Require the cuDNN GRU kernel used by recurrent experiment arms.
+
+    A scalar CUDA allocation can pass while a host-level ``LD_LIBRARY_PATH``
+    shadows the cuDNN bundled with PyTorch.  That failure otherwise appears
+    only after a costly panel has been built.  Recurrent experiments call this
+    stronger probe before fitting any scientific rows.
+    """
+    runtime = require_cuda_allocation(device)
+    requested = torch.device(device)
+    try:
+        recurrent = torch.nn.GRU(2, 3, batch_first=True).to(requested)
+        values = torch.zeros((2, 3, 2), device=requested)
+        output, _state = recurrent(values)
+        torch.cuda.synchronize(requested)
+        cudnn_version = torch.backends.cudnn.version()
+    except Exception as exc:  # pragma: no cover - depends on host libraries
+        raise RuntimeError(
+            "CUDA allocation succeeded but the cuDNN recurrent kernel failed. "
+            "A system cuDNN may shadow PyTorch's bundled library; launch via "
+            "experiments/run_with_torch_cudnn.sh. "
+            f"Original error: {exc}"
+        ) from exc
+    return {
+        **runtime,
+        "cudnn_version": int(cudnn_version) if cudnn_version is not None else None,
+        "recurrent_probe_sum": float(output.detach().sum().item()),
+    }
+
+
+def require_cuda_recurrent_cell(device: str | torch.device = "cuda") -> dict[str, object]:
+    """Require a CUDA-unrolled GRUCell path without a cuDNN RNN dependency.
+
+    Some managed workspaces expose CUDA device nodes but preload a system
+    cuDNN that is incompatible with the bundled PyTorch cuDNN.  The V7
+    counterfactual-contrast runner deliberately uses a manually unrolled
+    ``GRUCell`` for causal history and pulse encoders, so this is the exact
+    runtime contract it needs.  It is not evidence that fused ``nn.GRU`` is
+    available.
+    """
+
+    runtime = require_cuda_allocation(device)
+    requested = torch.device(device)
+    try:
+        cell = torch.nn.GRUCell(2, 3, device=requested)
+        values = torch.zeros((2, 3, 2), device=requested)
+        state = torch.zeros((2, 3), device=requested)
+        for index in range(values.shape[1]):
+            state = cell(values[:, index], state)
+        torch.cuda.synchronize(requested)
+    except Exception as exc:  # pragma: no cover - depends on host libraries
+        raise RuntimeError(
+            "CUDA allocation succeeded but the unrolled GRUCell recurrent path failed; "
+            "refusing CPU fallback. "
+            f"Original error: {exc}"
+        ) from exc
+    return {
+        **runtime,
+        "recurrent_kernel": "torch.nn.GRUCell manually unrolled; no cuDNN RNN dependency",
+        "recurrent_cell_probe_sum": float(state.detach().sum().item()),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--output", default=None)
     parser.add_argument("--render-smoke", action="store_true")
+    parser.add_argument(
+        "--recurrent-smoke", action="store_true",
+        help="also require the cuDNN GRU kernel used by recurrent models",
+    )
+    parser.add_argument(
+        "--recurrent-cell-smoke", action="store_true",
+        help="also require the manually unrolled CUDA GRUCell path used by cuDNN-independent recurrent models",
+    )
     args = parser.parse_args()
     device = torch.device(args.device)
     if device.type != "cuda":
         raise SystemExit("gpu_preflight requires a CUDA device; use no probe for explicit CPU runs")
 
+    if args.recurrent_smoke and args.recurrent_cell_smoke:
+        raise SystemExit("choose only one recurrent CUDA smoke contract")
     try:
-        runtime = require_cuda_allocation(device)
+        runtime = (
+            require_cuda_recurrent(device) if args.recurrent_smoke else
+            require_cuda_recurrent_cell(device) if args.recurrent_cell_smoke else
+            require_cuda_allocation(device)
+        )
         result = {
             "status": "passed",
             **runtime,

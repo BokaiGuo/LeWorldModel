@@ -4,6 +4,87 @@
 
 本文档把当前 RGB-only cube adapter 的负结果与已有方法逐一对应，并冻结下一轮可执行协议。文献提供的是机制先例，不是对 LeWorldModel 的实验支持；2026 年预印本不作为已解决问题的证据。
 
+## 2026-10-20 GPU repair: post-contact chart removes prelude contamination
+
+The earlier local-effect controller called its chart ``local`` while retaining
+all descent/approach/close observations. Those rows are from a different
+contact configuration and gave the local arm information unavailable to a
+matched carrier. The implementation now discards every prelude observation,
+executes four fixed post-contact `x+ / x- / y+ / y-` identification pulses,
+then fits the rank-two RGB effect map. A frozen RGB-geometry carrier executes
+the identical four pulses before ranking, so probe cost and remaining action
+budget are matched.
+
+On a new CUDA/EGL, root-disjoint 16-root Cube panel (40 calibration roots;
+fresh seeds `20269000--20269015`), post-contact local minus its matched RGB
+carrier had mean terminal-distance difference `-0.01247 m`: 4 local wins, 0
+losses, and 12 ties. The paired bootstrap 95% interval was
+`[-0.02826, -0.00003]`, but the two-sided exact sign test over the four
+non-tied roots was `p=0.125`. The deployment trace verifies exactly four
+support probes before all local actions, and runtime policy access remains
+RGB/current goal/previous action only.
+
+This removes a genuine protocol confound and supplies a cleaner positive
+direction for local observed-effect transfer. It is not yet a statistically
+certified terminal planning gain, because the effective non-tied sample size
+is four.
+
+Artifact:
+`le-wm-main/results/gdd_wm_cube_post_contact_local_20261020_fresh16_rerun_cuda/closed_loop.json`.
+
+## 2026-10-20 confirmation: post-contact local gain is mode-conditional
+
+The frozen 32-root confirmation used exactly the same 40 calibration roots,
+four-pulse post-contact protocol, action bank, and decision budget on fresh
+roots. It did **not** reproduce an overall local advantage: local minus the
+matched RGB carrier was `+0.00487 m` (7 wins, 4 losses, 21 ties; bootstrap
+95% `[-0.00426, +0.01593]`; exact sign `p=0.549`).
+
+The failure is structured rather than a generic variance fluctuation. In this
+panel, task 3 had three non-tied local decisions, all harmful (mean
+`+0.04565 m`); task 4 had five local wins and no loss (mean `-0.01816 m`).
+The local and carrier actions differ on each non-tied task-3 root: the carrier
+repeated its stable x-direction action while the local chart selected varying
+y-direction pulses. Hence a rank-two post-contact map is insufficient to
+identify the root-specific contact/action regime.
+
+A conservative calibration-only RGB-goal gate was then evaluated on another
+fresh 16-root panel. The gate used 40 roots disjoint from both feature
+calibration and outcome roots, permitting local use only when a goal chart had
+non-positive calibration mean and zero local losses. Runtime chart lookup used
+the rendered goal RGB centroid, not task ID or privileged state. It produced
+1 win, 0 loss, and 15 ties against the matched carrier (`-0.00390 m`). This
+is a safety result, not a gain: calibration-positive goal chart 3 did not
+transfer reliably to new roots.
+
+The updated boundary is therefore stronger: **neither a global local chart nor
+a goal-only chart certifies action-effect transfer. A future repair must gate
+on the current RGB contact state and the observed probe response, then be
+evaluated on roots held out from that gate's calibration.**
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_cube_post_contact_local_20261020_confirmation32_cuda/closed_loop.json`
+- `le-wm-main/results/gdd_wm_cube_goal_gated_local_20261020_fresh16_cuda/closed_loop.json`
+
+## 2026-10-20 probe-response audit: one-shot excitation is not a certificate
+
+The local-map trace now records RGB effect response RMS, opposite-action
+antisymmetry, and the fitted 2-by-2 map before every local decision. A fresh
+16-root CUDA panel retained the controller unchanged and used these fields as
+evaluation-only diagnostics. Local minus the matched carrier was effectively
+neutral (`-0.00076 m`; 4 wins, 3 losses, 9 ties).
+
+Neither candidate scalar separated the failures: response-RMS versus paired
+terminal difference had Pearson `0.191`, and opposite-action antisymmetry had
+Pearson `0.135`. The loss rows had somewhat larger mean RMS and asymmetry, but
+the support is too small and the overlap with win rows is substantial. Thus
+output excitation and local linearity are necessary diagnostics, but a
+one-shot threshold on either is not an admissible transfer certificate.
+
+Artifact:
+`le-wm-main/results/gdd_wm_cube_local_effect_excitation_20261020_fresh16_cuda/closed_loop.json`.
+
 ## 2026-10-19 GPU follow-up: calibrated approach repaired the interface bottleneck
 
 The first approach-prelude implementation used raw image displacement as if
@@ -105,7 +186,7 @@ GPU/EGL 评估已通过，`4-direction gain=1` 的 root-disjoint held-out 结果
 | [Contact Mode Guided Motion Planning](https://arxiv.org/abs/2105.14431) | 显式 contact mode 与连续规划联合搜索 | 8-direction 对角动作未被 probe 覆盖，属于 action-support 缺口而非 predictor 单纯欠拟合 | 用支持集内的轴向短脉冲组合替代一次性对角外推，并在每个 pulse 后重观测 |
 | [PlaNet](https://arxiv.org/abs/1811.04551) / [Dreamer](https://arxiv.org/abs/1912.01603) | stochastic/recurrent latent state 与多步 imagination | 历史摘要必须服务于 action-conditioned successor，而不是只降低 latent RMSE | memory 通过 ranking regret、successor consistency 和闭环结果验收 |
 | [HiP-RSSM](https://arxiv.org/abs/2206.14697) | 推断随状态变化的 hidden dynamics parameter | root-specific contact/grasp 是隐藏动力学变量；global map 不能假设跨 root 同一 | 将 root/regime uncertainty 纳入 gate；support 不足时 abstain/probe |
-| [TAMPURA](https://arxiv.org/abs/2306.10603) | 不确定后果下把 information-gathering 纳入规划 | 探针不是额外诊断，而是有代价的规划动作 | 记录 probe cost、re-probe rate 和 abstention，不只记录最终排序 |
+| [TAMPURA](https://arxiv.org/abs/2403.10454) | 不确定后果下把 information-gathering 纳入规划 | 探针不是额外诊断，而是有代价的规划动作 | 记录 probe cost、re-probe rate 和 abstention，不只记录最终排序 |
 
 ## 对当前两个负结果的处理
 
@@ -311,3 +392,99 @@ artifact：[closed_loop.json](/home/gbk/code/LeWorldModel/le-wm-main/results/ver
 > 当真实 RGB successor 已足以拟合局部 action-effect 时，frozen predictor 的候选排序不是增量信息，且未经验证的融合会污染局部决策。
 
 这把问题从“如何把 frozen predictor 强行接入控制器”改成了可检验的 repairability 判别：`local effect verified + WM agreement` 才 permit；disagreement 时 `local fallback`；RGB support 不足时 `probe/abstain`。该结果仍不证明 LeWM latent 的物理因果性，反而给出一个明确失败边界：当前 frozen-WM 没有在这个闭环协议上提供可验证的额外决策信息。
+
+### Sequential residual gate：独立 confirmation 的失败边界（CUDA, 2026-10-20）
+
+为避免将一次静态 post-contact chart 当作可迁移证书，闭环 runner 新增了
+`rgb_verified_effect_post_contact_residual_gated`。它在 40 个独立 calibration
+roots 上，以每 root 最大的 normalized observed/predicted RGB-effect residual
+作 split-conformal score；采用正确有限样本顺序统计量
+\(\lceil(n+1)(1-\alpha)\rceil\)，若没有有限阈值则 fail-closed。部署中首次
+residual 超过阈值后，后续脉冲回退到同四脉冲成本的 RGB-geometry carrier。
+
+一个 8-root smoke 只提供方向性信号，不能用于选择 controller。随后冻结相同
+candidate bank、\(\alpha=0.1\)、20-step prelude 和 40-root calibration，在完全
+不相交的 32 outcome roots 上确认。artifact：
+`le-wm-main/results/gdd_wm_cube_residual_gated_20261020_confirmation32_disjoint_cuda/closed_loop.json`。
+
+| quantity | result |
+|---|---:|
+| calibration threshold | `3.7676`（rank `37/40`） |
+| local disable roots / fallback pulses | `3/32` / `36` |
+| local-gated minus matched carrier final distance | `+0.001385 m` |
+| paired bootstrap 95% CI | `[-0.000645, +0.004114]` |
+| wins / ties / losses | `1 / 29 / 2` |
+| exact two-sided sign p | `1.0` |
+
+因此，**sequential residual detection 的机制执行成功，但没有获得终端 task
+benefit**。逐步 trace 显示两个损失 root 在检测前已经执行多次 task-directed
+local pulse；检测只能阻止其后的继续外推，不能撤销接触状态改变。这把负结果从
+“threshold 不够好”定位为 **post-action detection is too late for irreversible
+contact actions**。
+
+为排除 in-sample support reconstruction 被误当作验证，下一版增加
+`rgb_verified_effect_post_contact_holdout_residual_gated`：前三个 axis pulses
+拟合 rank-two chart，第四个未参与拟合的 pulse 作为 pre-release validation；只有
+验证通过才允许第一个 task-directed local action，carrier 仍支付相同四脉冲成本。
+
+该 pre-release gate 的全新 8-root smoke 同样未给出正向证据：12-root calibration
+阈值为 `1.0412`，8 个 outcome roots 中没有 gate disable，结果为 `0` win、`7` tie、
+`1` loss，mean `+0.003062 m`，paired bootstrap 95% CI `[0, +0.009187]`。artifact：
+`le-wm-main/results/gdd_wm_cube_holdout_residual_gate_20261020_smoke8_cuda/closed_loop.json`。
+
+这说明 axis support 的 held-out one-step agreement 仍不能保证 task-directed
+action ranking：固定基向量 probe 已可预测，但目标方向 action 的 effect/utility
+仍可能属于另一接触 regime。下一项可检验的修复不是调低 residual threshold，而是
+**task-aligned low-amplitude verification pulse**：对即将释放的候选方向先执行可控
+幅度的同方向探针，重新观测后才决定是否执行全幅任务 pulse；其 probe、fallback
+和 task utility 必须在 calibration-only 协议中预先固定。
+
+### Task-aligned selective verification：预注册修复与 smoke（CUDA, 2026-10-20）
+
+上述 axis holdout 失败后，runner 增加了
+`rgb_verified_effect_post_contact_task_probe_gated`。它先执行四个共享 axis
+support pulses，局部图提出候选全幅任务动作 (a^\star)，随后 local arm 与 matched
+RGB carrier 都执行完全相同的低幅 (q a^\star)（预先固定 (q=0.25)）。控制器只
+观察 probe 后的 RGB block displacement；privileged state 仍只用于初始状态配对和
+最终评分。
+
+两次诊断排除了错误的修复方向：无 RGB approach 的 12-root calibration 只有 `2/12`
+有限 task-probe score；恢复此前 calibration-only 固定的 `15 descent -> 20 RGB
+approach -> 5 close` phase entry 后升至 `6/12`，但其中六个 root 的 probe effect 在
+目标方向出现 sign inversion。因而问题既不是 residual threshold，也不是单一 probe
+幅度，而是只有在 **observed positive task progress** 条件下，task-direction mismatch
+才有可校准的意义。
+
+正式 gate 因此采用两阶段 selective-conformal protocol：
+
+\[
+\text{shared support} \rightarrow q a^\star \rightarrow
+\bigl\langle \Delta z_{\mathrm{obs}},\hat g\bigr\rangle >0
+\rightarrow
+s_{\mathrm{task}}\leq Q_{1-\alpha}
+\rightarrow \text{release local},
+\]
+
+其中 \(\hat g\) 是 pre-probe RGB goal direction。负向 probe 不会被错误地纳入
+conditional mismatch quantile；它们在 runtime 立即回退 carrier，并作为 calibration
+的 abstention rate 单独报告。
+
+在 40 个独立 calibration roots 上，28 个正向 probe 构成条件分布，
+\(\alpha=0.1\) 的 order-statistic threshold 为 `3.8648`（rank `27/28`）；12 个 root
+被 sign gate 拒绝。全新 8-root smoke 的 gated local 相对同 task-probe carrier 为
+`3 win / 5 tie / 0 loss`，mean final-distance delta `-0.03709 m`，paired bootstrap
+95% CI `[-0.08483, -0.00241]`，但 exact sign p=`0.25`。artifact：
+`le-wm-main/results/gdd_wm_cube_task_probe_conditional_approach20_20261020_smoke8_cuda/closed_loop.json`。
+
+这只是 **exploratory smoke**，不是正向研究结论。确认实验已冻结同一 calibration、
+candidate bank、phase entry、probe scale 与 gate，并在完全不相交的 32 outcome roots
+上运行；在 confirmation artifact 落盘前，不得声称 task-aligned verification 带来稳定
+闭环收益。
+
+**Protocol correction.** 首个 32-root rerun 虽使用了新的 outcome seeds，却在新进程中
+重新执行 RGB readout、pixel-action mapping 和 task-gate calibration；相同 seed 并不保证
+这些 calibration rollouts 逐 bit 相同。因此该 artifact 仅保留为 fresh-root diagnostic，
+不作为 frozen-policy confirmation。runner 已增加
+`--frozen-calibration <closed_loop.json>`：bundle 固化四个 ridge readouts、RGB pixel
+mapping、candidate bank 与 task-probe gate；加载 bundle 时禁止重拟合。后续 32-root
+confirmation 必须以 bundle-producing smoke artifact 为唯一 calibration source。

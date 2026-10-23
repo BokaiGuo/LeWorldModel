@@ -50,6 +50,7 @@ from experiments.run_pusht_signed_torque_audit import (
     pulse_actions,
     wrap_angle,
 )
+from experiments.pusht_protocol_contracts import action_bank_fingerprint, root_fingerprint
 
 gym.logger.min_level = 40
 
@@ -3759,6 +3760,13 @@ def parse_args() -> argparse.Namespace:
         "--orientation-gate-artifact", type=Path, default=None,
         help="calibration-only orientation_gate.json; enables a fail-closed held-out control ablation",
     )
+    parser.add_argument(
+        "--oracle-feasibility-preflight", type=Path, default=None,
+        help=(
+            "immutable candidate-bank/horizon preflight.json; requires CUDA, "
+            "reconstructs its exact outcome roots, and rejects root/bank/horizon drift"
+        ),
+    )
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
                         help="auto selects CUDA when available; cuda never falls back to CPU")
     parser.add_argument("--root-protocol", choices=("terminal_pose", "boundary_contact"), default="terminal_pose",
@@ -3925,6 +3933,39 @@ def main() -> None:
         not args.legacy_center_action_frame
         and (args.boundary_action_frame or args.root_protocol == "boundary_contact")
     )
+    oracle_preflight: dict[str, Any] | None = None
+    preflight_runtime_contract: dict[str, Any] | None = None
+    if args.oracle_feasibility_preflight is not None:
+        # Kept local because the oracle preflight imports this module's
+        # candidate-bank construction.  A module-level reverse import would
+        # make ordinary learned-runner imports circular.
+        from experiments.preflight_pusht_candidate_horizon import (
+            reconstruct_frozen_cohort,
+            validate_learned_runtime_contract,
+            validate_mode_aware_runner_parameters,
+        )
+        if args.device != "cuda":
+            raise ValueError("oracle-feasibility-preflight requires --device cuda; no CPU substitution is allowed")
+        oracle_preflight = json.loads(args.oracle_feasibility_preflight.read_text(encoding="utf-8"))
+        if not bool(oracle_preflight.get("calibration_authorization", {}).get("authorized", False)):
+            raise ValueError("oracle preflight is candidate_or_horizon_limited; learned ranking attribution is prohibited")
+        if args.goal_translation_magnitudes:
+            raise ValueError("preflight-compatible evaluation forbids undeclared goal-translation candidates")
+        if float(args.min_goal_support_alignment) != 0.0 or np.isfinite(float(args.max_initial_angle_error)):
+            raise ValueError("preflight-compatible evaluation requires the preflight root-selection rule")
+        if int(args.macro_pulse_steps) != int(args.pulse_steps):
+            raise ValueError("preflight-compatible evaluation requires macro and oracle pulse lengths to match")
+        validate_mode_aware_runner_parameters(
+            oracle_preflight,
+            root_protocol=str(args.root_protocol),
+            boundary_action_frame=bool(args.boundary_action_frame),
+            inward_magnitude=float(args.inward_magnitude),
+            tangent_magnitudes=tuple(float(value) for value in args.tangent_magnitudes),
+            contact_normal_magnitudes=tuple(float(value) for value in args.contact_normal_magnitudes),
+            pulse_steps=int(args.pulse_steps),
+            closure_steps=int(args.closure_steps),
+            lookahead=int(args.lookahead),
+        )
     started = time.perf_counter()
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
@@ -3956,11 +3997,36 @@ def main() -> None:
                 min_goal_support_alignment=args.min_goal_support_alignment,
                 max_initial_angle_error=args.max_initial_angle_error,
             )
-            held_roots = root_factory(
-                env, args.held_out_roots, args.seed + 2000,
-                min_goal_support_alignment=args.min_goal_support_alignment,
-                max_initial_angle_error=args.max_initial_angle_error,
-            )
+            if oracle_preflight is None:
+                held_roots = root_factory(
+                    env, args.held_out_roots, args.seed + 2000,
+                    min_goal_support_alignment=args.min_goal_support_alignment,
+                    max_initial_angle_error=args.max_initial_angle_error,
+                )
+            else:
+                held_roots = reconstruct_frozen_cohort(env, oracle_preflight, cohort="outcome")
+                if len(held_roots) != int(args.held_out_roots):
+                    raise ValueError("--held-out-roots differs from immutable oracle-preflight outcome cohort")
+                runtime_roots: list[dict[str, Any]] = []
+                for root in held_roots:
+                    root_bank = candidate_actions(
+                        env, root["state"], tuple(float(value) for value in args.tangent_magnitudes),
+                        float(args.inward_magnitude), goal=root["goal"],
+                        boundary_action_frame=True,
+                        contact_normal_magnitudes=tuple(float(value) for value in args.contact_normal_magnitudes),
+                    )
+                    runtime_roots.append({
+                        "root_sha256": root_fingerprint(root),
+                        "root_action_bank_sha256": action_bank_fingerprint(root_bank),
+                        "root_candidate_count": int(len(root_bank)),
+                    })
+                preflight_runtime_contract = {
+                    "protocol_sha256": str(oracle_preflight["protocol"]["protocol_sha256"]),
+                    "roots": runtime_roots,
+                }
+                validate_learned_runtime_contract(
+                    oracle_preflight, preflight_runtime_contract, cohort="outcome",
+                )
         else:
             train_roots = root_factory(env, args.train_roots, args.seed + 1000)
             held_roots = root_factory(env, args.held_out_roots, args.seed + 2000)
@@ -4341,6 +4407,10 @@ def main() -> None:
             "resolved_device": str(device),
             "cuda_device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
             "root_protocol": args.root_protocol,
+            "oracle_feasibility_preflight": (
+                None if args.oracle_feasibility_preflight is None else str(args.oracle_feasibility_preflight)
+            ),
+            "oracle_feasibility_runtime_contract": preflight_runtime_contract,
             "boundary_action_frame": bool(args.boundary_action_frame),
             "min_goal_support_alignment": float(args.min_goal_support_alignment),
             "max_initial_angle_error": float(args.max_initial_angle_error),

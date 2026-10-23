@@ -61,6 +61,12 @@
 | `le-wm-main/experiments/gdd_wm/merge_rgb_successor_splits.py` | strict merge of disjoint train/calibration/outcome RGB successor artifacts with exact key/array coverage | implemented; removed successor-ref plumbing gap |
 | `le-wm-main/experiments/gdd_wm/audit_gdd_projection_rgb_selection.py` | frozen projection evaluation on independent RGB successor predictions and held-out task costs | offline RGB-compatible consequence; closed-loop gate still missing |
 | `le-wm-main/experiments/gdd_wm/train_projection_distillation.py` | projection-only GDD diagnostic with nested repairability-panel compatibility | completed diagnostic; prediction-preservation and independent planning gates missing |
+| `le-wm-main/experiments/gdd_wm/calibrate_teacher_execution_alignment.py` | calibration-only root-bootstrap check that a fixed teacher orders realized task costs above chance | implemented; allows D2 diagnostic only for the exact dataset, never a planning claim |
+| `le-wm-main/experiments/gdd_wm/audit_projection_execution_consequence.py` | identity-bound root-paired held-out D2 regret audit with strict-improvement and action-change coverage gates | goal-conditioned control: 1/20 changed roots, upper bound 0; no confirmed real-decision improvement |
+| `le-wm-main/experiments/gdd_wm/audit_teacher_counterfactual_contrast.py` | read-only per-root/context diagnosis of predicted-effect collapse, latent-dynamics mismatch, endpoint-readout mismatch, and task-score mismatch | goal-conditioned PointMaze control: outcome has 3/17/12/8 groups respectively; mechanism evidence only, never teacher authorization or planning selection |
+| `le-wm-main/experiments/gdd_wm/audit_prospective_repairability_routing.py` | train-root-only repair-family routing pilot with calibration submechanism and joint feature-support gates | old held-action teacher package is correctly rejected: train/calibration and train/outcome action overlap are both 0/5, hence no support-transport claim |
+| `le-wm-main/experiments/gdd_wm/run_pointmaze_planning_shaped_repairability.py` | V7 advantage-router execution boundary for a frozen shared-candidate panel | exact held bank and design-root headroom are revalidated at execution; ordered-action advantage ridge selects regularization on train-root-only blocked folds before independent calibration; V7 GPU panel is complete, but its calibration certificate rejected routing, so the raw outcome-router improvement is diagnostic only |
+| `le-wm-main/experiments/gdd_wm/preflight_pointmaze_planning_shaped_advantage_v7.py` | freezes V7 root/action support, design-root oracle headroom, router capacity, and executable router interface before any learned fit | V7 static ledger passed support, entropy, top-2-gap, cost-spread, 95-feature/128-root surplus, `advantage_ridge`, ordered-action representation, and train-only blocked-ridge-selection gates; completed CUDA panel isolates prospective-routing instability rather than a candidate-bank confound |
 | `le-wm-main/experiments/run_live_pointmaze_planning.py --gdd-score-horizons` | explicit train/deployment horizon contract for frozen GDD projection scoring | CUDA fresh-20 matched audit: `h=4` `3/20`, legacy `h=1,2,4` `3/20`; protocol mismatch fixed, independent planning gain still absent |
 | `le-wm-main/experiments/run_live_pointmaze_planning.py --gdd-candidate-count` | explicit candidate-support contract for frozen GDD projection scoring | training-consistent 11-candidate CUDA fresh-20: `3/20`, mean distance `1.6679`; improves continuous error but no success gain over 16-candidate control |
 | `le-wm-main/results/gdd_wm_frozen_predictive_teacher_20261020_full16_cuda/capacity_audit/` | full 16-candidate train-only CUDA teacher-capacity audit | predicted-dynamics outcome regret delta `+0.0481` vs action-only, CI crosses zero; teacher increment remains unverified |
@@ -2258,6 +2264,20 @@ horizon、checkpoint 或 batch size 改变，应优先新增 protocol/config，�
   Thus a local paired probe contains a small orientation signal, but its sign
   is not uniformly transferable across contact strata. Artifact:
   `results/pusht_orientation_ceiling_20261025_cuda/orientation_response_audit.json`.
+- PushT structured temporal torque gate v2 (2026-10-21, **protocol queued;
+  no outcome claim**): the preceding independent RGB-history confirmation
+  failed after a 3,848-dimensional linear decoder interpolated 48 train roots
+  but transferred poorly (`0.458` calibration balanced accuracy).  The fresh
+  successor uses new root-seed bands, 128/64/128 balanced train/calibration/
+  outcome roots per class, a fixed 4x4 RGB motion chart, train-only PCA to 24
+  directions, and a calibration-only confidence abstention gate.  It refuses
+  output reuse and must fail closed if calibration lacks sufficient supported
+  accuracy.  Its launcher is GPU-only; no CPU proxy will be reported as an
+  efficacy result.  Code:
+  `le-wm-main/experiments/run_pusht_structured_temporal_torque_gate.py` and
+  `le-wm-main/experiments/run_pusht_structured_temporal_torque_gate_cuda.sh`.
+  This is only a selective offline torque-preference test, not an action
+  execution, planning, pose-closure, or world-model claim.
 - PushT literature-derived three-arm matched benchmark (2026-10-19, CUDA,
   boundary-contact, 16 train and 16 held-out roots): the shared candidate
   panel reached mode accuracy `0.9978` and boundary-contact loss `0/16` for

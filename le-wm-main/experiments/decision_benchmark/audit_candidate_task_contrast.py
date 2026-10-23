@@ -37,7 +37,47 @@ def _decode_cost(row: dict[str, Any], arrays: Any, readouts: dict[int, Any]) -> 
     displacement = (latent - center.reshape(1, -1)) @ decoder + target_center.reshape(1, -1)
     predicted_position = np.asarray(row["source_state_raw"], dtype=np.float64)[:2] + displacement[0]
     goal = np.asarray(row["goal_raw"], dtype=np.float64)[:2]
-    return float(np.sum((predicted_position - goal) ** 2))
+    # `real_task_cost` is Euclidean goal distance.  Squared distance has the
+    # same within-root ordering, but changes pairwise margins and invalidates
+    # calibration bounds that are reported in the real-cost scale.
+    return float(np.linalg.norm(predicted_position - goal))
+
+
+def _train_only_fit_rows(
+    fit_rows: list[dict[str, Any]], dataset_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Reject a readout export contaminated by candidate calibration/outcome roots.
+
+    The old audit called its decoder train-only while accepting an arbitrary
+    enriched export.  In particular, an export could contain the very roots
+    later used for calibration or outcome scoring.  This helper makes root
+    identity an executable contract, rather than a report-only claim.
+    """
+    forbidden: set[str] = set()
+    for row in dataset_rows:
+        if str(row.get("split")) in {"calibration", "outcome"}:
+            root = row.get("start_episode_id", row.get("instance_id"))
+            if root is None:
+                raise ValueError("candidate dataset row lacks start_episode_id/instance_id")
+            forbidden.add(str(root))
+    if not forbidden:
+        raise ValueError("candidate dataset has no calibration/outcome roots to protect")
+    fit_ids: set[str] = set()
+    for row in fit_rows:
+        if "episode_id" not in row:
+            raise ValueError("fit export lacks episode_id required for train-only root audit")
+        fit_ids.add(str(row["episode_id"]))
+    overlap = sorted(forbidden & fit_ids)
+    if overlap:
+        raise ValueError(
+            "fit export contains candidate calibration/outcome episode IDs: "
+            + ", ".join(overlap)
+        )
+    return fit_rows, {
+        "fit_episode_count": len(fit_ids),
+        "protected_nontrain_root_count": len(forbidden),
+        "fit_nontrain_root_overlap": overlap,
+    }
 
 
 def _project_fit_payload(payload: dict[str, Any], metadata_path: Path | None) -> dict[str, Any]:
@@ -69,7 +109,8 @@ def audit(dataset: Path, arrays_path: Path, fit_export: Path, projection_metadat
     fit_payload = load_payload(fit_export)
     if projection_metadata is not None:
         fit_payload = _project_fit_payload(fit_payload, projection_metadata)
-    readouts = _fit_readouts(fit_payload["enriched_records"])
+    fit_rows, fit_contract = _train_only_fit_rows(fit_payload["enriched_records"], rows)
+    readouts = _fit_readouts(fit_rows)
     real = np.asarray([float(row["real_task_cost"]) for row in rows], dtype=np.float64)
     predicted = np.asarray([_decode_cost(row, arrays, readouts) for row in rows], dtype=np.float64)
     groups = np.asarray([str(row["instance_id"]) for row in rows])
@@ -124,6 +165,8 @@ def audit(dataset: Path, arrays_path: Path, fit_export: Path, projection_metadat
         },
         "protocol": {
             "train_only_readout": True,
+            **fit_contract,
+            "cost_scale": "euclidean_goal_distance_matches_real_task_cost",
             "root_disjoint_calibration_outcome": True,
             "same_candidate_bank": True,
             "rgb_realized_latent_available": False,

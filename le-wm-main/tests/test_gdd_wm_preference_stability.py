@@ -42,6 +42,34 @@ def test_repeated_contexts_can_make_stability_estimable():
     assert report["status"] == "passed"
 
 
+def test_stability_matches_shared_actions_by_sequence_hash_not_context_candidate_id():
+    rows = [
+        _row("r0", "s0", "s0:shared:4", 2.0, 0.1),
+        _row("r0", "s0", "s0:shared:7", 1.0, 0.3),
+        _row("r0", "s1", "s1:shared:4", 2.0, 0.1),
+        _row("r0", "s1", "s1:shared:7", 1.0, 0.3),
+    ]
+    for row in rows:
+        row["action_sequence_sha256"] = "action-a" if row["candidate_id"].endswith("4") else "action-b"
+    report = audit_records(rows)
+    assert report["status"] == "passed"
+    assert report["preference_stability"]["pair_count_with_repeated_context"] == 1
+
+
+def test_terminal_state_reference_is_valid_realized_successor_evidence():
+    rows = [
+        _row("r0", "s0", 0, 2.0, 0.1, realized=None),
+        _row("r0", "s0", 1, 1.0, 0.3, realized=None),
+        _row("r0", "s1", 0, 2.0, 0.1, realized=None),
+        _row("r0", "s1", 1, 1.0, 0.3, realized=None),
+    ]
+    for row in rows:
+        row["realized_terminal_state_ref"] = "arrays.npz::terminal/r0"
+    report = audit_records(rows)
+    assert report["summary"]["missing_runtime_ref_count"] == 0
+    assert report["status"] == "passed"
+
+
 def test_execution_derived_teacher_is_rejected_as_leakage():
     rows = [
         _row("r0", "s0", 0, -0.1, 0.1),

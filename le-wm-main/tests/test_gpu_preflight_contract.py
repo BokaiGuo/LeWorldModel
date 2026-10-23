@@ -43,3 +43,13 @@ def test_gpu_preflight_persists_structured_failure_without_cpu_fallback(monkeypa
     assert report["status"] == "failed"
     assert "no NVIDIA device nodes are visible" in report["error"]
     assert report["visible_nvidia_nodes"] == []
+
+
+def test_gpu_preflight_dispatches_the_cudnn_independent_recurrent_contract(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "experiments.gpu_preflight.require_cuda_recurrent_cell",
+        lambda device: {"device": str(device), "recurrent_kernel": "manual-cell"},
+    )
+    monkeypatch.setattr("sys.argv", ["gpu_preflight", "--device", "cuda", "--recurrent-cell-smoke"])
+    main()
+    assert '"recurrent_kernel": "manual-cell"' in capsys.readouterr().out

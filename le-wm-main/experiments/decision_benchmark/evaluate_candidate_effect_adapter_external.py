@@ -45,6 +45,23 @@ def _validate_fixed_bank_protocol(
     def roots(records: list[dict[str, Any]]) -> set[str]:
         return {str(row["instance_id"]) for row in records}
 
+    development_splits = {str(row.get("split")) for row in development_records}
+    unexpected_development_splits = sorted(development_splits - {"train", "calibration"})
+    if unexpected_development_splits:
+        raise ValueError(
+            "development bank must contain only train and calibration records; "
+            f"found {unexpected_development_splits}"
+        )
+    root_splits: dict[str, set[str]] = {}
+    for row in development_records:
+        root_splits.setdefault(str(row["instance_id"]), set()).add(str(row["split"]))
+    mixed_roots = sorted(root for root, splits in root_splits.items() if len(splits) != 1)
+    if mixed_roots:
+        raise ValueError(
+            "development roots occur in multiple development splits: "
+            f"{mixed_roots[:3]}"
+        )
+
     development_roots = roots(development_records)
     outcome_roots = roots(outcome_records)
     overlap = sorted(development_roots & outcome_roots)

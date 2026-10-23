@@ -40,6 +40,27 @@ def _sign(value: float, margin: float) -> int:
     return 1 if value > 0.0 else -1
 
 
+def _candidate_identity(row: dict[str, Any]) -> str:
+    """Return the executable action identity, never a context-local label.
+
+    Shared-anchor protocols intentionally give the same executable action a
+    distinct context-prefixed ``candidate_id``.  D1 stability is about whether
+    that *action* retains its preference across candidate-set contexts, so
+    using the local label makes every legitimate repeat invisible and forces a
+    lossy post-hoc dataset rewrite.  A declared sequence hash is authoritative;
+    historical inputs without one retain their candidate-id fallback.
+    """
+    action_hash = row.get("action_sequence_sha256")
+    if isinstance(action_hash, str) and action_hash:
+        return f"action_sequence_sha256::{action_hash}"
+    return f"candidate_id::{row['candidate_id']}"
+
+
+def _has_realized_successor_ref(row: dict[str, Any]) -> bool:
+    """Accept either realized latent or realized physical terminal evidence."""
+    return bool(row.get("realized_latent_ref") or row.get("realized_terminal_state_ref"))
+
+
 def _pair_metrics(rows: list[dict[str, Any]], margin: float) -> dict[str, Any]:
     teacher_consistent = 0
     teacher_comparable = 0
@@ -123,11 +144,11 @@ def audit_records(
         root = str(row["instance_id"])
         set_id = str(row["teacher_set_id"])
         groups[(root, set_id)].append(row)
-        candidate = str(row["candidate_id"])
+        candidate = _candidate_identity(row)
         teacher_models.add(str(row.get("teacher_model_id", "missing")))
         generators.add(str(row.get("candidate_generator", "missing")))
         if row.get("split") in {"outcome", "environment_test"} and (
-            row.get("predicted_latent_ref") is None or row.get("realized_latent_ref") is None
+            not row.get("predicted_latent_ref") or not _has_realized_successor_ref(row)
         ):
             missing_runtime_refs += 1
 
@@ -153,13 +174,14 @@ def audit_records(
                 split_groups[(str(row["instance_id"]), str(row["teacher_set_id"]))].append(row)
         by_split[split] = _aggregate_group_metrics(split_groups.values(), margin)
 
-    # A pair must appear with the same root and candidate IDs in at least two
-    # teacher-set contexts.  The current D0 bank normally has one set per root.
+    # A pair must appear with the same root and executable action identities in
+    # at least two teacher-set contexts. Candidate IDs may legitimately be
+    # context-local labels in a shared-anchor protocol.
     for (root, set_id), group_rows in groups.items():
         for left in range(len(group_rows)):
             for right in range(left + 1, len(group_rows)):
                 left_row, right_row = group_rows[left], group_rows[right]
-                left_id, right_id = sorted((str(left_row["candidate_id"]), str(right_row["candidate_id"])))
+                left_id, right_id = sorted((_candidate_identity(left_row), _candidate_identity(right_row)))
                 raw_delta = float(left_row["teacher_score"]) - float(right_row["teacher_score"])
                 pair_contexts[(root, left_id, right_id)][set_id] = _sign(raw_delta, margin)
     repeated_contexts = [contexts for contexts in pair_contexts.values() if len(contexts) >= 2]

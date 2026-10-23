@@ -109,6 +109,26 @@ def _gate(
     return {"name": name, "status": str(payload.get("status", "missing")), "passed": passed, "source": str(path)}
 
 
+def _teacher_execution_alignment_gate(path: Path | None, *, expected_dataset_sha256: str) -> dict[str, Any]:
+    """Require a calibration-only execution check for the exact teacher table."""
+
+    if path is None:
+        return {"name": "teacher_execution_alignment", "status": "missing", "passed": False, "source": None}
+    payload = _load_json(path)
+    passed = bool(
+        payload.get("schema") == "gdd_wm_teacher_execution_alignment.v0.1"
+        and payload.get("status") == "passed_calibration_alignment"
+        and payload.get("passed") is True
+        and payload.get("candidate_dataset_sha256") == expected_dataset_sha256
+        and payload.get("calibration_only") is True
+        and payload.get("outcome_rows_read") is False
+    )
+    return {
+        "name": "teacher_execution_alignment", "status": str(payload.get("status", "missing")),
+        "passed": passed, "source": str(path),
+    }
+
+
 def _fit_projection(
     features: np.ndarray,
     goals: np.ndarray,
@@ -180,9 +200,10 @@ def _evaluate(
         groups[(str(row["instance_id"]), str(row["teacher_set_id"]))].append(index)
     pair_correct = pair_total = 0
     regrets: list[float] = []
+    per_group: list[dict[str, Any]] = []
     top1_hits = 0
     group_count = 0
-    for group in groups.values():
+    for (root, teacher_set_id), group in sorted(groups.items()):
         if len(group) < 2:
             continue
         group_count += 1
@@ -204,7 +225,17 @@ def _evaluate(
         predicted_best = int(np.argmin(costs))
         top1_hits += int(teacher_best == predicted_best)
         real_costs = np.asarray([float(rows[index]["real_task_cost"]) for index in group])
-        regrets.append(float(real_costs[predicted_best] - np.min(real_costs)))
+        regret = float(real_costs[predicted_best] - np.min(real_costs))
+        regrets.append(regret)
+        per_group.append({
+            "instance_id": root,
+            "teacher_set_id": teacher_set_id,
+            "predicted_candidate_id": str(rows[group[predicted_best]]["candidate_id"]),
+            "teacher_candidate_id": str(rows[group[teacher_best]]["candidate_id"]),
+            "oracle_real_task_cost": float(np.min(real_costs)),
+            "selected_real_task_cost": float(real_costs[predicted_best]),
+            "real_task_regret": regret,
+        })
     return {
         "n": int(len(indices)),
         "group_count": int(group_count),
@@ -213,6 +244,7 @@ def _evaluate(
         "top1_teacher_agreement": None if group_count == 0 else float(top1_hits / group_count),
         "mean_real_task_regret": None if not regrets else float(np.mean(regrets)),
         "regret_values": regrets,
+        "per_group": per_group,
     }
 
 
@@ -222,10 +254,13 @@ def run(
     prediction_audit_path: Path | None = None,
     planning_audit_path: Path | None = None,
     repairability_audit_path: Path | None = None,
+    teacher_execution_alignment_audit_path: Path | None = None,
     projection_rank: int = 2, epochs: int = 200, learning_rate: float = 0.05,
     margin: float = 1.0e-3, temperature: float = 0.1, ridge: float = 1.0e-4,
+    margin_calibration_path: Path | None = None,
 ) -> dict[str, Any]:
     d1 = _load_json(d1_path)
+    dataset_sha256 = _sha256(dataset_path)
     report: dict[str, Any] = {
         "schema": "gdd_wm_d2_projection_distillation.v0.1",
         "status": "blocked_d1_gate",
@@ -234,6 +269,9 @@ def run(
             "d1_report": str(d1_path),
             "feature_table": None if feature_table_path is None else str(feature_table_path),
             "repairability_audit": None if repairability_audit_path is None else str(repairability_audit_path),
+            "teacher_execution_alignment_audit": (
+                None if teacher_execution_alignment_audit_path is None else str(teacher_execution_alignment_audit_path)
+            ),
             "projection_type": "linear_train_only",
             "dynamics_frozen": True,
             "teacher_runtime_forbidden": True,
@@ -243,13 +281,20 @@ def run(
             "epochs": int(epochs),
             "learning_rate": float(learning_rate),
             "pair_margin": float(margin),
+            "pair_margin_calibration": None if margin_calibration_path is None else str(margin_calibration_path),
         },
         "gates": {
             "d1": {"status": d1.get("status"), "passed": d1.get("status") == "passed"},
+            "teacher_execution_alignment": _teacher_execution_alignment_gate(
+                teacher_execution_alignment_audit_path, expected_dataset_sha256=dataset_sha256,
+            ),
             "repairability": _gate(
                 repairability_audit_path,
                 "repairability",
-                accepted_statuses={"permitted_predicted_dynamics"},
+                # The strict D1/D2 router is the newer, stronger contract: it
+                # binds provenance, repeated contexts, held action novelty and
+                # finite probes before permitting only this diagnostic.
+                accepted_statuses={"permitted_predicted_dynamics", "permitted_small_d2_smoke"},
             ),
             "prediction_preservation": _gate(prediction_audit_path, "prediction_preservation"),
             "independent_planning_consequence": _gate(planning_audit_path, "independent_planning_consequence"),
@@ -260,6 +305,17 @@ def run(
         report["reason"] = "D1 teacher stability/execution gate is not passed; projection training was not executed"
         output_path.mkdir(parents=True, exist_ok=True)
         (output_path / "d2_projection_distillation.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return report
+    if not report["gates"]["teacher_execution_alignment"]["passed"]:
+        report["status"] = "blocked_teacher_execution_alignment"
+        report["reason"] = (
+            "D1 provenance/stability is insufficient: no matching calibration-only teacher execution-alignment "
+            "certificate permits projection training"
+        )
+        output_path.mkdir(parents=True, exist_ok=True)
+        (output_path / "d2_projection_distillation.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         return report
     if not report["gates"]["repairability"]["passed"]:
         report["status"] = "blocked_repairability_gate"
@@ -283,7 +339,21 @@ def run(
     rows = dataset.get("records")
     if not isinstance(rows, list) or not rows:
         raise ValueError("candidate dataset must contain a non-empty records list")
-    dataset_sha256 = _sha256(dataset_path)
+    if margin_calibration_path is not None:
+        calibrated = _load_json(margin_calibration_path)
+        if (
+            calibrated.get("schema") != "gdd_wm_train_only_pair_margin.v0.1"
+            or calibrated.get("status") != "calibrated"
+            or calibrated.get("dataset_sha256") != dataset_sha256
+            or calibrated.get("split") != "train"
+            or calibrated.get("selection_uses_calibration_or_outcome") is not False
+        ):
+            raise ValueError("invalid or mismatched train-only pair-margin calibration")
+        margin = float(calibrated["margin"])
+        if not np.isfinite(margin) or margin <= 0.0:
+            raise ValueError("calibrated pair margin must be finite and positive")
+        report["protocol"]["pair_margin"] = margin
+        report["protocol"]["pair_margin_calibration_sha256"] = _sha256(margin_calibration_path)
     feature_table_sha256 = _sha256(feature_table_path)
     report["protocol"]["dataset_sha256"] = dataset_sha256
     report["protocol"]["feature_table_sha256"] = feature_table_sha256
@@ -333,24 +403,28 @@ def main() -> int:
     parser.add_argument("--prediction-audit", type=Path, default=None)
     parser.add_argument("--planning-audit", type=Path, default=None)
     parser.add_argument("--repairability-audit", type=Path, default=None)
+    parser.add_argument("--teacher-execution-alignment-audit", type=Path, default=None)
     parser.add_argument("--projection-rank", type=int, default=2)
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--learning-rate", type=float, default=0.05)
     parser.add_argument("--margin", type=float, default=1.0e-3)
     parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--ridge", type=float, default=1.0e-4)
+    parser.add_argument("--margin-calibration", type=Path, default=None)
     args = parser.parse_args()
     report = run(
         dataset_path=args.dataset, d1_path=args.d1_report, output_path=args.output,
         feature_table_path=args.feature_table, prediction_audit_path=args.prediction_audit,
         planning_audit_path=args.planning_audit, repairability_audit_path=args.repairability_audit,
+        teacher_execution_alignment_audit_path=args.teacher_execution_alignment_audit,
         projection_rank=args.projection_rank,
         epochs=args.epochs, learning_rate=args.learning_rate, margin=args.margin,
         temperature=args.temperature, ridge=args.ridge,
+        margin_calibration_path=args.margin_calibration,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["status"] in {
-        "completed_diagnostic", "blocked_d1_gate", "blocked_repairability_gate",
+        "completed_diagnostic", "blocked_d1_gate", "blocked_teacher_execution_alignment", "blocked_repairability_gate",
         "blocked_missing_student_features",
     } else 2
 

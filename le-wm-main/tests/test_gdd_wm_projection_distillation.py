@@ -23,6 +23,17 @@ def _write_dataset(path, d1_status="rejected_fail_closed"):
     return {"records": rows}
 
 
+def _write_alignment(path, dataset, *, passed=True):
+    path.write_text(json.dumps({
+        "schema": "gdd_wm_teacher_execution_alignment.v0.1",
+        "status": "passed_calibration_alignment" if passed else "rejected_calibration_alignment",
+        "passed": passed,
+        "candidate_dataset_sha256": hashlib.sha256(dataset.read_bytes()).hexdigest(),
+        "calibration_only": True,
+        "outcome_rows_read": False,
+    }))
+
+
 def test_d2_does_not_train_when_d1_is_rejected(tmp_path):
     dataset = tmp_path / "dataset.json"
     _write_dataset(dataset)
@@ -43,6 +54,8 @@ def test_d2_requires_independent_prediction_and_planning_gates(tmp_path):
     d1.write_text(json.dumps({"schema": "d1", "status": "passed"}))
     repairability = tmp_path / "repairability.json"
     repairability.write_text(json.dumps({"status": "permitted_predicted_dynamics"}))
+    alignment = tmp_path / "alignment.json"
+    _write_alignment(alignment, dataset)
     table = tmp_path / "features.npz"
     keys = np.asarray([
         f"{row['instance_id']}::{row['teacher_set_id']}::{row['candidate_id']}"
@@ -68,6 +81,7 @@ def test_d2_requires_independent_prediction_and_planning_gates(tmp_path):
     report = run(
         dataset_path=dataset, d1_path=d1, output_path=tmp_path / "out",
         feature_table_path=table, repairability_audit_path=repairability,
+        teacher_execution_alignment_audit_path=alignment,
     )
     assert report["status"] == "completed_diagnostic"
     assert report["permission"]["status"] == "rejected_missing_independent_gate"
@@ -81,10 +95,12 @@ def test_d2_blocks_when_repairability_gate_falls_back(tmp_path):
     d1.write_text(json.dumps({"schema": "d1", "status": "passed"}))
     repairability = tmp_path / "repairability.json"
     repairability.write_text(json.dumps({"status": "fallback_action_only"}))
+    alignment = tmp_path / "alignment.json"
+    _write_alignment(alignment, dataset)
     output = tmp_path / "out"
     report = run(
         dataset_path=dataset, d1_path=d1, output_path=output,
-        repairability_audit_path=repairability,
+        repairability_audit_path=repairability, teacher_execution_alignment_audit_path=alignment,
     )
     assert report["status"] == "blocked_repairability_gate"
     assert report["gates"]["repairability"]["passed"] is False
@@ -100,6 +116,8 @@ def test_d2_accepts_explicitly_permitted_nested_repairability_panel(tmp_path):
         "schema": "gdd_wm_repairability_gate_panel.v0.1",
         "audits": [{"status": "permitted_predicted_dynamics"}, {"status": "fallback_action_only"}],
     }))
+    alignment = tmp_path / "alignment.json"
+    _write_alignment(alignment, dataset)
     table = tmp_path / "features.npz"
     keys = np.asarray([
         f"{row['instance_id']}::{row['teacher_set_id']}::{row['candidate_id']}"
@@ -120,6 +138,7 @@ def test_d2_accepts_explicitly_permitted_nested_repairability_panel(tmp_path):
     report = run(
         dataset_path=dataset, d1_path=d1, output_path=tmp_path / "out",
         feature_table_path=table, repairability_audit_path=repairability,
+        teacher_execution_alignment_audit_path=alignment,
     )
     assert report["gates"]["repairability"]["passed"] is True
     assert report["status"] == "completed_diagnostic"
@@ -132,6 +151,8 @@ def test_d2_rejects_feature_table_with_wrong_dataset_provenance(tmp_path):
     d1.write_text(json.dumps({"schema": "d1", "status": "passed"}))
     repairability = tmp_path / "repairability.json"
     repairability.write_text(json.dumps({"status": "permitted_predicted_dynamics"}))
+    alignment = tmp_path / "alignment.json"
+    _write_alignment(alignment, dataset)
     table = tmp_path / "features.npz"
     keys = np.asarray([
         f"{row['instance_id']}::{row['teacher_set_id']}::{row['candidate_id']}"
@@ -157,7 +178,18 @@ def test_d2_rejects_feature_table_with_wrong_dataset_provenance(tmp_path):
         run(
             dataset_path=dataset, d1_path=d1, output_path=tmp_path / "out",
             feature_table_path=table, repairability_audit_path=repairability,
+            teacher_execution_alignment_audit_path=alignment,
         )
+
+
+def test_d2_blocks_without_calibration_only_teacher_alignment_gate(tmp_path):
+    dataset = tmp_path / "dataset.json"
+    _write_dataset(dataset)
+    d1 = tmp_path / "d1.json"
+    d1.write_text(json.dumps({"schema": "d1", "status": "passed"}))
+    report = run(dataset_path=dataset, d1_path=d1, output_path=tmp_path / "out")
+    assert report["status"] == "blocked_teacher_execution_alignment"
+    assert report["gates"]["teacher_execution_alignment"]["passed"] is False
 
 
 def test_projection_rank_cannot_exceed_train_sample_count():

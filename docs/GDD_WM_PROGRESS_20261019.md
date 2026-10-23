@@ -2865,3 +2865,609 @@ Artifacts:
 - `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/planning_report.json`
 - `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/effect_policy_rgb_kinematics_proxy_summary.json`
 - `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/planning_report_rgb_kinematics_proxy.json`
+
+### Live RGB source-chart completion
+
+The preceding proxy control identified the remaining deployability defect:
+the offline source-latent export did not use the same renderer, two-frame
+context, transform, and encoder invocation as the live controller.  The new
+`rebuild_pointmaze_effect_rgb_source_chart.py` reconstructs only train and
+calibration sources through that exact live chart; outcome rows remain
+untouched.  It also exposed and corrected a second contract bug: a history-1
+teacher needs one no-op block to reach exported frame 5 while still supplying
+two frames to the encoder, not two no-op blocks (frame 10).
+
+With this repair, the frozen-latent one-block teacher has 13 support-qualified
+calibration roots and a valid alpha=0.1 finite-sample root bound of `0.0`.
+On the same unopened 20-root CUDA panel, the calibrated HTSC arm released
+`74.43%` of decisions and obtained terminal distance `0.15794`, compared with
+`0.16006` for visual dynamics; both reached `20/20` success.  The unguarded
+teacher was worse (`0.16401`), so the tiny continuous advantage is a
+selective-planning result, not a general teacher superiority claim.  This
+validates a non-vacuous source-chart + horizon contract repair, but requires a
+fresh larger panel and an independent environment before it can support a
+cross-environment GDD-WM claim.
+
+Additional artifacts:
+
+- `le-wm-main/experiments/gdd_wm/rebuild_pointmaze_effect_rgb_source_chart.py`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/live_rgb_source_chart/report.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/effect_policy_live_rgb_latent_summary.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/planning_report_live_rgb_latent_frame5.json`
+
+### External renderer-transfer confirmation
+
+The repository has no stored RGB files for PointMaze roots 1900--1999, but it
+does retain their simulator reset states.  To avoid silently treating those
+states as a visual test set, the 1900--1931 confirmation panel renders them
+only through the renderer fitted from the 1800--1815 calibration RGB roots.
+This is external **renderer-transfer** evidence, not stored-RGB validation.
+
+Across 32 unseen roots, the corrected latent HTSC controller released `74.64%`
+of decisions, achieved terminal distance `0.14238`, and retained `32/32`
+successes.  The shared-budget visual-dynamics baseline achieved `0.15658` and
+`32/32` successes, a `-0.01420` continuous terminal-distance difference in
+favor of selective latent effect control.  The unguarded teacher was nearly
+identical (`0.14245`); this means the present external result validates the
+repaired teacher path and non-vacuous gate, but does not isolate an additional
+risk--utility benefit of HTSC over its unguarded version.  It also cannot
+support a claim about real held-out RGB observations.
+
+Artifact:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/external1900_1931_renderer_transfer.json`
+
+### Stored-RGB remainder check
+
+The untouched stored-RGB roots 1888--1899 were run after freezing the same
+teacher, horizon, chart, gate and budget.  All methods again reached `12/12`
+success.  The unguarded teacher reached `0.14460` terminal distance, while
+HTSC reached `0.15786` and visual dynamics `0.15648`.  Combining this fixed
+remainder with roots 1868--1887 gives a 32-root stored-RGB HTSC versus visual
+dynamics terminal-distance difference of approximately `-0.00081`; binary
+success is saturated throughout.  This removes the apparent 20-root positive
+as a reliable stored-RGB gain claim.  The supported statement is narrower:
+the contract-repaired latent teacher is non-vacuously deployable; the current
+HTSC rule has not yet established a stable stored-RGB risk--utility advantage.
+
+Artifact:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/stored_rgb_1888_1899_confirmation.json`
+
+### Calibration-frozen action-consistency gate
+
+The prior HTSC gate certified only latent/action support and a fixed-bank
+regret bound.  It could therefore release an effect-teacher action without
+testing whether that particular action was preferable to the independent,
+RGB-only visual-dynamics candidate at the same live state.  The live runner
+now records that action-level disagreement and visual regret, and supports a
+strictly disjoint calibration selector for the consistency tolerance.  Its
+candidate grid includes `-1.0`, an explicit visual-only control that forces
+every effect action to abstain.  A releasing threshold may win only by
+improving calibration success or terminal distance; lower fallback rate alone
+cannot authorize it.
+
+On the 14 effect-policy calibration roots (1854--1867), every releasing
+threshold had the same saturated success (`14/14`) and did not improve final
+distance over visual-only control.  The frozen selector therefore chose `-1.0`.
+On all 32 untouched stored-RGB outcome roots (1868--1899), the calibrated
+consistency arm exactly matched visual dynamics: `32/32` success and mean
+terminal distance `0.15872`.  This is a useful stability repair—it prevents a
+spurious release claim—but it is not a teacher gain.  In the same panel, the
+unguarded teacher achieved `0.15673`, while legacy HTSC reached `0.15791`.
+The resulting diagnosis is sharper: globally calibrated support/bound and
+visual-consistency gates cannot yet identify the locally useful teacher
+actions.  The next method must estimate conditional action-transfer risk from
+disjoint calibration data, rather than relax a global threshold.
+
+Artifact:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/stored_rgb_1868_1899_consistency_calibrated.json`
+
+### Matched observed-local Jacobian audit
+
+The observed-local PointMaze controller had two hidden deployment defects.
+First, its active-probe trace could create a frozen residual even though the
+observed-only Jacobian has no frozen effect policy; this could stop the intended
+probe sequence before the chart was identified.  Second, its release gate
+subtracted a local predicted terminal *distance* from a visual controller score
+that also contained velocity and action regularizers.  That quantity has no
+common task unit, so it could release a locally bad action.
+
+The repaired implementation separates frozen-residual and observed-only
+controllers, records all observed local probes, and compares both proposals in
+successor-distance task units.  It also adds a `visual_dynamics_active_probe`
+control which executes exactly the same four predeclared RGB probes before
+using visual dynamics.  This separates information-action cost from local-chart
+utility.
+
+On roots 1854--1867, calibration-only selection chose local visual tolerance
+`0.20` (`14/14` success; final distance `0.14686`), improving over the matched
+all-fallback control (`0.15739`).  On the 32 untouched stored-RGB roots
+1868--1899, the corrected local Jacobian reached `32/32` success and terminal
+distance `0.14583`, an improvement over the pre-repair `0.15506`, but it still
+lost to the same-budget active-probe visual control (`32/32`, `0.13544`).  The
+paired terminal-distance difference was `+0.01039` (local Jacobian minus
+visual-probe), with 10 wins, 15 losses, and 7 ties.  Thus the implementation
+and task-utility contract are repaired, but cross-root local-chart transfer is
+not yet sufficiently stable to authorize a planning-gain claim.
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/stored_rgb_1868_1899_verified_local_probe_repaired_v2.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/stored_rgb_1868_1899_local_jacobian_utility_calibrated.json`
+
+### Cross-fitted local-chart reliability check
+
+The local Jacobian's rank gate only establishes that an affine chart can be
+fit; it does not establish action-effect transfer.  The controller now reports
+the leave-one-out observed-pulse error of its local chart and can fail closed
+when that cross-fitted error exceeds a declared tolerance.  This is a
+conditional transfer-risk diagnostic, distinct from both latent support and
+the visual score agreement gate.
+
+On the disjoint 1854--1867 calibration roots, finite local-chart LOO errors
+had median `0.1498` and ranged from `0.0287` to `0.2438`.  A `0.20` gate
+reduced release from about `1.6%` to `1.2%`, but worsened calibrated terminal
+distance from `0.15138` to `0.15248`; both were still better than the
+same-budget visual-probe control (`0.15739`).  The result validates that the
+risk is measurable, but does not authorize the LOO threshold as the formal
+controller because it provides no incremental calibration benefit.  The
+remaining repair target is a more informative probe design / task-conditioned
+local chart, not a stricter gate alone.
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/local_jacobian_loo_calibration_probe.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/local_jacobian_loo020_calibration_probe.json`
+
+### Goal-aligned information-probe audit
+
+The cardinal probe protocol contains a reverse-goal pulse, so its observed
+local chart could have failed simply because information collection consumed
+task progress.  A new task-aligned four-pulse design keeps every action in the
+positive goal half-plane while retaining rank-three affine excitation.  The
+comparison includes the exact same task-aligned probes followed by visual
+dynamics, so information-action cost is controlled.
+
+The first dispatch smoke failed closed because the new method was omitted from
+the local-chart initializer; it is retained only as an invalid smoke artifact.
+After the initializer repair, the 14 disjoint calibration roots show that
+goal-aligned probing itself helps the visual controller (`0.13372` final
+distance versus `0.15739` for cardinal probing), but the observed local chart
+still degrades it (`0.14321`, all methods `14/14` success).  Thus reverse-goal
+probe cost was a real confound but not the remaining cause of local-policy
+failure.  The current affine chart is not a stable task-ranking model across
+roots; no final outcome panel or positive claim is authorized for this arm.
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_probe_calibration.json` (invalid dispatch smoke)
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_probe_calibration_v2.json`
+
+### Velocity-residual local-effect repair
+
+The remaining local-chart failure was traced to state confounding: serial
+probes change velocity, while the original affine fit models only
+`effect(action)`.  The repaired arm fits observed effect *residuals* after
+subtracting the RGB-calibrated, velocity-conditioned visual-dynamics effect,
+then adds that baseline back when ranking the current candidate bank.  It uses
+the goal-aligned probe design and the same fixed `0.10` visual-consistency
+tolerance as the preceding calibration protocol.
+
+On calibration roots 1854--1867, the residual chart reached terminal distance
+`0.13211`, compared with `0.13372` for the exact same task-aligned probes plus
+visual dynamics and `0.14321` for the non-residual local chart.  On the 32
+untouched stored-RGB roots 1868--1899, the residual controller retained
+`32/32` success and reached `0.14809` versus `0.15144` for its same-budget
+visual control (paired mean delta `-0.00335`; 14 wins, 4 losses, 14 ties).
+The paired bootstrap 95% interval `[-0.01943, 0.01459]` crosses zero, so this
+is a replicated directional improvement and a causal mechanism repair, not a
+statistically certified planning-gain claim.  The controller also remains an
+RGB observed-local recovery method; it does not establish frozen LeWM teacher
+utility or universal transfer.
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_residual_calibration.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_residual_outcome32.json`
+
+### Renderer-transfer boundary
+
+The same frozen residual protocol was evaluated on roots 1900--1931 using a
+dataset-matched renderer fit only from the 1800--1815 calibration RGB roots;
+these roots have reset states but no stored RGB and are therefore explicitly
+renderer-transfer—not real held-out RGB—evidence.  The residual chart reached
+`0.16129` terminal distance versus `0.15780` for the matched visual controller
+(both `32/32` success).  It consequently does not transfer across this visual
+source change.  The valid positive scope remains same-source stored-RGB local
+recovery; renderer invariance, cross-environment utility, and universal frozen
+world-model claims remain closed.
+
+Artifact:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_residual_renderer_transfer32.json`
+
+### Local-chart uncertainty gate: calibration rejection — 2026-10-20
+
+The renderer-transfer boundary suggested that the remaining local chart error
+could be action-space extrapolation rather than another missing support
+threshold. We therefore added an explicit observed-chart uncertainty term: the
+local affine chart computes its leave-one-out (LOO) effect residual and
+multiplies it by ridge-design leverage for each candidate action. The local
+ranker may minimize
+
+\[
+  \widehat c(a) + \lambda\,\widehat\sigma_{\mathrm{LOO}}(a),
+\]
+
+where \(\lambda\) is selected exclusively on disjoint calibration roots. An
+unidentified chart has infinite uncertainty and cannot be released by this
+term. This is a robust local-identification intervention inspired by online
+system identification / adaptive MPC; it is not a learned-world-model
+certificate.
+
+The CUDA calibration comparison used roots `1854--1867`, with the same RGB
+task-aligned probe budget and visual-dynamics probe control. The point chart
+(`lambda=0`) reached final distance `0.13211`; the robust alternative
+(`lambda=1`) reached `0.13291`, while the matched visual control reached
+`0.13372`. The larger penalty reduced local releases from `3.50%` to `0.39%`
+but worsened the calibration task metric. The pre-outcome selection therefore
+froze `lambda=0`; this rejects the hypothesis that a missing conservative
+release threshold was the cause of the instability.
+
+On untouched stored-RGB roots `1868--1899`, the frozen result reproduces the
+same directional residual benefit (`0.14809` versus `0.15144`, both `32/32`
+success) with a local release rate of `3.90%`. This does not strengthen the
+previous inference: the paired uncertainty interval still crosses zero, and
+the external renderer-transfer failure remains. Its value is causal
+localization: with the current probe budget, uncertainty gating can safely
+abstain but cannot manufacture missing action-effect information.
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_residual_uncertainty_calibration_scale0.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_residual_uncertainty_calibration_scale1.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_residual_uncertainty_outcome32_frozen_scale0.json`
+
+### Conditional local-transfer audit and release-rate boundary — 2026-10-20
+
+The residual controller's small terminal difference could have meant either
+that its local actions were not truly better, or that real one-block gains were
+too sparse to dominate a saturated terminal metric. The live runner now has an
+explicit evaluation-only audit: after the RGB-only controller commits to its
+proposal, a simulator clone scores the local and visual proposals for one
+block. No counterfactual state, label, or cost is exposed to the controller;
+the audit is recorded solely for calibration and held-out mechanism analysis.
+
+On calibration roots `1854--1867`, there were 257 chart-identifiable decisions.
+The `0.10` visual-task tolerance released 9 local proposals; all 9 had lower
+true one-block task cost than the visual proposal (mean true local-minus-visual
+regret `-0.01938`). On independently run stored-RGB roots `1868--1899`, the
+same frozen policy released 20 of 513 decisions; 18/20 had lower true one-block
+cost, with mean regret `-0.01306`. Predicted local-versus-visual regret had
+Pearson correlation `0.48` on calibration and `0.50` on outcome, whereas chart
+LOO error was effectively uninformative. This is the first direct evidence
+that the residual chart can selectively repair *local action ranking* under
+the current RGB interface. It remains an evaluation-only causal audit, not a
+runtime privileged planner.
+
+The audit also rejects two tempting but invalid repairs:
+
+1. A strict predicted-improvement-only gate (`tolerance=0`) worsened
+   calibration terminal distance to `0.13856`; prediction sign alone does not
+   preserve the useful local proposals.
+2. Increasing the release tolerance to `0.20` increased releases but worsened
+   calibration terminal distance to `0.13884` (versus `0.13211` at `0.10`).
+   More locally favorable one-block actions do not automatically improve the
+   multi-step route objective.
+
+Velocity-conditioned residual features and route-phase chart resets were also
+implemented. Both fail their calibration comparison: the former is
+data-starved under four task-aligned pulses (`0.13939`), while phase reset
+spends an average 5.71 extra probe blocks and reaches `0.15408`. During that
+intervention, a real phase-change implementation defect was repaired: the
+waypoint comparison passed an invalid argument sequence to `np.allclose`, so
+the prior phase-reset branch could not be relied on. The corrected branch is
+covered by regression tests, but its added information cost is not justified
+by the current task outcome.
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_residual_counterfactual_calibration.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_residual_counterfactual_outcome32.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_residual_release020_calibration.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_velocity_residual_calibration.json`
+- `le-wm-main/results/gdd_wm_pointmaze_one_block_effect_20261020_cuda/task_aligned_residual_phase_calibration.json`
+
+### Adaptive task-aligned verification: drift repair and frozen confirmation — 2026-10-21
+
+The q=0.25 Cube task probe failed for a more specific reason than a loose
+threshold: it mixed early axis support with later contact effects at equal
+weight, and its RGB displacement was frequently at the centroid-quantization
+scale.  The new adaptive arm remains RGB-only.  It fits an affine local chart
+with predeclared exponential recency `0.70`, estimates action-independent
+drift, and uses that drift only for observed-versus-predicted validation; it
+never enters action-induced task-progress ranking.
+
+The q=0.25 adaptive smoke rejected the mechanism (`1/8` local releases and
+`105` fallback pulses with no terminal difference).  A new, predeclared
+q=0.50 sub-maximal information action was then calibrated on separate roots:
+`23/40` calibration roots passed the observed-positive condition, `17/40`
+abstained by sign, and the conditional threshold was `0.9683614` (rank
+`22/23`).  The associated 8-root smoke is exploratory only: it increased
+release to `5/8` and had local-minus-carrier mean final-distance
+`-0.02318 m`, but only one non-tie win.
+
+The smoke bundle froze all four readouts, RGB pixel map, candidate bank, and
+the q=0.50 adaptive gate.  On new outcome roots `20401021--20401052`, the
+runner recorded `calibration_frozen=true` and loaded the same gate without any
+refit.  The paired result is `-0.01621 m` local minus matched adaptive carrier,
+with bootstrap 95% CI `[-0.03711, -0.00058]`, `5/27/0`
+wins/ties/losses, `23/32` released roots, and `135` fallback pulses.  The
+exact two-sided sign test is `p=0.0625`, so this is a directional independent
+benefit with no observed loss—not yet a statistically certified stable gain.
+The controller and immutable bundle must remain unchanged for the next
+independent replication; q, decay, and threshold are not tunable from this
+outcome.
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_cube_adaptive_task_probe_20261021_smoke8_cuda/closed_loop.json` (q=0.25 mechanism rejection)
+- `le-wm-main/results/gdd_wm_cube_adaptive_task_probe_q50_20261021_smoke8_cuda/closed_loop.json` (q=0.50 bundle-producing smoke)
+- `le-wm-main/results/gdd_wm_cube_adaptive_task_probe_q50_20261021_confirmation32_cuda/closed_loop.json` (immutable-bundle confirmation)
+
+### Locked-policy replication boundary — 2026-10-21
+
+The second 32-root panel used the *identical* q=0.50 controller and immutable
+bundle, changing only outcome roots to `20411021--20411052`.  It kept similar
+local-release coverage (`22/32`) but did **not** reproduce the first panel's
+terminal gain: local minus carrier mean was `-0.00148 m`, bootstrap 95% CI
+`[-0.00444, 0]`, `1/31/0` wins/ties/losses, exact sign `p=1.0`.  The first
+panel's result must therefore not be pooled post hoc or presented as a stable
+controller advantage.
+
+The paired task decomposition localizes the remaining boundary.  In the first
+panel, all meaningful benefit arose on task `3` (`3/6` wins, mean `-0.08337 m`);
+the replication retained only one such win (`1/6`, mean `-0.00790 m`).  Tasks
+`1`, `4`, and `5` often released the local chart and changed many actions but
+still had exactly zero terminal difference.  This is not a gate-coverage
+failure: it is an outer reachability/phase failure in which a verified local
+XY effect is insufficient to alter the task outcome.  The next repair must
+therefore condition local release on an RGB-observable task-progress/reachability
+state or use a phase/macro-action controller; it must not retune the verified
+local chart from the two outcome panels.
+
+Artifact:
+
+- `le-wm-main/results/gdd_wm_cube_adaptive_task_probe_q50_20261021_replication32_cuda/closed_loop.json` (locked-policy independent replication)
+
+### Calibration-gated teacher alignment and D2 consequence audit — 2026-10-22
+
+The goal-conditioned predictive PointMaze control previously passed the D1
+provenance/stability interface, but that interface alone did not require the
+teacher to order realized task costs better than chance.  A new
+calibration-only, root-bootstrap teacher-alignment gate now binds the exact
+candidate dataset hash and forbids outcome-row reads.  On its 20 calibration
+roots, the teacher obtained 106/179 comparable-pair agreements (`0.5922`),
+with a one-sided root-bootstrap lower bound of `0.5160`; this permits a
+*diagnostic* D2 projection fit, not a planning claim.
+
+The projection runner now requires that alignment receipt and emits
+identity-bound per-root/per-context outcome traces.  The new consequence audit
+predeclares both a strictly negative one-sided paired upper bound and at least
+10% root-level action change before calling a held-out regret reduction a
+confirmed benefit.  The frozen D2 control does not satisfy that rule: only
+1/20 roots (`1/60` contexts) changes its selected candidate; mean held-out
+fitted-minus-baseline regret is `-0.001575`, but the upper 95% bound is `0`.
+It is therefore a non-confirmation rather than a GDD success.  This separates
+``faithfully distills teacher preferences`` from ``improves real decisions``
+and prevents a one-root tie-break from being promoted to a repair result.
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_pointmaze_goal_conditioned_predictive_control_20261021_cuda_identity_repaired/teacher_execution_alignment_calibration_only.json`
+- `le-wm-main/results/gdd_wm_pointmaze_goal_conditioned_predictive_control_20261021_cuda_identity_repaired/d2_projection_diagnostic_alignment_gated_trace_v2/d2_projection_distillation.json`
+- `le-wm-main/results/gdd_wm_pointmaze_goal_conditioned_predictive_control_20261021_cuda_identity_repaired/d2_projection_diagnostic_alignment_gated_trace_v2/heldout_execution_consequence_audit_v2.json`
+
+### Counterfactual contrast mechanism audit — 2026-10-22
+
+The preceding D2 non-confirmation could have had three incompatible causes:
+the frozen predictor might erase candidate-conditioned effects, the predicted
+effects might not track realized dynamics, or a preserved latent effect might
+be decoded incorrectly into goal-relative endpoint geometry.  A new
+post-execution, per-root/per-context audit separates these possibilities using
+only already materialized terminal states and costs.  It neither refits the
+teacher nor changes a policy.
+
+On the same held-out 20-root PointMaze panel (60 candidate contexts), the
+dominant labels were 3 predicted-effect collapses, 17 latent-dynamics
+mismatches, 12 endpoint-readout geometry mismatches, 8 task-score readout
+mismatches, and 20 groups without a dominant label under the frozen
+thresholds.  The key split is that mean pairwise correlation from frozen
+predicted latent variation to realized endpoint variation was `0.4033`, while
+the current frozen latent-to-XY endpoint readout achieved only `0.1088`.
+Thus some apparent "world-model failures" are actually task-chart failures;
+they must not be repaired by indiscriminate dynamics retraining.  The next
+prospective repair is therefore a separately frozen, goal-conditioned endpoint
+readout intervention, restricted to calibration-supported groups; local
+verified dynamics remains the appropriate repair only for the 17 genuine
+latent-dynamics mismatch groups.
+
+This is mechanism evidence, not a new teacher validation or planning gain.
+The artifact is
+`le-wm-main/results/gdd_wm_pointmaze_goal_conditioned_predictive_control_20261021_cuda_identity_repaired/teacher_counterfactual_contrast_mechanism_audit_v2.json`;
+the reusable audit is
+`le-wm-main/experiments/gdd_wm/audit_teacher_counterfactual_contrast.py`.
+
+### Prospective repairability transport contract — 2026-10-22
+
+The contrast audit labels cannot be used directly as a controller: they are
+post-execution labels.  A root-disjoint pilot now learns a coarse repair-family
+router only from train roots, freezes its confidence threshold on one half of
+calibration roots, certifies it on the other half, and treats outcome labels as
+evaluation only.  It additionally requires both sub-mechanisms of each repair
+family to appear in calibration: endpoint-readout and task-score mismatch for
+metric repair, and collapse plus latent-dynamics mismatch for dynamics repair.
+
+The existing shared-anchor teacher package fails this contract for a concrete
+reason.  Its train, calibration, and outcome action-hash sets have zero
+overlap (`0/5` for train/calibration and `0/5` for train/outcome).  The
+resulting train-only decision-feature support gate accepts `0%` of calibration
+and outcome contexts, so the pilot correctly rejects with
+`rejected_train_feature_support_transport` and all deployment routes abstain.
+The prior, ungated calibration authorization was therefore invalid as a
+prospective repairability claim and is superseded by this fail-closed result.
+
+This does not show that prospective repairability is impossible.  It shows
+that the old package was built to test held-action generalization, not to
+certify repair-family routing under common candidate support.  The fresh V7
+panel now records held/train action-hash overlap in its immutable static
+preflight and requires `shared_candidate_in_support`; it is the appropriate
+GPU-only successor for this question.  No V7 efficacy claim exists until its
+CUDA job and independent outcome audit complete.
+
+The V7 runner now revalidates this contract at execution time, not just in its
+launcher: context metadata must name `shared_candidate_in_support` and the
+goal-balanced interaction design; every held action hash must occur in the
+source training bank; and the context must bind a readable passed V7 preflight
+ledger whose held/train overlap equals the executing held bank.  This prevents
+a manual runner call from silently reverting to the old held-action protocol.
+
+A further execution audit found that subset support alone was insufficient:
+the former V7 builder would fit cross-fitted scorer/router labels on a
+64-action train bank but calibrate and evaluate regret on a 16-action held
+bank.  Because regret and score margins are candidate-set dependent, this is
+still a transport shift even when all 16 actions are individually supported.
+V7 now uses the same 16 held actions for scorer training, calibration, and
+outcome, and requires `held_exact_shared_bank` at preflight, build, and runner
+boundaries.  The V7 static preflight passed with 16/16 action overlap and
+the exact-bank contract.  This repair removes an experimental confound; it is
+not an efficacy result.
+
+### V7 candidate-bank decision-headroom contract — 2026-10-22
+
+Exact action support alone is insufficient for a meaningful action-ranking
+test.  A fixed bank can have diverse oracle winners while its best and
+second-best actions are nearly tied, leaving no measurable downstream reward
+for a correct predictor to recover.  The goal-balanced V7 design now records
+root-wise terminal-goal oracle headroom on its 64 disjoint candidate-design
+roots before creating train, calibration, or outcome examples.  The immutable
+ledger rejects a bank unless all of the following hold: normalized winner
+entropy is at least `0.50`; q10 best-versus-second-best task-cost gap is at
+least `0.001`; at least half of design roots have a gap of at least `0.003`;
+and q10 best-to-worst candidate-cost spread is at least `0.05`.
+
+The immutable V7 ledger passed: entropy `0.8616`, 15 distinct winners, q10 top-2
+gap `0.001005`, decision-sensitive-root fraction `0.546875`, and q10
+candidate-cost spread `0.05279`.  It additionally binds the ordered-action
+router to 95 declared pre-outcome features, 128 train roots, and a 16-root
+minimum surplus.  These values are candidate-design evidence only: they do
+not access outcome roots and do not establish a learned-model, router, or
+planning gain.  They make a subsequent null V7 result interpretable as a
+model/repair failure rather than an action-bank near-tie or p>=n artifact.
+
+The GPU-only V7 launcher binds
+`results/pointmaze_planning_shaped_advantage_v7_static_preflight_v7_alias_contract_20261022.json`.
+The ledger also freezes the executable router interface: `advantage_ridge`,
+the `full_ordered_20x2` action representation, and the
+`train_root_only_four_fold_blocked_advantage_mse` regularization-selection
+rule.  The runner revalidates those fields and the realized 95-dimensional
+router feature vector, so a manual invocation cannot silently replace V7 with
+the legacy summary/logistic path.  This is an execution-integrity repair, not
+an efficacy result.
+
+V7 also materializes the C1-to-C2 mechanism link after execution: it performs
+a root-disjoint representation-radius/realized-contrast aliasing audit, then
+passes that immutable audit to the scorer-disagreement decomposition.  The
+revised immutable ledger binds `source_history_model`, radius quantile `0.25`,
+contrast gap `0.05`, and all 64 outcome-root pairs before CUDA construction.
+This tests whether empirical history aliasing overlaps roots whose selected
+candidate changes.  It cannot select a router, reopen calibration, or support
+causal attribution.
+
+The preceding V5 CUDA mechanism audit also identifies the correct target for
+the V7 router change.  On its 32 outcome roots, the planning-shaped scorer
+selected a different candidate on 7 roots and lowered candidate-bank regret on
+5 of those 7; the old binary router released only 2 of those 5 gains.  Its
+separate calibration certificate failed, so fallback to the cost scorer was
+the only lawful deployment policy.  This is not evidence that the repair arm
+is generally useful, but it rejects the simpler explanation that there was no
+repairable disagreement at all.
+
+The corresponding root-disjoint decision-aliasing replay does not support
+history aliasing as the dominant explanation for that V5 router failure: 4/32
+outcome roots were empirical near aliases, with no exact representation
+collision, and only one of those four overlapped the seven scorer-disagreement
+roots.  The alias audit is a post-execution local diagnostic, not causal
+attribution, but it makes the more direct mechanism test clear: V7 must test
+whether a continuous prospective regret advantage can recover the available
+planning-shaped improvements without leaking calibration or outcome labels.
+
+V7 therefore predicts the continuous cross-fitted `cost_regret -
+planning_regret` advantage rather than a binary win label.  Because the
+ordered-action router has 95 pre-outcome features for 128 train roots, its
+ridge penalty is now selected over a fixed grid by a separate four-fold,
+root-blocked train-only validation.  The selected penalty, each blocked MSE,
+MAE, sign accuracy and predicted-positive coverage are serialized in the
+report.  Calibration and outcome labels remain unavailable during this
+selection, and calibration still independently freezes and certifies the
+release threshold.  This removes a fixed-regularization variance confound; it
+does not create a V7 efficacy result.
+
+Artifacts:
+
+- `le-wm-main/results/gdd_wm_pointmaze_goal_conditioned_predictive_control_20261021_cuda_identity_repaired/prospective_repairability_routing_pilot_v4.json`
+- `le-wm-main/experiments/gdd_wm/audit_prospective_repairability_routing.py`
+- `le-wm-main/results/pointmaze_planning_shaped_advantage_v7_static_preflight_v7_alias_contract_20261022.json`
+
+### V7 shared-bank advantage-router result — 2026-10-22
+
+The V7 CUDA panel completed on the RTX 5060 Ti after the static support and
+headroom contracts were frozen.  It uses 128 train, 192 calibration, and 64
+root-disjoint outcome contexts; all roles score the same 16 supported ordered
+action sequences.  The full 95-dimensional visual-history/action router is
+fit only on cross-fitted train-root advantages, and its ridge penalty is
+selected only by blocked train-root validation.
+
+The candidate-bank and raw-router diagnostics are nontrivial:
+
+| quantity | outcome result |
+| --- | ---: |
+| cost-only mean regret | `0.01814` |
+| planning-shaped mean regret | `0.02090` |
+| frozen raw-router mean regret | `0.01407` |
+| raw-router release coverage | `8 / 64` |
+| released roots with strict improvement | `5 / 8` |
+| scorer-disagreement roots | `30 / 64` |
+
+This is **not** a deployment gain.  The independent calibration certificate
+rejected the router: its upper 95% bound for routed-minus-incumbent regret was
+positive (`0.00582`).  The authorized outcome policy therefore fell back to
+the calibration incumbent (`planning`), whose mean outcome regret was
+`0.02090`, worse than cost-only.  The raw router's outcome value is retained
+as a post-freeze diagnostic, not a policy-selection result.
+
+The completed aliasing audit finds 10/64 near decision-alias witnesses and
+only 5 overlap with the 30 scorer-disagreement roots.  Thus history aliasing
+is neither a necessary nor sufficient explanation for the routing failures.
+The mechanism audit also records 11 missed effective improvements among 16
+improvable disagreement roots.  The concrete remaining failure is therefore
+calibration transport of the continuous advantage score, not fixed-bank
+headroom, action support, or an unexercised planning arm.
+
+During completion, a post-execution audit initially treated V7 as V9 and
+required `routing_eligible == candidate_disagreement`.  That assertion is
+wrong for V7: it deliberately scores every root, while same-choice roots have
+zero decision opportunity.  The audit now keys that check to the frozen
+`opportunity_gated` contract; regression coverage accepts V7 all-root
+eligibility and continues to reject a V9 same-choice release.  This repair
+only restores correct audit semantics; it does not alter the immutable GPU
+report or retroactively authorize its raw-router result.
+
+Artifacts:
+
+- `le-wm-main/results/pointmaze_planning_shaped_advantage_fresh_v7_router_20261022_cuda/report.json`
+- `le-wm-main/results/pointmaze_planning_shaped_advantage_fresh_v7_router_20261022_cuda/planning_shaped_repairability_mechanism_audit.json`
+- `le-wm-main/results/pointmaze_planning_shaped_advantage_fresh_v7_router_20261022_cuda/decision_aliasing_calibration_outcome.json`
+- `le-wm-main/results/pointmaze_planning_shaped_advantage_fresh_v7_router_20261022_cuda/cost_planning_disagreement_audit.json`
