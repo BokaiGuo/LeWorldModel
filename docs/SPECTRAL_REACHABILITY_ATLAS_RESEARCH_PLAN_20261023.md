@@ -1470,6 +1470,33 @@ action window、CPU fallback 或 selector/fidelity provenance 缺失解释。最
 该预注册的 one-token reconfiguration/observed-RGB mechanism contract，模型侧 margin band 不能稳定外推到新 roots 的
 真实 successor 排序；这限制了当前 Planning Compiler 假设的 P1 可验证性，不是对 D2P、谱分析或世界模型规划整体的理论否定。
 
+#### PushT-D2P 独立 P0：输入/API 合同排错后通过（2026-10-24）
+
+PushT 不能拿既有的 privileged oracle、state heuristic、adapter 或 decoder 输出充当 D2P/P5
+证据。因此新建了独立的 CUDA-only P0：
+`experiments/spectral_reachability/preflight_pusht_d2p_p0.py`，其唯一目的为验证发布的
+冻结 `pusht/lewm` 是否具有可微、有限的 future-action path；它不读取 simulator state 到
+模型/score，不调用 oracle successor，不训练 adapter/repair predictor，并且明确保留而不打开
+outcome roots。
+
+首次 host-CUDA 调用在科学行生成前暴露两个实现合同缺口，均已修复并重跑：单 goal RGB
+被错误扩成六维而不符合 ViT 的 `[B,T,C,H,W]` encoder 接口；以及对 `LeWM.rollout` 的
+action API 误作 `[B,H,D]` 调用，遗漏其必需的因果 history prefix 与 future suffix。修复版
+以三帧、零 live-action 的**真实因果** history（每帧均在一个真实 simulator step 前渲染）
+建立 rollout context，未来两 token 才是可微编译变量；它们进入 checkpoint 的路径严格为
+`live [-1,1] -> /100 -> public z-score -> time-major fivefold block`。两处失败均属于代码
+问题，未产生可解释为理论负结果的 P0 receipt。
+
+主机 RTX 5060 Ti / CUDA 13.0 的新 receipt
+`results/pusht_d2p_p0_preflight_20261024_cuda/report.json` 通过 CUDA 真分配、冻结参数 hash、
+action-block、RGB-only planner input、无特权/无修复器与未打开 outcome gates。四个独立
+calibration roots 的 Jacobian Frobenius norm 为 `0.056526--0.096180`，中心差分中位相对
+误差为 `0.002384--0.021278`（每根均小于预注册的 `0.10` 门）。这是 PushT-D2P 的 P0
+工程准入，而非物理 fidelity、reconfiguration、闭环效力或跨任务 P5 结论。该独立分支的
+下一步是 calibration-only P1：仅用冻结模型构造带动作见证的非贪心 reconfiguration chunks，
+在真实执行后重新以 RGB 编译，并以 root-disjoint receipt 决定能否打开任何 outcome 或强基线
+比较。
+
 ## 论文主张的可证伪形式
 
 若后续 P1--P5 全部通过，主张应被限定为：冻结视觉世界模型的有限时域 action
