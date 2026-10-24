@@ -191,9 +191,9 @@ CUDA-gated 审计固定 20 个 roots、9 个帧、`+5/+10` horizons，共 360 �
 | 分支 | 已验证到的边界 | 当前未完成阶段 | 为什么不能直接继续 |
 |---|---|---|---|
 | PointMaze-SRA | P0--P3 的输入/物理标签审计通过；P4 的 fresh RGB-only closed-loop panel 已封存 | P5 跨 checkpoint/任务复制 | P4 只覆盖一个冻结 PointMaze checkpoint、生成但合同已审计的新 root distribution、固定五臂 bank 与四个 model blocks；它不自动构成 Reacher、PushT 或跨架构结果。 |
-| Reacher-D2P | 旧 P0/P1 的 action-stat receipt 已判定不符合原始训练语义；未来目标 detach 与 HDF5 边界 NaN 也已修复 | 新 receipt 下的 fresh P0，之后才可能是 P1--P5 | 旧 receipt 对已拼接的十维 action packet 逐位置统计，而训练在二维 raw action 上标准化后才拼接；它改变了冻结 action encoder 的坐标。所有使用该 receipt 的排序失配只属于代码/协议候选，不是理论负结果。 |
+| Reacher-D2P | 官方 HDF5 训练语义、future-target detach、packet statistics 与 fresh P0 均已复验；P1 的 RGB 与 qpos 校准均在 root-disjoint bound panel fail-closed | P2--P5；另有官方 HDF5 dynamics-repair 诊断在运行 | 当前冻结 checkpoint 的 model-side non-greedy margin 不能稳定外推为真实 successor/physical non-greediness。该边界已排除 normalization、warmup、snapshot、time-window、GPU 与 fidelity-replay 代码解释；训练修复只诊断 checkpoint 训练合同，不能冒充原始 frozen-D2P 成功。 |
 | PointMaze effect-adapter/HTSC | strict RGB closed-loop panels 已完成 | 不是 SRA 的 P4 证据 | 它的 `visual_dynamics` 通过 calibration-only latent-to-position readout 评分，不执行 SRA 的 action-Jacobian/spectral chart。它可作为独立基线/工程证据，不能替代 SRA 的机制检验。 |
-| PushT / 跨模型 | 无获准 transfer mechanism | P5/P6/P7 类 transfer | 两条 source mechanism 都尚未给出可迁移的已验证 P4；不得用接触或新架构数据绕过上游门。 |
+| PushT-D2P / 跨模型 | time-major action packet 与 rollout bootstrap 对齐修复后，PushT P0 通过、P1 24-root outcome fail-closed | PushT P2--P5；全项目 P5 独立冻结模型复制 | PushT 的 23 个模型 witness 有 5 个在真实物理 prefix 上翻转为更贪心；CUDA、same-root zero、successor recompile、independent replay 与 root-disjoint gates 均通过。现有 TwoRoom/Cube adapter/teacher 结果不满足 training-free D2P，不能充作 P5。 |
 
 该账本的作用是区分**尚缺实现/协议**（SRA P4 controller）与**已经测试但不满足机制门**
 （D2P P1-qpos calibration），二者都不是谱理论或世界模型理论的反例。
