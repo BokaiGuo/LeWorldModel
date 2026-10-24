@@ -232,8 +232,12 @@ def _validate_margin_band_selection(path: Path, *, args: argparse.Namespace) -> 
     """Bind a bounded calibration to a sealed calibration-only selector."""
 
     selection = json.loads(path.read_text(encoding="utf-8"))
-    if selection.get("schema") != "d2p_reacher_p1_margin_band_guard_selection.v1" or selection.get("status") != "pass":
+    schema = selection.get("schema")
+    allowed = {"d2p_reacher_p1_margin_band_guard_selection.v1", "d2p_reacher_p1_task_critical_margin_band_selection.v1"}
+    if schema not in allowed or selection.get("status") != "pass":
         raise ValueError("P1 margin-band calibration requires a passing margin-band selection receipt")
+    if schema == "d2p_reacher_p1_task_critical_margin_band_selection.v1" and args.mechanism_observability != "qpos_distance":
+        raise ValueError("task-critical margin-band selection requires qpos_distance observability")
     selected = selection.get("selected", {})
     expected_bounds = {
         "min_non_greedy_margin": args.non_greedy_margin,
@@ -269,7 +273,8 @@ def _validate_margin_band_selection(path: Path, *, args: argparse.Namespace) -> 
             raise ValueError(f"P1 margin-band selection is incompatible on {key}")
     inputs = selection.get("inputs", {})
     sources: dict[str, dict[str, str]] = {}
-    for label in ("report", "fidelity"):
+    required_sources = ("report",) if schema == "d2p_reacher_p1_task_critical_margin_band_selection.v1" else ("report", "fidelity")
+    for label in required_sources:
         source = Path(inputs.get(label, ""))
         source_sha = inputs.get(f"{label}_sha256")
         if not source.is_file() or not isinstance(source_sha, str) or _sha256_file(source) != source_sha:

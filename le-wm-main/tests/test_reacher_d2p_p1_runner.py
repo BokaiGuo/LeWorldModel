@@ -168,6 +168,54 @@ def test_p1_margin_band_selection_rejects_a_different_runner_or_planner_geometry
         p1._validate_margin_band_selection(selection, args=args)
 
 
+def test_p1_task_critical_margin_band_requires_qpos_and_binds_only_its_source_report(tmp_path):
+    """The qpos evaluator selector cannot be replayed as RGB selection.
+
+    Its sole source is a calibration receipt.  The runner hash, frozen
+    artifacts, and planner geometry remain bound exactly as for the legacy
+    RGB selector, while a nonexistent RGB-fidelity file must never be needed.
+    """
+    checkpoint = tmp_path / "checkpoint"; checkpoint.mkdir()
+    weights = checkpoint / "weights.pt"; weights.write_bytes(b"weights")
+    adapter = tmp_path / "adapter.json"; adapter.write_text("adapter", encoding="utf-8")
+    report = tmp_path / "source_report.json"; report.write_text("report", encoding="utf-8")
+    digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+    selection = tmp_path / "task_critical_band.json"
+    selection.write_text(json.dumps({
+        "schema": "d2p_reacher_p1_task_critical_margin_band_selection.v1", "status": "pass",
+        "selected": {"min_non_greedy_margin": 0.03, "max_non_greedy_margin": 0.06},
+        "protocol_binding": {
+            "checkpoint_weights_sha256": digest(weights), "adapter_sha256": digest(adapter),
+            "runner_sha256": p1._sha256_file(p1.Path(p1.__file__)),
+            "mechanism_observability": "qpos_distance", "proposal_distribution": "physical_uniform",
+            "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 10.0, "action_block": 5,
+            "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2, "proposals": 128,
+            "max_relative_reachability_improvement": None, "min_second_to_first_singular_ratio": None,
+            "warmup_policy": WARMUP_POLICY, "target_delta": [0.65, -0.65],
+        },
+        "inputs": {"report": str(report), "report_sha256": digest(report)},
+    }), encoding="utf-8")
+    args = SimpleNamespace(
+        policy=checkpoint, adapter_artifact=adapter, non_greedy_margin=0.03, max_non_greedy_margin=0.06,
+        mechanism_observability="qpos_distance", proposal_distribution="physical_uniform",
+        selection_metric="bounded_dls_suffix_goal_cost", damping=10.0, action_block=5,
+        reconfiguration_horizon=1, progress_horizon=2, proposals=128,
+        max_relative_reachability_improvement=None, min_second_to_first_singular_ratio=None,
+        target_delta=(0.65, -0.65),
+    )
+
+    assert p1._validate_margin_band_selection(selection, args=args)["source_receipts"] == {
+        "report": {"path": str(report.resolve()), "sha256": digest(report)}
+    }
+    args.mechanism_observability = "observed_encoded_goal_cost"
+    with pytest.raises(ValueError, match="requires qpos_distance"):
+        p1._validate_margin_band_selection(selection, args=args)
+    args.mechanism_observability = "qpos_distance"
+    report.write_text("changed", encoding="utf-8")
+    with pytest.raises(ValueError, match="has changed"):
+        p1._validate_margin_band_selection(selection, args=args)
+
+
 def test_p1_paired_summary_reports_root_paired_final_distance_direction():
     rows = [
         {"methods": {"reconfiguration": {"physical": {"final_qpos_distance": 1.0}}, "cem_full_horizon": {"physical": {"final_qpos_distance": 2.0}}}},

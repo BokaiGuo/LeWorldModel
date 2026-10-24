@@ -1470,6 +1470,34 @@ action window、CPU fallback 或 selector/fidelity provenance 缺失解释。最
 该预注册的 one-token reconfiguration/observed-RGB mechanism contract，模型侧 margin band 不能稳定外推到新 roots 的
 真实 successor 排序；这限制了当前 Planning Compiler 假设的 P1 可验证性，不是对 D2P、谱分析或世界模型规划整体的理论否定。
 
+#### Reacher-D2P P1：task-critical qpos 校准的独立复核（2026-10-24）
+
+为排除“RGB successor 排序不等于任务坐标”只是测量定义造成的假阴性，新增了一条独立、预先冻结的
+task-critical 链。planner 的候选生成、future-score 排名和 RGB/action-history 输入完全不变；`qpos_distance`
+只作为 evaluator-only 的校准判据，绝不进入模型、候选 bank 或排序。新的 selector
+`select_reacher_d2p_p1_task_critical_margin_band.py` 仅在 source calibration 中，按**模型侧**
+non-greedy margin 选择一个连续闭区间，并绑定 checkpoint、adapter、runner hash 和完整 planner geometry。
+后续 runner 拒绝将该 qpos selector 用于 observed-RGB protocol，且拒绝 source report 被改写。
+
+新的 host-CUDA 链使用 preflight `20270600--20270603`、source calibration
+`20270700--20270715`、bound calibration `20270800--20270815` 与尚未打开的 outcome
+`20270900--20270923`。source 的 15 个 model-eligible roots 中，连续区间
+`[0.09582424, 0.23112917]` 含 5 个物理 non-greedy roots，故只授权 root-disjoint bound
+calibration。bound 中只有 3 个 roots 落入该 interval（少于预注册的 4）；其中 2/3 保持
+physical non-greediness，而 `20270814` 的 model margin `+0.14357758` 却对应 candidate-minus-zero
+qpos distance `-0.23533100`，即真实首段反而更接近目标。所有其他 gate 均通过：CUDA、冻结 hash、
+raw action box、三 token 预算、P0/preflight binding、root identity、finite outcomes、模型侧
+non-greedy 与 future-score improvement。receipt：
+`le-wm-main/results/reacher_d2p_official_causal_repair_20261024_cuda_training_stats_v7_task_critical_margin_revalidation_v1/p1_task_critical_bound_calibration/report.json`。
+
+这次失败再次经过独立、无模型推理的 host-CUDA 双侧 replay；16/16 roots 的 warmup/root RGB、candidate
+successor、raw-zero prefix、角度环绕 qpos distance 和记录动作都精确重现，replay receipt 为
+`p1_task_critical_bound_first_chunk_replay.json`。因此它不是 qpos 环绕、snapshot restore、zero control、
+动作记录、normalization、GPU 路径或 selector binding 的代码问题。由于 bound 未通过，脚本在创建 outcome
+目录或执行 outcome root 前退出；P1-qpos 以及 P2--P5 保持关闭。该证据只建立一个更强的 checkpoint/protocol
+边界：该冻结 RGB dynamics 不能以可泛化的 model-margin interval 稳定识别物理上非贪心的 reconfiguration prefix；
+它不构成 D2P 或世界模型理论整体的负结论，也不授权事后改阈值继续开 outcome。
+
 #### PushT-D2P 独立 P0：输入/API 合同排错后通过（2026-10-24）
 
 PushT 不能拿既有的 privileged oracle、state heuristic、adapter 或 decoder 输出充当 D2P/P5
