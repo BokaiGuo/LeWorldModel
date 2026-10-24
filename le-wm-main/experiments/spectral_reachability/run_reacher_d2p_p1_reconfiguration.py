@@ -46,6 +46,7 @@ MECHANISM_OBSERVABILITIES = (
     "qpos_distance",
     "observed_encoded_goal_cost",
 )
+MIXTURE_SCHEMA = "reacher_d2p_p1_proposal_pair_mixture.v1"
 
 
 def _resolve_local_cli_inputs(args: argparse.Namespace) -> argparse.Namespace:
@@ -112,23 +113,138 @@ def _bind_simulator_training_sources(paths: list[Path], *, run_seeds: set[int]) 
         if payload.get("schema") == "reacher_d2p_counterfactual_calibration_repair.v1":
             source_path = Path(payload.get("counterfactual_pool_manifest", "")).resolve()
             payload = json.loads(source_path.read_text(encoding="utf-8"))
-        if payload.get("schema") != "reacher_d2p_counterfactual_pair_pool.v1" or payload.get("status") != "completed":
+        elif payload.get("schema") == "reacher_d2p_joint_transition_counterfactual_repair.v1":
+            source_path = Path(payload.get("counterfactual_manifest", "")).resolve()
+            payload = json.loads(source_path.read_text(encoding="utf-8"))
+        if payload.get("schema") == MIXTURE_SCHEMA:
+            members = payload.get("members")
+            if payload.get("status") != "completed" or not isinstance(members, list) or not members:
+                raise ValueError("P1 proposal mixture is incomplete")
+            pool_members = []
+            for member in members:
+                source_path = Path(member.get("pool_manifest", "")).resolve()
+                source_payload = json.loads(source_path.read_text(encoding="utf-8"))
+                if source_payload.get("schema") != "reacher_d2p_p1_proposal_pair_pool.v1" or source_payload.get("status") != "completed":
+                    raise ValueError("P1 proposal mixture references an invalid member")
+                if member.get("pool_manifest_sha256") != _sha256_file(source_path):
+                    raise ValueError("P1 proposal mixture member manifest has changed")
+                pool_members.append((source_path, source_payload))
+        else:
+            pool_members = [(source_path, payload)]
+        if payload.get("schema") not in {
+            "reacher_d2p_counterfactual_pair_pool.v1",
+            "reacher_d2p_p1_proposal_pair_pool.v1",
+            MIXTURE_SCHEMA,
+        } or payload.get("status") != "completed":
             raise ValueError("training-source manifest must be a completed counterfactual pool or its repair manifest")
-        seed_range = payload.get("seed_range")
-        if not isinstance(seed_range, list) or len(seed_range) != 2:
-            raise ValueError("counterfactual training source is missing its seed range")
-        lower, upper = (int(seed_range[0]), int(seed_range[1]))
-        if upper < lower:
-            raise ValueError("counterfactual training source has an invalid seed range")
-        overlap = sorted(run_seeds & set(range(lower, upper + 1)))
-        if overlap:
-            raise ValueError(f"planning roots overlap simulator training roots: {overlap[:8]}")
+        member_bindings = []
+        for member_path, member_payload in pool_members:
+            seed_range = member_payload.get("seed_range")
+            if not isinstance(seed_range, list) or len(seed_range) != 2:
+                raise ValueError("counterfactual training source is missing its seed range")
+            lower, upper = (int(seed_range[0]), int(seed_range[1]))
+            if upper < lower:
+                raise ValueError("counterfactual training source has an invalid seed range")
+            overlap = sorted(run_seeds & set(range(lower, upper + 1)))
+            if overlap:
+                raise ValueError(f"planning roots overlap simulator training roots: {overlap[:8]}")
+            member_bindings.append({"pool_manifest": str(member_path), "pool_manifest_sha256": _sha256_file(member_path), "reserved_training_seed_range": [lower, upper], "proposal_contract": member_payload.get("proposal_contract")})
         bindings.append({
             "supplied_manifest": str(manifest_path), "supplied_sha256": _sha256_file(manifest_path),
             "pool_manifest": str(source_path), "pool_manifest_sha256": _sha256_file(source_path),
-            "reserved_training_seed_range": [lower, upper],
+            "reserved_training_seed_range": (
+                member_bindings[0]["reserved_training_seed_range"] if len(member_bindings) == 1
+                else [entry["reserved_training_seed_range"] for entry in member_bindings]
+            ),
+            "pool_schema": payload["schema"],
+            "proposal_contract": payload.get("proposal_contract"), "pool_members": member_bindings,
         })
     return bindings
+
+
+def _validate_p1_proposal_training_contract(
+    bindings: list[dict[str, Any]], *, args: argparse.Namespace,
+) -> None:
+    """Keep a P1 repair pool on the same proposal law as deployed P1.
+
+    A pair pool generated with a different damping value represents a different
+    selected-packet distribution, even when its simulator, action block and
+    checkpoint lineage are otherwise valid.  Allowing it to stand in for the
+    deployed P1 distribution can turn a train/deploy mismatch into an apparent
+    dynamics or theory failure.  Random counterfactual retention pools have no
+    proposal contract and deliberately remain exempt from this check.
+    """
+
+    expected = {
+        "history_len": 3,
+        "action_block": args.action_block,
+        "damping": args.damping,
+        "proposals": args.proposals,
+        "proposal_distribution": args.proposal_distribution,
+        "selection_metric": args.selection_metric,
+    }
+    for binding in bindings:
+        if binding["pool_schema"] == MIXTURE_SCHEMA:
+            contracts = [entry.get("proposal_contract") for entry in binding["pool_members"]]
+            if not any(isinstance(contract, dict) and np.isclose(float(contract.get("damping", float("nan"))), args.damping, rtol=0.0, atol=1.0e-12) for contract in contracts):
+                raise ValueError("P1 proposal mixture does not cover deployed P1 damping")
+        elif binding["pool_schema"] != "reacher_d2p_p1_proposal_pair_pool.v1":
+            continue
+        else:
+            contracts = [binding.get("proposal_contract")]
+        for contract in contracts:
+            if not isinstance(contract, dict):
+                raise ValueError("P1 proposal training source is missing its proposal contract")
+            if binding["pool_schema"] == MIXTURE_SCHEMA and not np.isclose(float(contract.get("damping", float("nan"))), args.damping, rtol=0.0, atol=1.0e-12):
+                continue
+            for key, value in expected.items():
+                actual = contract.get(key)
+                if isinstance(value, float):
+                    if actual is None or not np.isclose(float(actual), value, rtol=0.0, atol=1.0e-12):
+                        raise ValueError(f"P1 proposal training source differs from deployed P1 on {key}")
+                elif actual != value:
+                    raise ValueError(f"P1 proposal training source differs from deployed P1 on {key}")
+
+
+def _validate_selector_stability_evidence(
+    paths: list[Path], *, bindings: list[dict[str, Any]], args: argparse.Namespace,
+) -> list[dict[str, str]]:
+    """Bind selected-packet training to a selector-stable deployed checkpoint."""
+    required: dict[str, dict[str, Any]] = {}
+    for binding in bindings:
+        if binding["pool_schema"] not in {"reacher_d2p_p1_proposal_pair_pool.v1", MIXTURE_SCHEMA}:
+            continue
+        for member in binding["pool_members"]:
+            if isinstance(member.get("proposal_contract"), dict):
+                required[member["pool_manifest_sha256"]] = member
+    if not required:
+        if paths:
+            raise ValueError("selector-stability evidence was supplied without a selected-packet source")
+        return []
+    if not paths:
+        raise ValueError("P1 selected-packet training requires selector-stability evidence")
+    policy_sha = _sha256_file(args.policy / "weights.pt")
+    receipts: dict[str, dict[str, str]] = {}
+    fields = ("history_len", "action_block", "damping", "proposals", "proposal_distribution", "selection_metric")
+    for path in paths:
+        evidence_path = Path(path).resolve()
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+        source_sha = payload.get("source_manifest_sha256")
+        if payload.get("schema") != "reacher_d2p_p1_selector_stability_audit.v1" or payload.get("status") != "completed" or source_sha not in required:
+            raise ValueError("selector-stability evidence is incomplete or unrelated")
+        if payload.get("deployed_policy_weights_sha256") != policy_sha:
+            raise ValueError("selector-stability evidence belongs to another deployed checkpoint")
+        if not bool(payload.get("selection", {}).get("all_source_selections_stable", False)):
+            raise ValueError("P1 selected-packet source changed under the deployed checkpoint")
+        contract = required[source_sha]["proposal_contract"]
+        if payload.get("selector_contract") != {key: contract[key] for key in fields}:
+            raise ValueError("selector-stability evidence has a different proposal contract")
+        if source_sha in receipts:
+            raise ValueError("duplicate selector-stability evidence")
+        receipts[source_sha] = {"report": str(evidence_path), "report_sha256": _sha256_file(evidence_path)}
+    if set(receipts) != set(required):
+        raise ValueError("P1 proposal sources are missing selector-stability evidence")
+    return [receipts[key] for key in sorted(receipts)]
 
 
 def _physically_non_greedy(method: dict[str, Any], *, tolerance: float = 1.0e-8) -> bool:
@@ -473,6 +589,10 @@ def main() -> None:
         "--training-source-manifest", type=Path, action="append", default=[],
         help="Counterfactual simulator pool or repair manifest; its reset seeds are forbidden for this panel.",
     )
+    parser.add_argument(
+        "--selector-stability-evidence", type=Path, action="append", default=[],
+        help="CUDA source-root replay receipt required for every selected-packet proposal source.",
+    )
     parser.add_argument("--action-block", type=int, default=5)
     parser.add_argument("--reconfiguration-horizon", type=int, default=1)
     parser.add_argument("--progress-horizon", type=int, default=2)
@@ -559,6 +679,10 @@ def main() -> None:
     outcome_seed_set = {args.seed + offset for offset in range(args.roots)}
     training_source_seed_binding = _bind_simulator_training_sources(
         args.training_source_manifest, run_seeds=outcome_seed_set,
+    )
+    _validate_p1_proposal_training_contract(training_source_seed_binding, args=args)
+    selector_stability_binding = _validate_selector_stability_evidence(
+        args.selector_stability_evidence, bindings=training_source_seed_binding, args=args,
     )
     calibration_binding = _validate_outcome_calibration(
         args.calibration_evidence, args=args, outcome_seeds=outcome_seed_set,
@@ -710,6 +834,7 @@ def main() -> None:
     report["protocol"]["min_second_to_first_singular_ratio"] = args.min_second_to_first_singular_ratio
     report["protocol"]["mechanism_observability"] = args.mechanism_observability
     report["protocol"]["margin_band_selection_binding"] = margin_band_selection_binding
+    report["protocol"]["selector_stability_binding"] = selector_stability_binding
     report["inputs"]["training_source_seed_binding"] = training_source_seed_binding
     report["protocol"].pop("physical_mechanism_requirement")
     report["protocol"]["mechanism_requirement"] = (

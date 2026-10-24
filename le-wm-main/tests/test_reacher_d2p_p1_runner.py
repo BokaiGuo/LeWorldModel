@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import h5py
 
 from experiments.spectral_reachability.audit_reacher_d2p_p1_physical_nongreediness import audit
 from experiments.spectral_reachability.audit_reacher_d2p_p1_physical_alignment_calibration import audit as audit_calibration
@@ -16,6 +17,7 @@ from experiments.spectral_reachability.audit_reacher_d2p_p1_first_chunk_replay i
 )
 from experiments.spectral_reachability.audit_reacher_d2p_p1_candidate_prefixes import ranked_eligible_indices
 from experiments.spectral_reachability import run_reacher_d2p_p1_reconfiguration as p1
+from experiments.spectral_reachability.merge_reacher_d2p_p1_proposal_pair_pools import REQUIRED, merge
 
 
 def test_p1_runner_direct_script_entrypoint_loads_project_package():
@@ -86,6 +88,132 @@ def test_p1_runner_rejects_simulator_training_seed_overlap(tmp_path):
         p1._bind_simulator_training_sources([pool], run_seeds={99, 100, 111})
     binding = p1._bind_simulator_training_sources([pool], run_seeds={111, 112})
     assert binding[0]["reserved_training_seed_range"] == [100, 110]
+
+
+def test_p1_runner_binds_joint_repair_to_its_underlying_proposal_pool(tmp_path):
+    pool = tmp_path / "proposal_pool.json"
+    pool.write_text(json.dumps({
+        "schema": "reacher_d2p_p1_proposal_pair_pool.v1", "status": "completed",
+        "seed_range": [200, 210],
+    }), encoding="utf-8")
+    repair = tmp_path / "repair.json"
+    repair.write_text(json.dumps({
+        "schema": "reacher_d2p_joint_transition_counterfactual_repair.v1",
+        "counterfactual_manifest": str(pool),
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="overlap"):
+        p1._bind_simulator_training_sources([repair], run_seeds={210})
+    binding = p1._bind_simulator_training_sources([repair], run_seeds={211})
+    assert binding[0]["pool_manifest"] == str(pool.resolve())
+
+
+def test_p1_runner_rejects_proposal_training_pool_with_different_deployed_damping(tmp_path):
+    pool = tmp_path / "proposal_pool.json"
+    pool.write_text(json.dumps({
+        "schema": "reacher_d2p_p1_proposal_pair_pool.v1", "status": "completed",
+        "seed_range": [200, 210],
+        "proposal_contract": {
+            "history_len": 3, "action_block": 5, "damping": 10.0,
+            "proposals": 128, "proposal_distribution": "physical_uniform",
+            "selection_metric": "bounded_dls_suffix_goal_cost",
+        },
+    }), encoding="utf-8")
+    binding = p1._bind_simulator_training_sources([pool], run_seeds={211})
+    args = SimpleNamespace(
+        action_block=5, damping=1.0, proposals=128,
+        proposal_distribution="physical_uniform", selection_metric="bounded_dls_suffix_goal_cost",
+    )
+    with pytest.raises(ValueError, match="damping"):
+        p1._validate_p1_proposal_training_contract(binding, args=args)
+    args.damping = 10.0
+    p1._validate_p1_proposal_training_contract(binding, args=args)
+
+
+def test_p1_runner_accepts_only_a_mixture_that_covers_the_deployed_damping(tmp_path):
+    members = []
+    for index, damping in enumerate((0.01, 10.0)):
+        pool = tmp_path / f"pool_{index}.json"
+        pool.write_text(json.dumps({
+            "schema": "reacher_d2p_p1_proposal_pair_pool.v1", "status": "completed",
+            "seed_range": [200 + index * 20, 210 + index * 20],
+            "proposal_contract": {
+                "history_len": 3, "action_block": 5, "damping": damping,
+                "proposals": 128, "proposal_distribution": "physical_uniform",
+                "selection_metric": "bounded_dls_suffix_goal_cost",
+            },
+        }), encoding="utf-8")
+        members.append({"pool_manifest": str(pool), "pool_manifest_sha256": hashlib.sha256(pool.read_bytes()).hexdigest()})
+    mixture = tmp_path / "mixture.json"
+    mixture.write_text(json.dumps({
+        "schema": p1.MIXTURE_SCHEMA, "status": "completed", "members": members,
+    }), encoding="utf-8")
+    binding = p1._bind_simulator_training_sources([mixture], run_seeds={999})
+    args = SimpleNamespace(
+        action_block=5, damping=0.01, proposals=128,
+        proposal_distribution="physical_uniform", selection_metric="bounded_dls_suffix_goal_cost",
+    )
+    p1._validate_p1_proposal_training_contract(binding, args=args)
+    args.damping = 1.0
+    with pytest.raises(ValueError, match="does not cover"):
+        p1._validate_p1_proposal_training_contract(binding, args=args)
+
+
+def test_p1_mixture_merges_sealed_members_without_episode_id_collisions(tmp_path):
+    manifests = []
+    for member_index, damping in enumerate((0.01, 10.0)):
+        pool_dir = tmp_path / f"pool_{member_index}"
+        pool_dir.mkdir()
+        pool = pool_dir / "pairs.h5"
+        with h5py.File(pool, "w") as handle:
+            for key in REQUIRED:
+                values = np.arange(2, dtype=np.int64) + member_index * 10
+                handle.create_dataset(key, data=values)
+        manifest = pool_dir / "manifest.json"
+        manifest.write_text(json.dumps({
+            "schema": "reacher_d2p_p1_proposal_pair_pool.v1", "status": "completed",
+            "pairs_hdf5": str(pool), "pairs_hdf5_sha256": hashlib.sha256(pool.read_bytes()).hexdigest(),
+            "seed_range": [100 + member_index * 10, 101 + member_index * 10], "selected_pairs": 2,
+            "p0_p1_calibration_or_outcome_roots_used": False,
+            "proposal_contract": {"damping": damping},
+        }), encoding="utf-8")
+        manifests.append(manifest)
+    result = merge(output=tmp_path / "mixture", source_manifests=manifests)
+    with h5py.File(result["pairs_hdf5"], "r") as handle:
+        assert set(handle) == REQUIRED
+        assert len(handle["episode_index"]) == 4
+        assert len(set(np.asarray(handle["episode_index"], dtype=np.int64))) == 4
+    assert result["available_dampings"] == [0.01, 10.0]
+
+
+def test_p1_selected_packet_source_requires_matching_stability_receipt(tmp_path):
+    checkpoint = tmp_path / "checkpoint"; checkpoint.mkdir()
+    weights = checkpoint / "weights.pt"; weights.write_bytes(b"deployed")
+    source_sha = "source-manifest-sha"
+    contract = {
+        "history_len": 3, "action_block": 5, "damping": 10.0, "proposals": 128,
+        "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost",
+    }
+    bindings = [{
+        "pool_schema": "reacher_d2p_p1_proposal_pair_pool.v1",
+        "pool_members": [{"pool_manifest_sha256": source_sha, "proposal_contract": contract}],
+    }]
+    args = SimpleNamespace(policy=checkpoint)
+    with pytest.raises(ValueError, match="requires selector-stability"):
+        p1._validate_selector_stability_evidence([], bindings=bindings, args=args)
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps({
+        "schema": "reacher_d2p_p1_selector_stability_audit.v1", "status": "completed",
+        "source_manifest_sha256": source_sha,
+        "deployed_policy_weights_sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
+        "selector_contract": contract,
+        "selection": {"all_source_selections_stable": True},
+    }), encoding="utf-8")
+    bound = p1._validate_selector_stability_evidence([receipt], bindings=bindings, args=args)
+    assert bound[0]["report"] == str(receipt)
+    receipt.write_text(receipt.read_text(encoding="utf-8").replace("true", "false"), encoding="utf-8")
+    with pytest.raises(ValueError, match="changed"):
+        p1._validate_selector_stability_evidence([receipt], bindings=bindings, args=args)
 
 
 def test_p1_margin_band_selection_binds_its_sources_and_runtime_contract(tmp_path):

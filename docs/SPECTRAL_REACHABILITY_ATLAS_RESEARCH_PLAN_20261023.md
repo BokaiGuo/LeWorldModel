@@ -1581,6 +1581,34 @@ support gate 或 RGB reactive fallback 均不可包装成 P5。下一条可解�
 matched model-call budget、calibration/outcome root-disjoint，并以真实环境距离/成功仅作 evaluator；在该
 runtime 完成前，P5 仍未打开。
 
+#### Reacher-D2P P1：selected-packet provenance 收紧后的独立复验（2026-10-25）
+
+若先用一个 checkpoint 选择 P1 packet、再更新 predictor/action encoder 并用新 checkpoint
+部署，阻尼相同也不能保证 deployed selector 仍来自同一 selected-packet 分布。新增
+`audit_reacher_d2p_p1_selection_stability.py` 因此在封存 source roots 上以 host CUDA 重放完整
+proposal bank；P1 runner 现在要求每个 selected-packet source 都有同一 deployed checkpoint 的
+全根稳定 receipt，缺失、hash 不同或任意 selector 漂移均 fail closed。
+
+训练后的 distribution-repair checkpoint 仅在 `4/60` source roots 保持原 selected proposal，
+故不得用于 P1 科学结论。回到实际生成该 pool 的 frozen joint checkpoint 后，
+`results/reacher_d2p_p1_selector_stability_joint_source_20261024_cuda/report.json` 在 `60/60`
+source roots 获得完全稳定的 selector receipt。排除该 mismatch 后，新的 root-disjoint P1
+preflight (`20274700--20274703`) 通过 CUDA、冻结 hash、RGB identity、action box、nonzero
+Jacobian、模型侧 non-greedy 与 future-score gates；新的 calibration (`20274800--20274805`) 仍仅有
+`4/6` model-eligible prefixes 在真实 successor RGB 的 frozen-encoder goal-cost 下保持 non-greedy。
+
+独立 fidelity receipt
+`results/reacher_d2p_frozen_source_validation_20261025_cuda/p1_fidelity.json` 重放了 warmup、candidate
+与 raw-zero successor、动作反归一化和 CUDA encoder。两个排序反转根从模型 margin
+`+0.00570202`、`+0.00506282` 变为观察 margin `-0.05088305`、`-0.01766348`；六根按模型
+margin 排序的 observed signs 为 `+,+,-,-,+,+`，故不存在含预注册最少四根且零反转的连续
+model-margin band，现有 selector 正确拒绝创建 receipt。
+
+此 Reacher P1 继续为 `blocked_upstream`：已排除 selector 漂移、动作尺度、zero control、
+warmup/snapshot、root reuse、CUDA 与 fidelity replay 的代码解释，但不构成对 D2P/谱理论的一般反例。
+P2--P5 不得从该 Reacher chain 打开；独立可执行路径是 TwoRoom 的 fresh frozen RGB/action-history
+P5 runtime，且不得复用 adapter、teacher、privileged oracle 或 reactive-controller 结果。
+
 ## 论文主张的可证伪形式
 
 若后续 P1--P5 全部通过，主张应被限定为：冻结视觉世界模型的有限时域 action

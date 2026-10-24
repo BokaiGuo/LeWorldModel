@@ -304,6 +304,13 @@ def main() -> None:
     parser.add_argument("--fd-epsilon", type=float, default=1.0e-3)
     parser.add_argument("--target-delta", type=float, nargs=2, default=(0.65, -0.65))
     args = parser.parse_args()
+    # ``load_compatible_pretrained`` treats a relative identifier as a cache
+    # lookup.  The D2P command-line interface documents ``--policy`` as a
+    # filesystem path, so bind local paths at this boundary instead of silently
+    # loading a different checkpoint (or failing under the cache directory).
+    args.policy = args.policy.resolve()
+    args.adapter_artifact = args.adapter_artifact.resolve()
+    args.output = args.output.resolve()
     require_new_output(args.output, receipt="P0 preflight output")
     if args.device != "cuda":
         raise RuntimeError("D2P-P0 requires --device cuda exactly; no CPU substitute")
