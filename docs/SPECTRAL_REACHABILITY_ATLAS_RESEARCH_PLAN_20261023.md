@@ -1558,6 +1558,29 @@ root-disjoint gates 均通过，然而 23 个 model-eligible roots 中有 5 个 
 observed-successor-recompile 合同下，模型内 reachability 排序尚不能稳定识别物理上非贪心的 contact prefix；它既不
 否定 D2P/世界模型的一般理论，也不授权通过事后调阈值绕过 root-disjoint outcome gate。
 
+#### TwoRoom-D2P P5：训练期 action-statistics 合同审计（2026-10-24）
+
+TwoRoom 的历史 live-planning artifact
+`results/live_cross_environment_prediction_20261015/tworoom_cuda/cross_environment_prediction.json`
+为十维 packet 的五个位置分别估计 mean/std；这与发布训练入口不同。`train.py` 先对 HDF5
+的二维 raw action 调用 `get_column_normalizer`，之后 `HDF5Dataset` 才把五个相邻 action
+按 time-major 顺序打平为十维 token。因此，将该 artifact 接入 frozen action encoder 会改变模型
+所见的坐标系，既不能成为 P5 的正向证据，也不能用于把旧负结果归因给机制本身。
+
+新的 `build_tworoom_d2p_training_action_stats.py` 从
+`/home/gbk/.stable_worldmodel/datasets/tworoom.h5` 建立不可覆盖 receipt；它绑定 HDF5 SHA-256
+`129a36aa93ea0de488d2bcc876e396de9e3907bf66c6aae6394e542ef6a6d623`，并使用 trainer 同一的
+unbiased `torch.std`。得到的物理统计是 mean `[0.00309342, -0.05298254]`、std
+`[0.86754781, 0.86863881]`，在五个 token slots 中严格重复。receipt 位于
+`le-wm-main/results/tworoom_d2p_training_action_stats_20261024/tworoom_training_action_stats.json`；
+新测试会拒绝 position-specific legacy stats。
+
+这修复的是 P5 的输入坐标系前置条件，不是 TwoRoom 的效力实验。旧的 adapter、latent readout、teacher、
+support gate 或 RGB reactive fallback 均不可包装成 P5。下一条可解释的 P5 路线必须由此 receipt 驱动一个
+全新 CUDA-only frozen runtime：RGB/rendered-goal/action-history-only、fixed shared candidate bank、
+matched model-call budget、calibration/outcome root-disjoint，并以真实环境距离/成功仅作 evaluator；在该
+runtime 完成前，P5 仍未打开。
+
 ## 论文主张的可证伪形式
 
 若后续 P1--P5 全部通过，主张应被限定为：冻结视觉世界模型的有限时域 action
