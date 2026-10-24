@@ -78,6 +78,41 @@ def _frozen_preflight_binding_is_intact(report: dict[str, Any], split: Any) -> b
     )
 
 
+def _calibration_role_binding_is_intact(report: dict[str, Any], split: Any) -> bool:
+    """Verify that the frozen role partition uses the runner's root identity."""
+
+    if not isinstance(split, dict):
+        return False
+    provenance = report.get("provenance")
+    if not isinstance(provenance, dict):
+        return False
+    context_name, context_hash = provenance.get("context"), provenance.get("context_sha256")
+    if not isinstance(context_name, str) or not isinstance(context_hash, str):
+        return False
+    context_path = Path(context_name)
+    if not context_path.is_file() or _sha256(context_path) != context_hash:
+        return False
+    try:
+        context_payload = _load(context_path)
+        metadata = context_payload.get("metadata")
+        ledger = metadata.get("frozen_preflight_ledger") if isinstance(metadata, dict) else None
+        ledger_path = Path(str(ledger.get("path", ""))) if isinstance(ledger, dict) else None
+        ledger_payload = _load(ledger_path) if ledger_path is not None and ledger_path.is_file() else None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    names = {"selector", "arm_certificate", "risk_calibration"}
+    expected = ledger_payload.get("calibration_role_counts") if isinstance(ledger_payload, dict) else None
+    actual = split.get("calibration_roles")
+    return (
+        isinstance(expected, dict)
+        and isinstance(actual, dict)
+        and set(expected) == names
+        and set(actual) == names
+        and all(isinstance(expected[name], int) and isinstance(actual[name], int) for name in names)
+        and expected == actual
+    )
+
+
 def _stress_covers_all_splits(per_root: Any, *, minimum_pairs: int) -> bool:
     """Require collision evidence for every split used by the V6 protocol."""
 
@@ -148,6 +183,7 @@ def audit(report_path: Path) -> dict[str, Any]:
         and isinstance(split.get("frozen_preflight_ledger_context_count"), int)
         and split["frozen_preflight_ledger_context_count"] > 0,
         "frozen_preflight_ledger_hash_chain": _frozen_preflight_binding_is_intact(report, split),
+        "calibration_role_partition_bound": _calibration_role_binding_is_intact(report, split),
         "goal_balanced_entropy": float(split.get("goal_balanced_design_winner_entropy_normalized", -1.0)) >= float(
             split.get("minimum_goal_balanced_design_winner_entropy_normalized", 0.5)
         ),

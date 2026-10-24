@@ -54,6 +54,12 @@ from experiments.research_runtime.artifacts import atomic_write_json
 gym.logger.min_level = 40
 
 
+# Every policy in this set must score the predicted candidate endpoints. Keep
+# this explicit so a newly added predictor-backed arm cannot silently fall
+# through to the zero-action safety fallback below.
+PREDICTOR_POLICIES = frozenset(("base_mpc", "repaired_mpc", "residual_gated_mpc"))
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", required=True)
@@ -101,7 +107,7 @@ def protocol_payload(args: argparse.Namespace) -> dict[str, Any]:
         "pose_loss_weight": args.pose_loss_weight,
         "seed": args.seed,
         "approach_phase": "state-guided contact bootstrap; reported separately",
-        "online_phase": "same candidate proposals and live simulator for base/compositional-repaired predictor",
+        "online_phase": "same episode-indexed candidate-noise stream and live simulator for base/compositional-repaired predictor",
         "repair_data": "five contact action-sequence arms per case: constant, piecewise noisy, reverse, and random",
         "endpoint_readout": "separate Ridge fit on each predictor's autoregressive latent distribution",
         "state_source": args.state_source,
@@ -590,6 +596,18 @@ def predict_candidates(
     return predicted_np[:, -1]
 
 
+def candidate_rng(seed: int, episode: int) -> np.random.Generator:
+    """Return the policy-invariant proposal-noise stream for one episode.
+
+    Candidate proposals are state-conditioned, so their concrete action values
+    may diverge after two controllers take different actions. Their stochastic
+    perturbations must nevertheless be matched: using a policy-dependent seed
+    would confound a predictor comparison with candidate-bank luck.
+    """
+
+    return np.random.default_rng(int(seed) + 700000 + int(episode))
+
+
 def run_policy(
     env: gym.Env,
     model: torch.nn.Module,
@@ -603,9 +621,11 @@ def run_policy(
     bootstrap_fn,
     residual_adapter: CalibratedResidualAdapter | None = None,
 ) -> dict[str, Any]:
-    rng = np.random.default_rng(args.seed + (0 if policy == "base_mpc" else 100000))
     rows = []
     for episode in range(args.episodes):
+        # This seed deliberately excludes ``policy``. See ``candidate_rng``:
+        # matching proposal noise is required for a valid paired comparison.
+        rng = candidate_rng(args.seed, episode)
         case = bootstrap_fn(env, args.seed + 20000 + episode, args.approach_steps)
         context_images = list(case["context_images"])
         past_actions = np.asarray(case["past_actions"], dtype=np.float32)
@@ -636,7 +656,7 @@ def run_policy(
             if policy == "heuristic":
                 action = heuristic_action(estimated, goal)
                 selected_predicted = None
-            elif policy in {"base_mpc", "repaired_mpc"}:
+            elif policy in PREDICTOR_POLICIES:
                 predicted_z = predict_candidates(
                     model, context_images, past_actions, candidates, transform, args.device,
                     residual_adapter=residual_adapter,

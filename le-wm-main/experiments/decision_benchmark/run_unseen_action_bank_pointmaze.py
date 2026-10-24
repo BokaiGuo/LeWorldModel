@@ -372,6 +372,15 @@ def run(
     # Train on historical action sequences and train roots only.  Calibration
     # roots stay completely outside fitting, and all unseen labels stay sealed.
     train_mask = np.asarray([str(row.get("split")) == "train" for row in source_records])
+    fitted_records = [row for row, keep in zip(source_records, train_mask) if keep]
+    fitted_action_hashes = {
+        sequence_hash(row["action_sequence"])
+        for row in fitted_records
+    }
+    held_action_hashes = {
+        sequence_hash(row["action_sequence"])
+        for row in unseen_contexts
+    }
     full_x, full_y, _roots, _goals = _features(source_records, source_arrays_payload, "frozen_latent_action")
     action_width = int(full_x.shape[1] - len(source_records[0]["source_latent_model"]))
     if action_width <= 0:
@@ -466,6 +475,20 @@ def run(
             "epochs": int(epochs),
             "seeds": list(SEEDS),
             "cuda_preflight": cuda,
+            # This is deliberately a held *finite bank* test.  It does not
+            # establish interpolation or extrapolation over a continuous
+            # action distribution, even though each fixed sequence contains
+            # real-valued controls.
+            "action_support_scope": {
+                "fitted_distinct_action_sequences": len(fitted_action_hashes),
+                "held_distinct_action_sequences": len(held_action_hashes),
+                "continuous_action_coverage_tested": False,
+                "claim_boundary": (
+                    "fixed 16-sequence action-bank transfer only; a separate "
+                    "fresh-root continuous-action protocol is required for "
+                    "continuous-control claims"
+                ),
+            },
         },
         "selection": {
             "full_adapter": full_selection,

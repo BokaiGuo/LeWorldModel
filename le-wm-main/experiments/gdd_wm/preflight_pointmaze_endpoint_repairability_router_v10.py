@@ -42,6 +42,18 @@ SPLIT_COUNTS = {"train": 192, "calibration": 128, "outcome": 64}
 MIN_TOP2_GAP_Q10 = 0.001
 MIN_TOP2_GAP_FRACTION = 0.50
 MIN_COST_SPREAD_Q10 = 0.05
+CALIBRATION_ROLE_NAMES = ("selector", "certification")
+
+
+def _panel_instance_id(root_id: int) -> str:
+    """Use the exact V6 builder identity in the static role ledger.
+
+    The router later assigns calibration roles from ``instance_id``.  Counting
+    numeric episode IDs here would validate a different partition and can
+    falsely advertise selector/certificate support before the CUDA run.
+    """
+
+    return f"pointmaze_v6_episode_{int(root_id)}"
 
 
 def _design_quality(interaction: dict[str, Any]) -> dict[str, float]:
@@ -91,8 +103,13 @@ def preflight(*, dataset_root: Path, contexts: list[Path], root_seed: int, held_
     states = np.asarray(torch.load(states_path, map_location="cpu", weights_only=True).numpy(), dtype=np.float64)
     if states.shape != (ROOT_RANGE[1], 100, 4) or not np.isfinite(states).all():
         raise ValueError("V10 state pool must be finite [16824,100,4]")
+    allowed = panel._eligible_roots(
+        root_count=len(states), root_id_min=ROOT_RANGE[0], root_id_max_exclusive=ROOT_RANGE[1],
+    )
+    visible = panel.visible_history_roots_v6(root, states, allowed)
+    invisible = set(map(int, allowed)) - set(map(int, visible))
     split = panel._split_roots_v6(
-        seed=int(root_seed), forbidden=old_roots, root_count=len(states), split_counts=SPLIT_COUNTS,
+        seed=int(root_seed), forbidden=old_roots | invisible, root_count=len(states), split_counts=SPLIT_COUNTS,
         root_id_min=ROOT_RANGE[0], root_id_max_exclusive=ROOT_RANGE[1],
     )
     visual = panel._renderer_chart_roots_v6(root, set(split))
@@ -108,14 +125,16 @@ def preflight(*, dataset_root: Path, contexts: list[Path], root_seed: int, held_
     held_hashes = {panel.sequence_hash(item) for item in held}
     train_hashes = {panel.sequence_hash(item) for item in train}
     quality = _design_quality(interaction)
-    calibration_roles = {"selector": 0, "certification": 0}
+    calibration_roles = {name: 0 for name in CALIBRATION_ROLE_NAMES}
     for root_id, role in split.items():
         if role == "calibration":
             # Match the runtime partition exactly; otherwise this would only
             # prove two arbitrary non-empty buckets, not V10's certificate
             # support roles.
-            fold = int(hashlib.sha256(f"v10/calibration/{root_id}".encode("utf-8")).hexdigest()[:8], 16) % 2
-            calibration_roles["selector" if fold == 0 else "certification"] += 1
+            fold = int(hashlib.sha256(
+                f"v10/calibration/{_panel_instance_id(root_id)}".encode("utf-8")
+            ).hexdigest()[:8], 16) % 2
+            calibration_roles[CALIBRATION_ROLE_NAMES[fold]] += 1
     checks = {
         "contexts_present": bool(resolved_contexts),
         "split_disjoint_from_prior_roots": not (set(split) & old_roots),
@@ -138,7 +157,9 @@ def preflight(*, dataset_root: Path, contexts: list[Path], root_seed: int, held_
         "prior_context_count": len(resolved_contexts), "prior_context_sha256": context_sha256,
         "root_counts": {name: sum(value == name for value in split.values()) for name in SPLIT_COUNTS},
         "split_roots": {name: sorted(root_id for root_id, value in split.items() if value == name) for name in SPLIT_COUNTS},
+        "calibration_role_counts": calibration_roles,
         "visual_chart_root_count": len(visual), "interaction_design_root_count": len(design), "interaction_design_roots": design,
+        "visible_history_root_count": int(len(visible)), "invisible_history_root_count": int(len(invisible)),
         "post_execution_aliasing_contract": dict(V7_POST_EXECUTION_ALIASING_CONTRACT),
         "candidate_bank": {
             "candidate_design": "expanded_tail_robust_goal_balanced_interaction_pairs", "goal_qpos": goal.tolist(),

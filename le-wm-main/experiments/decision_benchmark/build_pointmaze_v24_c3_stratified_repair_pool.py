@@ -61,6 +61,8 @@ def _verify(path: Path, expected: dict[str, object]) -> dict[str, Any]:
     payload = _read(path / "velocity_matched_manifest.json")
     mismatch = {key: (payload.get(key), value) for key, value in expected.items() if payload.get(key) != value}
     if mismatch: raise RuntimeError(f"V24 pool component mismatch: {mismatch}")
+    if payload.get("regime") == "zero_velocity" and payload.get("unique_source_signature_count") != payload.get("new_episode_count"):
+        raise RuntimeError("V24 zero-velocity pool does not prove unique source observations per nominal root")
     return payload
 
 

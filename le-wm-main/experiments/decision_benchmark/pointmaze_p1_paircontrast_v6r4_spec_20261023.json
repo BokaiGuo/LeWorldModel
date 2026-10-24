@@ -1,0 +1,9 @@
+{
+  "schema": "pointmaze_p1_pre_outcome_diagnostic_spec.v1",
+  "selected_before_outcomes": true,
+  "primary_metric": "frozen_pair_squared_task_contrast_error",
+  "candidate_pair": "endpoint choice versus cost-only choice",
+  "task_cost": "squared Euclidean terminal qpos [x,y] distance to declared goal",
+  "decision_rule": "confirm only if held-out root-level Spearman is positive and two-sided permutation p is below 0.05",
+  "claim_boundary": "A fresh-root confirmation of one post-hoc generated P1 diagnostic. It does not select a repair, authorize a policy, or establish online planning value."
+}

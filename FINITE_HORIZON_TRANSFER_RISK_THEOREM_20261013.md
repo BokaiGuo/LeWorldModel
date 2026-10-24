@@ -67,9 +67,12 @@ E_{\mathrm{readout}}&=dX.
 
 The first three disturbance terms use a spectrum-only gain. The transient
 term is the excess finite-horizon amplification not explained by spectral
-radius alone. For a normal \(A\) in the declared metric, \(g_j=s_j\) when
-\(\rho\) is tight and the transient term vanishes. For a non-normal \(A\),
-\(q_j\) can be positive even when every eigenvalue is stable.
+radius alone. For a normal \(A\) in the declared metric and tight
+\(\rho=\rho(A)\), \(g_j\leq s_j\), hence \(q_j=0\) and the transient term
+vanishes. Equality need not hold for a task readout \(D\): with
+\(A=\operatorname{diag}(0.9,0.1)\) and \(D=[0\;1]\), \(g_1=0.1\) while
+\(s_1=0.9\). For a non-normal \(A\), \(q_j\) can be positive even when every
+eigenvalue is stable.
 
 ### Proof
 

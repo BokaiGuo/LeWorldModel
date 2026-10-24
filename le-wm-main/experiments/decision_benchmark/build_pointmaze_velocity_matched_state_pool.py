@@ -79,6 +79,20 @@ def _pair_is_matched(
     return bool(pos_gap <= float(position_tolerance) and velocity_ok and target_ok and history_ok)
 
 
+def _source_signature(state: np.ndarray) -> bytes:
+    """Identity of the full source observation available to a history model."""
+
+    value = np.asarray(state, dtype=np.float32)
+    return np.ascontiguousarray(value[SOURCE_FRAME - 7 : SOURCE_FRAME + 1]).tobytes()
+
+
+def _require_unique_source_observations(states: list[np.ndarray]) -> int:
+    signatures = [_source_signature(state) for state in states]
+    if len(set(signatures)) != len(signatures):
+        raise RuntimeError("generated pool contains duplicate source observations across nominal roots")
+    return len(signatures)
+
+
 def build_pool(
     input_root: Path, output: Path, *, pair_count: int = 416, seed: int = 202611241,
     velocity_magnitude: float = 1.5, position_tolerance: float = 0.025, minimum_source_speed: float = 0.08,
@@ -133,26 +147,50 @@ def build_pool(
             if goal is None else goal + float(target_radius) * direction
         )
         positive, initial_positive = _coast_to_source(target, float(velocity_magnitude) * direction)
-        negative, initial_negative = _coast_to_source(target, -float(velocity_magnitude) * direction)
-        if not _pair_is_matched(
-            positive, negative, position_tolerance=position_tolerance, minimum_speed=minimum_source_speed,
-            target_qpos=target, history_qpos_bounds=history_qpos_bounds, regime=regime,
-        ):
-            continue
+        if regime == "zero_velocity":
+            # A +/- velocity pair collapses to two identical roots when its
+            # magnitude is zero. Use an independently sampled ring location
+            # for the equal-budget direct-motion control instead.
+            second_direction = rng.normal(size=2)
+            second_direction /= max(float(np.linalg.norm(second_direction)), 1e-8)
+            second_target = (
+                candidates[int(rng.integers(len(candidates)))].astype(np.float64)
+                if goal is None else goal + float(target_radius) * second_direction
+            )
+            negative, initial_negative = _coast_to_source(second_target, np.zeros(2, dtype=np.float64))
+        else:
+            negative, initial_negative = _coast_to_source(target, -float(velocity_magnitude) * direction)
+            if not _pair_is_matched(
+                positive, negative, position_tolerance=position_tolerance, minimum_speed=minimum_source_speed,
+                target_qpos=target, history_qpos_bounds=history_qpos_bounds, regime=regime,
+            ):
+                continue
         future_controls = rng.uniform(-1.0, 1.0, size=(TOTAL_STEPS - SOURCE_FRAME, 2)).astype(np.float64)
         plus_actions = np.vstack((np.zeros((SOURCE_FRAME, 2), dtype=np.float64), future_controls))
         minus_actions = np.vstack((np.zeros((SOURCE_FRAME, 2), dtype=np.float64), future_controls))
         plus = rollout_trajectory(np.r_[initial_positive, float(velocity_magnitude) * direction], plus_actions)
-        minus = rollout_trajectory(np.r_[initial_negative, -float(velocity_magnitude) * direction], minus_actions)
-        if not _pair_is_matched(
-            plus, minus, position_tolerance=position_tolerance, minimum_speed=minimum_source_speed,
-            target_qpos=target, history_qpos_bounds=history_qpos_bounds, regime=regime,
-        ):
+        minus_velocity = np.zeros(2, dtype=np.float64) if regime == "zero_velocity" else -float(velocity_magnitude) * direction
+        minus = rollout_trajectory(np.r_[initial_negative, minus_velocity], minus_actions)
+        if regime == "zero_velocity":
+            valid = _pair_is_matched(
+                plus, plus, position_tolerance=position_tolerance, minimum_speed=minimum_source_speed,
+                target_qpos=target, history_qpos_bounds=history_qpos_bounds, regime=regime,
+            ) and _pair_is_matched(
+                minus, minus, position_tolerance=position_tolerance, minimum_speed=minimum_source_speed,
+                target_qpos=second_target, history_qpos_bounds=history_qpos_bounds, regime=regime,
+            )
+        else:
+            valid = _pair_is_matched(
+                plus, minus, position_tolerance=position_tolerance, minimum_speed=minimum_source_speed,
+                target_qpos=target, history_qpos_bounds=history_qpos_bounds, regime=regime,
+            )
+        if not valid:
             continue
         pair_index = len(pairs)
         generated_states.extend((plus, minus)); generated_actions.extend((plus_actions, minus_actions))
         pairs.append({
             "pair_index": pair_index, "target_source_qpos": target.astype(float).tolist(), "direction": direction.astype(float).tolist(),
+            "second_target_source_qpos": None if regime != "zero_velocity" else second_target.astype(float).tolist(),
             "plus_initial_qpos": initial_positive.astype(float).tolist(), "minus_initial_qpos": initial_negative.astype(float).tolist(),
             "plus_source_state": plus[SOURCE_FRAME].astype(float).tolist(), "minus_source_state": minus[SOURCE_FRAME].astype(float).tolist(),
             "source_position_distance": float(np.linalg.norm(plus[SOURCE_FRAME, :2] - minus[SOURCE_FRAME, :2])),
@@ -160,6 +198,7 @@ def build_pool(
         })
     if len(pairs) != int(pair_count):
         raise RuntimeError(f"velocity-matched pool exhausted after {attempts} attempts: built {len(pairs)}/{pair_count} pairs")
+    unique_source_signature_count = _require_unique_source_observations(generated_states)
     output.mkdir(parents=True, exist_ok=False)
     generated_states_array = np.asarray(generated_states, dtype=np.float32)
     generated_actions_array = np.asarray(generated_actions, dtype=np.float32)
@@ -178,6 +217,7 @@ def build_pool(
         "new_root_id_range": [int(len(source_states)), int(len(source_states) + len(generated_states_array) - 1)],
         "source_frame": SOURCE_FRAME, "regime": regime, "velocity_magnitude": float(velocity_magnitude), "position_tolerance": float(position_tolerance),
         "minimum_source_speed": float(minimum_source_speed), "attempt_count": int(attempts), "pairs": pairs,
+        "unique_source_signature_count": int(unique_source_signature_count),
         "target_construction": (
             "empirical_source_frame_positions" if goal is None else "goal_centered_radial_ring"
         ),

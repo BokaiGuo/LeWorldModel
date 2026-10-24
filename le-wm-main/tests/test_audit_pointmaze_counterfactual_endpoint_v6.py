@@ -25,6 +25,7 @@ def _report() -> dict:
             "outcome_labels_sealed_before_execution": True,
             "frozen_preflight_ledger_sha256": "a" * 64,
             "frozen_preflight_ledger_context_count": 33,
+            "calibration_roles": {"selector": 1, "arm_certificate": 1, "risk_calibration": 1},
         },
         "action_representation_stress": {
             "minimum_summary_collision_pairs_per_root": 8,
@@ -72,6 +73,7 @@ def _write_bound_report(tmp_path: Path, payload: dict) -> Path:
     ledger.write_text(json.dumps({
         "schema": "pointmaze_counterfactual_endpoint_v6_static_preflight.v1",
         "status": "passed_static_preflight", "checks": {"all": True},
+        "calibration_role_counts": {"selector": 1, "arm_certificate": 1, "risk_calibration": 1},
     }))
     ledger_hash = _sha256(ledger)
     payload["split_isolation"]["frozen_preflight_ledger_sha256"] = ledger_hash
@@ -139,3 +141,12 @@ def test_v6_contract_audit_rejects_missing_pre_outcome_ensemble_diagnostics(tmp_
     result = audit(path)
     assert result["status"] == "rejected_contract_audit"
     assert result["checks"]["endpoint_ensemble_diagnostics_pre_outcome"] is False
+
+
+def test_v6_contract_audit_rejects_calibration_role_partition_mismatch(tmp_path) -> None:
+    payload = _report()
+    payload["split_isolation"]["calibration_roles"]["selector"] = 2
+    path = _write_bound_report(tmp_path, payload)
+    result = audit(path)
+    assert result["status"] == "rejected_contract_audit"
+    assert result["checks"]["calibration_role_partition_bound"] is False

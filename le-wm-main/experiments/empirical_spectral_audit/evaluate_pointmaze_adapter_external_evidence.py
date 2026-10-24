@@ -144,7 +144,7 @@ def _legacy_pointmaze_xml() -> str:
   <material name="wall" rgba=".7 .5 .3 1"/>
 </asset>
 <worldbody>
-  <geom name="ground" type="plane" size="40 40 .25" pos="0 0 -.1" contype="0" conaffinity="0"/>
+  <geom name="ground" type="plane" size="40 40 .25" pos="0 0 -.1" contype="1" conaffinity="0"/>
   <body name="particle" pos="1.2 1.2 0">
     <geom name="particle_geom" type="sphere" size=".1" contype="1" conaffinity="1"/>
     <joint name="ball_x" type="slide" pos="0 0 0" axis="1 0 0"/>

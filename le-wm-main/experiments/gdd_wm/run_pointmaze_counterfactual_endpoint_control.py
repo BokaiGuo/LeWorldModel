@@ -68,6 +68,23 @@ def _load(path: Path) -> dict[str, Any]:
     return value
 
 
+def _pre_outcome_diagnostic_spec(path: Path | None) -> dict[str, Any] | None:
+    """Load a metric declaration before calibration/outcome terminals open."""
+
+    if path is None:
+        return None
+    if not path.is_file():
+        raise FileNotFoundError(f"pre-outcome diagnostic spec is missing: {path}")
+    value = _load(path)
+    if value.get("schema") != "pointmaze_p1_pre_outcome_diagnostic_spec.v1":
+        raise ValueError("pre-outcome diagnostic spec has an unexpected schema")
+    if value.get("selected_before_outcomes") is not True:
+        raise ValueError("pre-outcome diagnostic spec must attest selection before outcomes")
+    if value.get("primary_metric") not in {"spectral_mismatch_norm", "frozen_pair_squared_task_contrast_error"}:
+        raise ValueError("pre-outcome diagnostic spec declares an unsupported primary metric")
+    return {"path": str(path.resolve()), "sha256": _sha256(path), "spec": value}
+
+
 def _root_fold(root: str) -> int:
     return int(hashlib.sha256(root.encode("utf-8")).hexdigest()[:8], 16) % 4
 
@@ -84,6 +101,47 @@ def _choice(rows: list[dict[str, Any]], score: np.ndarray) -> int:
 
 def _regret(cost: np.ndarray, choice: int) -> float:
     return float(cost[choice] - np.min(cost))
+
+
+def _assert_endpoint_score_binding(
+    rows: list[dict[str, Any]],
+    score: np.ndarray,
+    endpoint: np.ndarray,
+    goal: np.ndarray,
+    *,
+    arm: str,
+) -> dict[str, Any]:
+    """Fail closed unless an endpoint arm ranks its serialized endpoints.
+
+    A scalar head that is merely returned alongside a terminal-state head is
+    not an endpoint-coupled planner.  Keeping this check at the prediction
+    boundary prevents a stale index, an accidentally independent score head,
+    or a changed readout from being sealed as a P1 endpoint result.
+    """
+
+    scores = np.asarray(score, dtype=np.float64)
+    terminals = np.asarray(endpoint, dtype=np.float64)
+    goals = np.asarray(goal, dtype=np.float64)
+    if scores.shape != (len(rows),) or terminals.shape != (len(rows), 4) or goals.shape != (len(rows), 2):
+        raise ValueError(f"{arm}: endpoint score binding has incompatible candidate shapes")
+    if not np.isfinite(scores).all() or not np.isfinite(terminals).all() or not np.isfinite(goals).all():
+        raise ValueError(f"{arm}: endpoint score binding requires finite values")
+    derived = endpoint_task_cost(terminals, goals)
+    if not np.allclose(scores, derived, rtol=1.0e-10, atol=1.0e-12):
+        maximum_error = float(np.max(np.abs(scores - derived)))
+        raise ValueError(
+            f"{arm}: endpoint predicted costs must equal Euclidean terminal-to-goal costs "
+            f"(maximum_absolute_error={maximum_error})"
+        )
+    selected = _choice(rows, scores)
+    derived_selected = _choice(rows, derived)
+    if selected != derived_selected:
+        raise ValueError(f"{arm}: endpoint candidate selection does not match its serialized terminal readout")
+    return {
+        "readout": "Euclidean predicted terminal qpos [x,y] to declared goal",
+        "candidate_id": str(rows[selected]["candidate_id"]),
+        "maximum_absolute_error": float(np.max(np.abs(scores - derived))),
+    }
 
 
 def _enforce_arm_contract(contract: dict[str, Any], *, expected_representation: str) -> None:
@@ -258,6 +316,18 @@ def _assert_split_contract(
     }
     if preflight.get("root_counts") != expected_counts:
         raise ValueError("V6 panel root counts differ from its frozen static-preflight ledger")
+    expected_role_counts = preflight.get("calibration_role_counts")
+    role_names = ("selector", "arm_certificate", "risk_calibration")
+    if not isinstance(expected_role_counts, dict) or set(expected_role_counts) != set(role_names):
+        raise ValueError("V6 preflight lacks calibration role-count binding")
+    actual_role_counts = {name: 0 for name in role_names}
+    for root in calibration:
+        actual_role_counts[role_names[_calibration_role(root)]] += 1
+    if any(not isinstance(expected_role_counts[name], int) for name in role_names) or actual_role_counts != expected_role_counts:
+        raise ValueError(
+            "V6 calibration role partition differs from its frozen preflight ledger: "
+            f"actual={actual_role_counts}, expected={expected_role_counts}"
+        )
     interaction_design = context_metadata.get("interaction_pair_design")
     if not isinstance(interaction_design, dict):
         raise ValueError("V6 requires serialized independent goal-balanced candidate-design evidence")
@@ -282,6 +352,7 @@ def _assert_split_contract(
         "candidate_design": context_metadata["candidate_design"],
         "frozen_preflight_ledger_sha256": preflight["sha256"],
         "frozen_preflight_ledger_context_count": int(preflight.get("context_count", 0)),
+        "calibration_role_counts": actual_role_counts,
         "goal_balanced_design_winner_entropy_normalized": float(entropy),
         "minimum_goal_balanced_design_winner_entropy_normalized": MINIMUM_GOAL_BALANCED_DESIGN_WINNER_ENTROPY,
     }
@@ -399,8 +470,8 @@ def _assert_summary_prediction_alias_contract(
     }
 
 
-def _evaluate(
-    grouped: dict[str, list[dict[str, Any]],], costs: dict[str, np.ndarray],
+def _predict_candidates(
+    grouped: dict[str, list[dict[str, Any]]],
     cost_predictor: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
     planning_predictor: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
     endpoint_predictor: Callable[[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]],
@@ -409,43 +480,107 @@ def _evaluate(
     feature_fn: Callable[[dict[str, Any]], np.ndarray] = _feature_ordered_action_sequence,
     summary_feature_fn: Callable[[dict[str, Any]], np.ndarray] = _feature_canonical_action_summary,
 ) -> dict[str, dict[str, Any]]:
+    """Freeze candidate predictions without reading any terminal outcome.
+
+    The endpoint vector is the physical task-output prediction required by
+    the P1 decision-spectral audit.  V6 previously retained only its derived
+    scalar cost, which made a negative endpoint result impossible to diagnose
+    as an action-to-output transfer failure versus a task readout failure.
+    """
+
     report: dict[str, dict[str, Any]] = {}
-    for root, rows in grouped.items():
+    for root, rows in sorted(grouped.items()):
         feature = np.stack([feature_fn(row) for row in rows])
         summary_feature = np.stack([summary_feature_fn(row) for row in rows])
         goal = np.asarray([row["goal_raw"] for row in rows], dtype=np.float64)
         cost_score, _cost_effect = cost_predictor(feature)
         planning_score, _planning_effect = planning_predictor(feature)
-        endpoint_score, _endpoint = endpoint_predictor(feature, goal)
+        endpoint_score, endpoint = endpoint_predictor(feature, goal)
         summary_cost_score, _summary_cost_effect = summary_cost_predictor(summary_feature)
-        summary_endpoint_score, _summary_endpoint = summary_endpoint_predictor(summary_feature, goal)
+        summary_endpoint_score, summary_endpoint = summary_endpoint_predictor(summary_feature, goal)
+        endpoint = np.asarray(endpoint, dtype=np.float64)
+        summary_endpoint = np.asarray(summary_endpoint, dtype=np.float64)
+        if endpoint.shape != (len(rows), 4) or summary_endpoint.shape != (len(rows), 4):
+            raise ValueError(f"{root}: endpoint predictors must return finite [candidate,4] terminal states")
+        if not np.isfinite(endpoint).all() or not np.isfinite(summary_endpoint).all():
+            raise ValueError(f"{root}: endpoint predictors returned non-finite terminal states")
+        endpoint_binding = _assert_endpoint_score_binding(
+            rows, endpoint_score, endpoint, goal, arm=f"{root}/endpoint",
+        )
+        summary_endpoint_binding = _assert_endpoint_score_binding(
+            rows, summary_endpoint_score, summary_endpoint, goal, arm=f"{root}/summary_endpoint",
+        )
         cost_choice = _choice(rows, cost_score)
         planning_choice = _choice(rows, planning_score)
         endpoint_choice = _choice(rows, endpoint_score)
         summary_cost_choice = _choice(rows, summary_cost_score)
         summary_endpoint_choice = _choice(rows, summary_endpoint_score)
-        costs_root = costs[root]
+        source_states = {tuple(np.asarray(row["source_state_raw"], dtype=np.float64)) for row in rows}
+        goals = {tuple(np.asarray(row["goal_raw"], dtype=np.float64)) for row in rows}
+        if len(source_states) != 1 or len(goals) != 1:
+            raise ValueError(f"{root}: a counterfactual candidate bank must share one source state and goal")
         report[root] = {
             "candidate_ids": [str(row["candidate_id"]) for row in rows],
-            "realized_candidate_cost": costs_root.tolist(),
+            "candidate_action_sequences": [np.asarray(row["action_sequence"], dtype=np.float64).tolist() for row in rows],
+            "source_state_raw": list(next(iter(source_states))),
+            "goal_raw": list(next(iter(goals))),
             "cost_predicted_cost": np.asarray(cost_score, dtype=np.float64).tolist(),
             "planning_predicted_cost": np.asarray(planning_score, dtype=np.float64).tolist(),
             "endpoint_predicted_cost": np.asarray(endpoint_score, dtype=np.float64).tolist(),
+            "endpoint_predicted_terminal_state": endpoint.tolist(),
+            "endpoint_score_binding": endpoint_binding,
             "summary_cost_predicted_cost": np.asarray(summary_cost_score, dtype=np.float64).tolist(),
             "summary_endpoint_predicted_cost": np.asarray(summary_endpoint_score, dtype=np.float64).tolist(),
+            "summary_endpoint_predicted_terminal_state": summary_endpoint.tolist(),
+            "summary_endpoint_score_binding": summary_endpoint_binding,
             "cost_candidate_id": str(rows[cost_choice]["candidate_id"]),
             "planning_candidate_id": str(rows[planning_choice]["candidate_id"]),
             "endpoint_candidate_id": str(rows[endpoint_choice]["candidate_id"]),
             "summary_cost_candidate_id": str(rows[summary_cost_choice]["candidate_id"]),
             "summary_endpoint_candidate_id": str(rows[summary_endpoint_choice]["candidate_id"]),
-            "cost_regret": _regret(costs_root, cost_choice),
-            "planning_regret": _regret(costs_root, planning_choice),
-            "endpoint_regret": _regret(costs_root, endpoint_choice),
-            "summary_cost_regret": _regret(costs_root, summary_cost_choice),
-            "summary_endpoint_regret": _regret(costs_root, summary_endpoint_choice),
             "endpoint_disagrees_with_cost_pre_outcome": bool(cost_choice != endpoint_choice),
-            "endpoint_beats_cost": bool(_regret(costs_root, endpoint_choice) + 1.0e-10 < _regret(costs_root, cost_choice)),
         }
+    return report
+
+
+def _terminal_map(rows: list[dict[str, Any]], terminal: np.ndarray) -> dict[str, np.ndarray]:
+    """Bind post-execution terminals to the already-frozen candidate ordering."""
+
+    values = np.asarray(terminal, dtype=np.float64)
+    if values.shape != (len(rows), 4) or not np.isfinite(values).all():
+        raise ValueError("terminal outcomes must be finite [candidate,4] vectors")
+    grouped: dict[str, list[np.ndarray]] = defaultdict(list)
+    for row, value in zip(rows, values):
+        grouped[str(row["instance_id"])].append(value)
+    return {root: np.stack(value) for root, value in grouped.items()}
+
+
+def _evaluate(
+    predictions: dict[str, dict[str, Any]], terminals: dict[str, np.ndarray],
+) -> dict[str, dict[str, Any]]:
+    """Attach realized terminal labels only after predictions have been frozen."""
+
+    if set(predictions) != set(terminals):
+        raise ValueError("prediction and terminal root identities must match exactly")
+    report: dict[str, dict[str, Any]] = {}
+    for root, predicted in sorted(predictions.items()):
+        terminal = np.asarray(terminals[root], dtype=np.float64)
+        candidate_count = len(predicted["candidate_ids"])
+        if terminal.shape != (candidate_count, 4):
+            raise ValueError(f"{root}: realized terminal candidate ordering is incompatible with frozen predictions")
+        costs_root = np.linalg.norm(terminal[:, :2] - np.asarray(predicted["goal_raw"], dtype=np.float64), axis=1)
+        row = {**predicted, "realized_candidate_terminal_state": terminal.tolist(), "realized_candidate_cost": costs_root.tolist()}
+        choices = {
+            "cost": _choice([{"candidate_id": value} for value in row["candidate_ids"]], np.asarray(row["cost_predicted_cost"], dtype=np.float64)),
+            "planning": _choice([{"candidate_id": value} for value in row["candidate_ids"]], np.asarray(row["planning_predicted_cost"], dtype=np.float64)),
+            "endpoint": _choice([{"candidate_id": value} for value in row["candidate_ids"]], np.asarray(row["endpoint_predicted_cost"], dtype=np.float64)),
+            "summary_cost": _choice([{"candidate_id": value} for value in row["candidate_ids"]], np.asarray(row["summary_cost_predicted_cost"], dtype=np.float64)),
+            "summary_endpoint": _choice([{"candidate_id": value} for value in row["candidate_ids"]], np.asarray(row["summary_endpoint_predicted_cost"], dtype=np.float64)),
+        }
+        for arm, choice in choices.items():
+            row[f"{arm}_regret"] = _regret(costs_root, choice)
+        row["endpoint_beats_cost"] = bool(row["endpoint_regret"] + 1.0e-10 < row["cost_regret"])
+        report[root] = row
     return report
 
 
@@ -606,12 +741,14 @@ def _evaluate_contrast_certificate(
 
 def run(*, source_dataset: Path, source_arrays: Path, context: Path, calibration_labels: Path, output: Path,
         device: str = "cuda", seed: int = 202610340, width: int = 32, steps: int = 400, ensemble_size: int = 4,
-        risk_alpha: float = 0.1, minimum_summary_collision_pairs_per_root: int = MINIMUM_SUMMARY_COLLISION_PAIRS_PER_ROOT) -> dict[str, Any]:
+        risk_alpha: float = 0.1, minimum_summary_collision_pairs_per_root: int = MINIMUM_SUMMARY_COLLISION_PAIRS_PER_ROOT,
+        pre_outcome_diagnostic_spec: Path | None = None) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite {output}")
     if ensemble_size < 1:
         raise ValueError("ensemble_size must be positive")
     source, context_payload, calibration = _load(source_dataset), _load(context), _load(calibration_labels)
+    diagnostic_spec = _pre_outcome_diagnostic_spec(pre_outcome_diagnostic_spec)
     train_rows = [dict(row) for row in source.get("records", []) if str(row.get("split")) == "train"]
     calibration_rows = [dict(row) for row in context_payload.get("records", []) if str(row.get("split")) == "calibration"]
     outcome_rows = [dict(row) for row in context_payload.get("records", []) if str(row.get("split")) == "outcome"]
@@ -670,13 +807,35 @@ def run(*, source_dataset: Path, source_arrays: Path, context: Path, calibration
         "outcome": _endpoint_ensemble_diagnostics(_group_rows_by_root(outcome_rows), endpoint_predictor),
     }
 
-    calibration_terminal = _calibration_terminal(calibration_rows, calibration)
-    calibration_report = _evaluate(
-        _group_rows_by_root(calibration_rows), _cost_map(calibration_rows, calibration_terminal),
-        cost_predictor, planning_predictor, endpoint_predictor,
+    # Persist this sealed bundle before any calibration or outcome terminal is
+    # materialized.  The final report binds its SHA-256,
+    # making a later P1 response audit able to distinguish a true predictive
+    # endpoint vector from a value reconstructed after outcome execution.
+    calibration_predictions = _predict_candidates(
+        _group_rows_by_root(calibration_rows), cost_predictor, planning_predictor, endpoint_predictor,
         summary_cost_predictor, summary_endpoint_predictor,
         _feature_ordered_action_sequence, _feature_canonical_action_summary,
     )
+    outcome_predictions = _predict_candidates(
+        _group_rows_by_root(outcome_rows), cost_predictor, planning_predictor, endpoint_predictor,
+        summary_cost_predictor, summary_endpoint_predictor,
+        _feature_ordered_action_sequence, _feature_canonical_action_summary,
+    )
+    pre_outcome_bundle = {
+        "schema": "pointmaze_counterfactual_endpoint_pre_outcome_predictions.v1",
+        "claim_boundary": "candidate predictions frozen before calibration and outcome terminal materialization; this is not an outcome result or a deployment authorization.",
+        "outcome_labels_materialized": False,
+        "calibration_predictions": calibration_predictions,
+        "outcome_predictions": outcome_predictions,
+        "pre_outcome_diagnostic_spec": diagnostic_spec,
+    }
+    output.mkdir(parents=True, exist_ok=False)
+    pre_outcome_path = output / "pre_outcome_predictions.json"
+    pre_outcome_path.write_text(json.dumps(pre_outcome_bundle, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    pre_outcome_sha256 = _sha256(pre_outcome_path)
+
+    calibration_terminal = _calibration_terminal(calibration_rows, calibration)
+    calibration_report = _evaluate(calibration_predictions, _terminal_map(calibration_rows, calibration_terminal))
     policy = _policy(calibration_report, seed=seed)
     _selector, _certificate, risk_rows = _partition(calibration_report)
     deployment = str(policy["deployment_policy"])
@@ -686,12 +845,7 @@ def run(*, source_dataset: Path, source_arrays: Path, context: Path, calibration
     # Do not materialize outcome labels until all models, eligibility, and the
     # independent arm and contrast certificates are frozen.
     outcome_terminal = _fresh_terminal(outcome_rows)
-    outcome_report = _evaluate(
-        _group_rows_by_root(outcome_rows), _cost_map(outcome_rows, outcome_terminal),
-        cost_predictor, planning_predictor, endpoint_predictor,
-        summary_cost_predictor, summary_endpoint_predictor,
-        _feature_ordered_action_sequence, _feature_canonical_action_summary,
-    )
+    outcome_report = _evaluate(outcome_predictions, _terminal_map(outcome_rows, outcome_terminal))
     outcome_certificate = _evaluate_contrast_certificate(
         outcome_report, arm=deployment, calibration=contrast_calibration, support_passed=support_passed,
     )
@@ -703,6 +857,7 @@ def run(*, source_dataset: Path, source_arrays: Path, context: Path, calibration
             "raw_source_state_live_input_forbidden": True, "outcome_execution_deferred_until_policy_and_contrast_bound_frozen": True,
             "legacy_auxiliary_planning_arm_descriptive_only": True,
             "endpoint_ensemble_disagreement_diagnostic_only": True,
+            "terminal_endpoint_predictions_sealed_before_outcome_execution": True,
             "action_representation": representation,
             "primary_authorization_holds_ordered_action_representation_fixed": True,
             "factorial_diagnostic": {
@@ -723,6 +878,11 @@ def run(*, source_dataset: Path, source_arrays: Path, context: Path, calibration
         "action_representation_stress": action_representation_stress,
         "summary_prediction_aliasing_pre_outcome": summary_prediction_aliasing_pre_outcome,
         "endpoint_ensemble_diagnostics_pre_outcome": endpoint_ensemble_diagnostics_pre_outcome,
+        "pre_outcome_prediction_bundle": {
+            "path": str(pre_outcome_path.resolve()), "sha256": pre_outcome_sha256,
+            "schema": pre_outcome_bundle["schema"], "outcome_labels_materialized": False,
+            "pre_outcome_diagnostic_spec": diagnostic_spec,
+        },
         "arms": {
             "summary_cost_only": summary_cost_contract,
             "cost_only": cost_contract,
@@ -751,7 +911,6 @@ def run(*, source_dataset: Path, source_arrays: Path, context: Path, calibration
             "calibration_labels": str(calibration_labels.resolve()), "calibration_labels_sha256": _sha256(calibration_labels),
         },
     }
-    output.mkdir(parents=True, exist_ok=False)
     (output / "report.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return result
 
@@ -770,6 +929,7 @@ def main() -> int:
     parser.add_argument("--ensemble-size", type=int, default=4)
     parser.add_argument("--risk-alpha", type=float, default=0.1)
     parser.add_argument("--minimum-summary-collision-pairs-per-root", type=int, default=MINIMUM_SUMMARY_COLLISION_PAIRS_PER_ROOT)
+    parser.add_argument("--pre-outcome-diagnostic-spec", type=Path)
     result = run(**vars(parser.parse_args()))
     print(json.dumps({"status": result["status"], "outcome": result["outcome"]["authorized_deployment_summary"]}, indent=2))
     return 0

@@ -98,3 +98,27 @@ def test_rejects_candidate_sets_that_are_not_fixed_across_roots():
     malformed[-1]["action_sequence"] = [[99.0, 0.0]]
     with pytest.raises(ValueError, match="fixed action sequence"):
         evaluate_records(malformed, alpha=0.1, risk_quantile=0.9)
+
+
+def test_paired_source_clusters_are_the_conformal_and_bootstrap_units():
+    rows = _panel()
+    # Ten calibration roots are enough only if they are independent. Pairing
+    # them leaves five source clusters, so 90% split conformal must fail
+    # closed instead of borrowing an apparent sample size of ten.
+    clusters = {
+        **{f"train-{index}": "train-source" for index in range(2)},
+        **{f"cal-{index}": f"cal-source-{index // 2}" for index in range(10)},
+        "test-permit": "test-source", "test-risk-fallback": "test-source",
+    }
+    report = evaluate_records(rows, alpha=.1, risk_quantile=.9, bootstrap_draws=100, seed=7, cluster_by_root=clusters)
+    assert report["protocol"]["independent_unit"] == "declared cluster"
+    assert report["protocol"]["cluster_counts"] == {"train": 1, "calibration": 5, "test": 1}
+    assert report["calibration"]["contrast"]["status"] == "insufficient_calibration"
+    assert report["test"]["cluster_conformal_outcome_coverage"]["outcome_cluster_count"] == 1
+
+
+def test_cluster_cannot_cross_protocol_splits():
+    clusters = {root: root for root in {str(row["root_id"]) for row in _panel()}}
+    clusters["test-permit"] = clusters["cal-0"]
+    with pytest.raises(ValueError, match="cannot cross"):
+        evaluate_records(_panel(), alpha=.1, risk_quantile=.9, cluster_by_root=clusters)

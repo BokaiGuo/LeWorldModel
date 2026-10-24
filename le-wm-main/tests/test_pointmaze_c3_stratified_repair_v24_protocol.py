@@ -8,6 +8,7 @@ import pytest
 
 from experiments.decision_benchmark import build_pointmaze_temporal_ood_v6_matched_panel as panel
 from experiments.decision_benchmark import run_pointmaze_c3_stratified_repair_v24_cuda as v24
+from experiments.decision_benchmark.root_observation_identity import assert_unique_root_observations
 from experiments.gdd_wm import preflight_pointmaze_c3_stratified_repair_v24 as preflight
 
 
@@ -34,6 +35,21 @@ def test_v24_motion_strata_are_root_constant_and_observable() -> None:
         for candidate in range(2)
     ]
     assert v24._strata(rows) == {"low": "direct_zero_motion", "high": "high_motion"}
+
+
+def test_nominal_roots_must_not_duplicate_the_same_observable_context() -> None:
+    observation = {
+        "source_state_raw": [0.2, 0.3, 0.0, 0.0],
+        "source_history_visual_state": [[0.2, 0.3, 0.0, 0.0]] * 8,
+        "goal_raw": [0.8, 0.8],
+    }
+    rows = [
+        {"split": "calibration", "instance_id": root, "candidate_id": candidate, **observation}
+        for root in ("duplicated_a", "duplicated_b")
+        for candidate in range(2)
+    ]
+    with pytest.raises(ValueError, match="duplicate one observable context"):
+        assert_unique_root_observations(rows)
 
 
 def test_v24_build_binds_new_frozen_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

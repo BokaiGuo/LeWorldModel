@@ -30,6 +30,12 @@ REQUIRED_ROW_FIELDS = (
     "latent_by_horizon",
 )
 
+# Counterfactual evaluator exports may additionally record the action blocks
+# actually supplied to the predictor.  ``action_blocks_*`` always describe the
+# realised trajectory that supplies the physical target, so they cannot by
+# themselves establish a zero/shuffled predictor intervention.
+PREDICTOR_ACTION_BLOCKS_FIELD = "predictor_action_blocks_normalized"
+
 
 def sha256_file(path: Path) -> str | None:
     if not path.exists() or not path.is_file():
@@ -68,6 +74,16 @@ def validate_row(row: dict[str, Any], horizons: Iterable[int] | None = None) -> 
     normalized_actions = _array(row["action_blocks_normalized"], "action_blocks_normalized", ndim=2)
     if raw_actions.shape != normalized_actions.shape:
         raise ValueError(f"{row['sample_id']} raw/normalized action shape mismatch")
+    if PREDICTOR_ACTION_BLOCKS_FIELD in row:
+        predictor_actions = _array(
+            row[PREDICTOR_ACTION_BLOCKS_FIELD], PREDICTOR_ACTION_BLOCKS_FIELD, ndim=2
+        )
+        if predictor_actions.shape != normalized_actions.shape:
+            raise ValueError(f"{row['sample_id']} predictor/realized action shape mismatch")
+    if "predictor_action_mode" in row and (
+        not isinstance(row["predictor_action_mode"], str) or not row["predictor_action_mode"]
+    ):
+        raise ValueError(f"{row['sample_id']} predictor_action_mode must be a non-empty string")
     by_horizon = row["latent_by_horizon"]
     if not isinstance(by_horizon, dict) or not by_horizon:
         raise ValueError(f"{row['sample_id']} has no latent_by_horizon")

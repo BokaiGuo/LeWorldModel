@@ -11,6 +11,8 @@ from typing import Any
 
 import numpy as np
 
+from experiments.decision_benchmark.root_observation_identity import assert_unique_root_observations
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DIR = ROOT / "results" / "pointmaze_c3_stratified_repair_v24_20261023_cuda"
@@ -43,6 +45,9 @@ def audit(*, v24_dir: Path = DEFAULT_DIR, preflight_path: Path = DEFAULT_PREFLIG
     records, source_rows, labels = context.get("records"), source.get("records"), labels_payload.get("labels")
     if not isinstance(records, list) or not isinstance(source_rows, list) or not isinstance(labels, dict):
         raise ValueError("V24 context/source/outcome labels malformed")
+    # Root-ID disjointness alone is insufficient: a duplicated observable
+    # context inflates the nominal calibration/outcome sample size.
+    assert_unique_root_observations(records)
     splits: dict[str, set[int]] = defaultdict(set)
     for row in records: splits[str(row["split"])].add(int(row["start_episode_id"]))
     if set(splits) != {"train", "calibration", "outcome"} or any(splits[a] & splits[b] for a in splits for b in splits if a != b):

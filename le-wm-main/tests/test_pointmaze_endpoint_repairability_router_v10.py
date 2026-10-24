@@ -138,7 +138,6 @@ def test_v10_static_ledger_binds_endpoint_arm_and_rejects_its_removal(tmp_path: 
         "calibration": list(range(16504, 16632)),
         "outcome": list(range(16632, 16696)),
     }
-
     def write() -> None:
         ledger.write_text(json.dumps({
             "schema": panel.ENDPOINT_REPAIRABILITY_ROUTER_V10_PREFLIGHT_SCHEMA,
@@ -188,6 +187,10 @@ def test_v10_runner_binds_repair_routing_before_outcome_materialization(tmp_path
             calibration_roots.append(root)
             role_counts[role] += 1
         index += 1
+    calibration_role_counts = {
+        "selector": sum(_calibration_role(root) == 0 for root in calibration_roots),
+        "certification": sum(_calibration_role(root) == 1 for root in calibration_roots),
+    }
     # The fixture still satisfies the real 15D + 16-root static capacity
     # condition even though model fitting itself is monkeypatched.
     train_roots, outcome_roots = [f"train-{index}" for index in range(31)], ["outcome-0", "outcome-1"]
@@ -213,6 +216,7 @@ def test_v10_runner_binds_repair_routing_before_outcome_materialization(tmp_path
         "schema": panel.ENDPOINT_REPAIRABILITY_ROUTER_V10_PREFLIGHT_SCHEMA,
         "status": "passed_static_preflight", "candidate_bank": bank,
         "root_counts": {"train": len(train_roots), "calibration": len(calibration_roots), "outcome": len(outcome_roots)},
+        "calibration_role_counts": calibration_role_counts,
         "split_roots": {
             "train": [root_ids[root] for root in train_roots],
             "calibration": [root_ids[root] for root in calibration_roots],

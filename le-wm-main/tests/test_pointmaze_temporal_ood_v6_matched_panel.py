@@ -69,6 +69,7 @@ def test_frozen_preflight_ledger_binds_context_bytes_and_declared_panel_shape(tm
         "prior_context_sha256": context_sha256,
         "dataset_states_sha256": v6._sha256(states),
         "root_counts": {"train": 128, "calibration": 192, "outcome": 64},
+        "calibration_role_counts": {"selector": 64, "arm_certificate": 64, "risk_calibration": 64},
         "candidate_bank": {
             "candidate_design": "goal_balanced_interaction_pairs", "goal_qpos": [0.8, 0.8],
             "held_shape": [16, 20, 2], "train_shape": [64, 20, 2],
@@ -85,6 +86,15 @@ def test_frozen_preflight_ledger_binds_context_bytes_and_declared_panel_shape(tm
     with pytest.raises(ValueError, match="exactly match"):
         v6.frozen_preflight_provenance(
             ledger, dataset_root=dataset, prior_context_sha256=changed,
+            split_counts={"train": 128, "calibration": 192, "outcome": 64},
+            candidate_design="goal_balanced_interaction_pairs", goal_qpos=np.asarray([0.8, 0.8]),
+        )
+    malformed = json.loads(ledger.read_text())
+    malformed.pop("calibration_role_counts")
+    ledger.write_text(json.dumps(malformed))
+    with pytest.raises(ValueError, match="calibration role-count"):
+        v6.frozen_preflight_provenance(
+            ledger, dataset_root=dataset, prior_context_sha256=context_sha256,
             split_counts={"train": 128, "calibration": 192, "outcome": 64},
             candidate_design="goal_balanced_interaction_pairs", goal_qpos=np.asarray([0.8, 0.8]),
         )

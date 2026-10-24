@@ -180,6 +180,16 @@ def _load(path: Path, horizon: int, downstream_horizon: int) -> dict[str, Any]:
         if raw_blocks.ndim != 2 or raw_blocks.shape[1] % 2 != 0:
             raise ValueError(f"{sample_id} has invalid flattened action blocks: {raw_blocks.shape}")
         action_sequence = raw_blocks.reshape(raw_blocks.shape[0], -1, 2).mean(axis=1)
+        predictor_blocks_value = row.get("predictor_action_blocks_normalized")
+        predictor_action_sequence = None
+        if predictor_blocks_value is not None:
+            predictor_blocks = np.asarray(predictor_blocks_value, dtype=np.float64)
+            if predictor_blocks.shape != raw_blocks.shape:
+                raise ValueError(
+                    f"{sample_id} predictor action blocks do not match realized action-block shape: "
+                    f"{predictor_blocks.shape} != {raw_blocks.shape}"
+                )
+            predictor_action_sequence = predictor_blocks.reshape(predictor_blocks.shape[0], -1, 2).mean(axis=1)
         out[sample_id] = {
             "sample_id": sample_id,
             "episode_id": episode,
@@ -194,6 +204,8 @@ def _load(path: Path, horizon: int, downstream_horizon: int) -> dict[str, Any]:
             "proprio": np.asarray(row.get("source_proprio_raw", []), dtype=np.float64),
             "actions": action_sequence[0],
             "action_sequence": action_sequence,
+            "predictor_action_sequence": predictor_action_sequence,
+            "predictor_action_mode": row.get("predictor_action_mode"),
         }
     return {"payload": payload, "rows": out}
 
@@ -288,13 +300,36 @@ def _attach_observed_zero_effect(
         # never use the control's source latent in the metric fit.
         observed_source = np.asarray(observed["latent"])
         zero_source = np.asarray(zero["latent"])
+        if observed_source.ndim != 1:
+            raise ValueError(f"observed source latent must be a vector for matched control {sample_id}")
         if observed_source.shape != zero_source.shape:
             source_latent_shape_mismatches += 1
-        else:
-            max_source_latent_gap = max(
-                max_source_latent_gap,
-                float(np.max(np.abs(observed_source - zero_source))),
+            feature_axes = [axis for axis, width in enumerate(zero_source.shape) if width == len(observed_source)]
+            if len(feature_axes) != 1:
+                raise ValueError(
+                    f"cannot canonicalize control source latent for {sample_id}: "
+                    f"observed={observed_source.shape}, control={zero_source.shape}"
+                )
+            zero_source = np.moveaxis(zero_source, feature_axes[0], -1).reshape(-1, len(observed_source)).mean(axis=0)
+        source_gap = float(np.max(np.abs(observed_source - zero_source)))
+        max_source_latent_gap = max(max_source_latent_gap, source_gap)
+        if source_gap > 2e-6:
+            raise ValueError(f"source latent mismatch for matched control {sample_id}: {source_gap}")
+        observed_predictor_actions = observed.get("predictor_action_sequence")
+        zero_predictor_actions = zero.get("predictor_action_sequence")
+        if observed_predictor_actions is None or zero_predictor_actions is None:
+            raise ValueError(
+                "matched zero-action control lacks predictor_action_blocks_normalized; "
+                "rerun the evaluator rather than inferring its intervention from realised actions"
             )
+        if observed_predictor_actions.shape != zero_predictor_actions.shape:
+            raise ValueError(f"predictor action shape mismatch for matched control {sample_id}")
+        action_gap = float(np.max(np.abs(observed["action_sequence"] - zero["action_sequence"])))
+        if action_gap > 1e-8:
+            raise ValueError(f"realized action mismatch for matched control {sample_id}: {action_gap}")
+        zero_predictor_max_abs = float(np.max(np.abs(zero_predictor_actions)))
+        if zero_predictor_max_abs > 1e-8:
+            raise ValueError(f"zero control fed non-zero predictor actions for {sample_id}: {zero_predictor_max_abs}")
         for field, label in (
             ("target", "target latent"),
             ("target_downstream", "downstream target latent"),
@@ -323,6 +358,7 @@ def _attach_observed_zero_effect(
         "source_latent_shape_mismatches": source_latent_shape_mismatches,
         "max_target_latent_gap": max_target_gap,
         "max_downstream_target_gap": max_downstream_target_gap,
+        "control_predictor_action_max_abs": 0.0,
         "definition": "observed predicted latent minus matched zero-action predicted latent",
     }
 
@@ -435,6 +471,26 @@ def _one_split(
     rng = np.random.default_rng(80000 + split_seed)
     oracle = int(np.argmin(test_multi))
     physical_oracle = int(np.argmin(test_multi_physical))
+    def physical_readout_r2(target: np.ndarray) -> dict[str, float]:
+        """Evaluate the declared physical target at the same horizon as selection.
+
+        The previous summary always reported the one-step readout even when
+        selection used an h=4 or integrated task metric.  That silently turned
+        a finite-horizon diagnostic into a one-step proxy.
+        """
+        return {
+            "latent_only": _r2(target[test], x_test @ _ridge(x_train, target[train], ridge)),
+            "proprio_only": _r2(
+                target[test], proprio_all[test] @ _ridge(proprio_all[train], target[train], ridge)
+            ),
+            "joint": _r2(
+                target[test],
+                np.concatenate([x_test, proprio_all[test]], axis=1) @ _ridge(
+                    np.concatenate([x_train, proprio_all[train]], axis=1), target[train], ridge
+                ),
+            ),
+        }
+
     result: dict[str, Any] = {
         "split_seed": split_seed,
         "n_train": len(train), "n_validation": len(valid), "n_test": len(test),
@@ -442,11 +498,8 @@ def _one_split(
         "eigenvalue_match_max_abs": float(max(np.max(np.abs(np.sort_complex(np.linalg.eigvals(anchor)) - np.sort_complex(np.linalg.eigvals(op)))) for op in candidates_ops)),
         "metric_condition_numbers": {name: float(np.linalg.cond(metric)) for name, metric in metric_train.items()},
         "heldout_physical_readout_r2": {
-            "latent_only": _r2(delta_one_all[test], x_test @ _ridge(x_train, delta_one_all[train], ridge)),
-            "proprio_only": _r2(delta_one_all[test], proprio_all[test] @ _ridge(proprio_all[train], delta_one_all[train], ridge)),
-            "joint": _r2(delta_one_all[test], np.concatenate([x_test, proprio_all[test]], axis=1) @ _ridge(
-                np.concatenate([x_train, proprio_all[train]], axis=1), delta_one_all[train], ridge
-            )),
+            "one_step": physical_readout_r2(delta_one_all),
+            "downstream": physical_readout_r2(delta_downstream_all),
         },
         "metric_horizon": metric_horizon,
         "metric_target": metric_target,
@@ -644,6 +697,7 @@ def main() -> None:
         rows, seed, args.rank, args.candidates, args.floor, args.ridge,
         args.candidate_family, args.match_tolerance, args.metric_horizon, args.metric_target,
     ) for seed in range(5)]
+    physical_readout_horizon = "one_step" if args.metric_horizon == "one_step" else "downstream"
     summary["fixed_spectrum_bridge"] = {
         "split_count": len(splits),
         "mean_regret": {name: float(np.mean([s["selectors"][name]["regret"] for s in splits])) for name in splits[0]["selectors"]},
@@ -651,9 +705,12 @@ def main() -> None:
         "oracle_hit_rate": {name: float(np.mean([s["selectors"][name]["is_oracle"] for s in splits])) for name in splits[0]["selectors"]},
         "physical_oracle_hit_rate": {name: float(np.mean([s["selectors"][name]["is_physical_oracle"] for s in splits])) for name in splits[0]["selectors"]},
         "mean_physical_readout_r2": {
-            name: float(np.mean([s["heldout_physical_readout_r2"][name] for s in splits]))
+            name: float(np.mean([
+                s["heldout_physical_readout_r2"][physical_readout_horizon][name] for s in splits
+            ]))
             for name in ("latent_only", "proprio_only", "joint")
         },
+        "physical_readout_horizon": physical_readout_horizon,
         "action_conditioned_mean_regret": {
             name: float(np.mean([s["action_conditioned"]["selectors"][name]["regret"] for s in splits]))
             for name in splits[0]["action_conditioned"]["selectors"]
@@ -676,6 +733,7 @@ def main() -> None:
             "observed": str(args.observed), "zero_control": str(args.zero) if args.zero else None,
             "shuffle_control": str(args.shuffle) if args.shuffle else None,
             "metric_fit": "train-only external raw-state pullback and state-action interaction pullback",
+            "control_contract": "matched zero-control exports must record the actual predictor input blocks",
             "selection": "fixed-spectrum orthogonal conjugates; validation MSE matching then metric alignment",
             "candidate_family": args.candidate_family,
             "match_tolerance": args.match_tolerance,
@@ -702,7 +760,7 @@ def main() -> None:
     for name, value in summary["fixed_spectrum_bridge"]["action_conditioned_mean_regret"].items():
         lines.append(f"| {name} | {value:.6g} | {summary['fixed_spectrum_bridge']['action_conditioned_oracle_hit_rate'][name]:.4g} |")
     readout = summary["fixed_spectrum_bridge"]["mean_physical_readout_r2"]
-    lines += ["", f"Held-out physical readout R2 (latent/proprio/joint): {readout['latent_only']:.6g} / {readout['proprio_only']:.6g} / {readout['joint']:.6g}", "", report["claim_boundary"], ""]
+    lines += ["", f"Held-out {summary['fixed_spectrum_bridge']['physical_readout_horizon']} physical readout R2 (latent/proprio/joint): {readout['latent_only']:.6g} / {readout['proprio_only']:.6g} / {readout['joint']:.6g}", "", report["claim_boundary"], ""]
     (args.output / "enriched_action_task_bridge.md").write_text("\n".join(lines))
     print(json.dumps(summary, indent=2))
 

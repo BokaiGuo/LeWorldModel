@@ -41,6 +41,17 @@ deployment support、subgoal reachability 和独立闭环 consequence gate。
 
 ## 新增 Workstream：GDD-WM
 
+### GDD-OPD 第二研究线（GDD-WM 的未来方法定位）
+
+旧 GDD-WM 的执行记录、修复与负结果仍由下文和
+[`docs/GDD_WM_PROGRESS_20261019.md`](docs/GDD_WM_PROGRESS_20261019.md) 维护；它们不是新方法的正向证据。
+新的、允许 post-training 的独立研究线为
+[GDD-OPD：学生规划分布上的决策场蒸馏](docs/GDD_OPD_ON_POLICY_DECISION_GEOMETRY_RESEARCH_PLAN_20261024.md)。
+GDD-OPD 只在先通过 teacher provenance、potential 可行性、on-policy coverage、预测/成功行为保护、
+held-out candidate transfer 与 teacher-free 闭环 consequence 后才可提出方法主张。它与严格 training-free 的
+D2P / Planning Compiler 共享基础设施而不共享训练组件或成功证据：前者不得使用 GDD-OPD student，后者不得将
+Planning Compiler 的运行时收益视作蒸馏效果。
+
 [Decision Preference → Predictive Geometry (GDD-WM)](docs/GDD_WM_DECISION_GEOMETRY_RESEARCH_PLAN_20261013.md)
 是现有 LeWorldModel 研究的新增、独立追踪的 proposed workstream，不替换谱
 transfer、horizon-conditioned memory、PushT 接触控制或既有负结果。其目标是检验：
@@ -120,12 +131,13 @@ value equivalence、state abstraction、bisimulation 和 DeepMDP 已经说明：
 
 HTSC 作为第一条科学主线，回答 **Can we trust the world model?**；它的输出应是候选
 动作级风险上界和 `permit/abstain`，而非无条件的 commutator/alignment certificate。
-GDD-WM 作为第二条科学主线，回答 **Can reliable decisions improve the world model?**；
-它利用已执行验证的动作偏好学习预测几何，并必须在新候选分布和独立规划结果上证明收益。
+GDD-OPD 作为第二条科学主线，回答 **Can reliable relational decisions improve the world model?**；
+它以 student-induced candidate graph、可积 decision potential 和受支持的 decision field 将合法执行关系写入
+预测几何，并必须在新候选分布和独立 teacher-free 规划结果上证明收益。旧 GDD-WM artifact 仍按其原始边界解释。
 
 两条线共享 candidate data、\(G_h^\Phi\)、action support、real/predicted successor
-和闭环评估，但不共享成功判据。GDD-WM 的重训练收益不能反向证明 frozen latent 原本
-充分；HTSC 的安全拒绝也不能被写成 GDD-WM 蒸馏成功。
+和闭环评估，但不共享成功判据。GDD-OPD 的重训练收益不能反向证明 frozen latent 原本
+充分；HTSC 的安全拒绝也不能被写成 GDD-OPD 蒸馏成功。
 
 ## 研究定位
 

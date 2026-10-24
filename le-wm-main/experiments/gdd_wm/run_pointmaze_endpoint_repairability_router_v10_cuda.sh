@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fresh GPU-only V10: select an executed endpoint-coupled repair only where
+# Fresh GPU-only V10 r6: select an executed endpoint-coupled repair only where
 # its candidate choice differs from the cost fallback and passes calibration.
 set -euo pipefail
 
@@ -9,9 +9,9 @@ PYTHON="${ROOT}/.venv/bin/python"
 WRAPPER="${ROOT}/experiments/run_with_torch_cudnn.sh"
 BASE_POOL="${ROOT}/data/point_maze_v41_endpoint_repairability_r4_extension_20261022"
 DATASET="${ROOT}/data/point_maze_v42_endpoint_repairability_r5_extension_20261022"
-PREFLIGHT="${ROOT}/results/pointmaze_endpoint_repairability_router_v10_r5_static_preflight_20261022.json"
-PANEL="${ROOT}/results/pointmaze_endpoint_repairability_router_v10_r5_panel_20261022_cuda"
-OUTPUT="${ROOT}/results/pointmaze_endpoint_repairability_router_v10_r5_control_20261022_cuda"
+PREFLIGHT="${ROOT}/results/pointmaze_endpoint_repairability_router_v10_r6_static_preflight_20261023.json"
+PANEL="${ROOT}/results/pointmaze_endpoint_repairability_router_v10_r6_panel_20261023_cuda"
+OUTPUT="${ROOT}/results/pointmaze_endpoint_repairability_router_v10_r6_control_20261023_cuda"
 ENCODER="${ROOT}/data/jepa_wm_checkpoints/jepa_wm_pointmaze.pth.tar"
 PCA="${ROOT}/results/pointmaze_same_backbone_full_support_20261013/checkpoints/jepa_full_mlp/seed_8411/stage_005.pt"
 DINOV2="${ROOT}/external/local_dinov2"
@@ -36,10 +36,11 @@ done
 # learned run: V10 reads no V9 fitted model, panel, calibration label, or
 # outcome.  The two seeds/ranges are those frozen by V9's source contract.
 # V10 r1 overlapped an existing context; r2/r3/r4 each failed the immutable
-# q10 gap gate before fitting.  r5 adds only pre-outcome proposal coverage
-# (384 state-interaction pairs) and extends r4's state-only pool after CUDA
-# admission; no fitted model, calibration label, or outcome label enters the
-# new root range.
+# q10 gap gate before fitting.  r5's static ledger was not executed because
+# it did not preflight RGB-history visibility or bind runtime role identities.
+# r6 keeps the unopened independent pool but seals a corrected ledger before
+# CUDA panel construction; no fitted model, calibration label, or outcome
+# label enters the new root range.
 if [[ ! -e "${DATASET}" ]]; then
   "${PYTHON}" -m experiments.decision_benchmark.extend_pointmaze_state_action_pool \
     --input-root "${BASE_POOL}" --output "${DATASET}" --episode-count 512 --seed 202610970

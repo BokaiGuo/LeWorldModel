@@ -137,6 +137,97 @@ def _bootstrap_mean(values: np.ndarray, *, draws: int, seed: int) -> dict[str, f
     }
 
 
+def _cluster_map(
+    grouped: dict[str, dict[str, list[dict[str, Any]]]], cluster_by_root: dict[str, str] | None,
+) -> tuple[dict[str, str], dict[str, dict[str, list[str]]]]:
+    """Validate the declared independent unit before any calibration occurs."""
+
+    roots = {root for split in grouped.values() for root in split}
+    mapping = {root: root for root in roots} if cluster_by_root is None else {
+        str(root): str(cluster) for root, cluster in cluster_by_root.items()
+    }
+    if set(mapping) != roots or any(not cluster for cluster in mapping.values()):
+        raise ValueError("cluster_by_root must map every and only declared roots to a non-empty cluster")
+    by_split: dict[str, dict[str, list[str]]] = {}
+    owner: dict[str, str] = {}
+    for split, split_groups in grouped.items():
+        clusters: dict[str, list[str]] = defaultdict(list)
+        for root in split_groups:
+            cluster = mapping[root]
+            previous = owner.setdefault(cluster, split)
+            if previous != split:
+                raise ValueError("one independent cluster cannot cross train/calibration/test splits")
+            clusters[cluster].append(root)
+        by_split[split] = {cluster: sorted(values) for cluster, values in clusters.items()}
+    return mapping, by_split
+
+
+def _cluster_maximum(values: dict[str, float], clusters: dict[str, str]) -> dict[str, float]:
+    grouped: dict[str, list[float]] = defaultdict(list)
+    for root, value in values.items():
+        grouped[clusters[root]].append(float(value))
+    return {cluster: float(max(entries)) for cluster, entries in grouped.items()}
+
+
+def _cluster_mean(values: dict[str, float], clusters: dict[str, str]) -> dict[str, float]:
+    grouped: dict[str, list[float]] = defaultdict(list)
+    for root, value in values.items():
+        grouped[clusters[root]].append(float(value))
+    return {cluster: float(np.mean(entries)) for cluster, entries in grouped.items()}
+
+
+def _clustered_conformal_calibration(
+    root_contrast: dict[str, Any], clusters: dict[str, str], *, alpha: float,
+) -> dict[str, Any]:
+    roots = [str(root) for root in root_contrast["calibration_groups_used"]]
+    errors = [float(value) for value in root_contrast["root_max_contrast_errors"]]
+    if len(roots) != len(errors) or set(roots) != set(clusters):
+        raise ValueError("root contrast calibration does not match declared independent clusters")
+    grouped = _cluster_maximum(dict(zip(roots, errors)), clusters)
+    # Reuse the tested finite-sample implementation on one conservative
+    # maximum error per independent cluster.  Passing synthetic singleton
+    # rows would be invalid because contrast needs two candidates; the
+    # quantile itself only needs the already-computed rootwise maxima.
+    from experiments.decision_benchmark.task_contrast import calibrate_root_score_bound
+
+    result = calibrate_root_score_bound(np.asarray(list(grouped.values())), alpha=float(alpha))
+    return {
+        "schema": "clustered_task_contrast_calibration.v1",
+        "alpha": float(alpha), "bound": result["bound"], "status": result["status"],
+        "finite_sample_rank": result["finite_sample_rank"],
+        "finite_sample_marginal_coverage_lower_bound": result["finite_sample_marginal_coverage_lower_bound"],
+        "target_marginal_coverage": result["target_marginal_coverage"],
+        "finite_bound_available": result["finite_bound_available"],
+        "calibration_cluster_count": len(grouped), "calibration_root_count": len(roots),
+        "cluster_max_contrast_errors": [float(grouped[key]) for key in sorted(grouped)],
+        "root_max_contrast_errors": errors,
+        "calibration_clusters_used": sorted(grouped), "simultaneous_over_candidate_bank": True,
+        "claim_boundary": "marginal fixed-bank contrast coverage over declared exchangeable independent clusters; not root-conditional or adaptive-candidate coverage",
+    }
+
+
+def _clustered_coverage(root_coverage: dict[str, Any], clusters: dict[str, str]) -> dict[str, Any]:
+    rows = root_coverage["roots"]
+    errors = {str(row["group_id"]): float(row["max_contrast_error"]) for row in rows}
+    if set(errors) != set(clusters):
+        raise ValueError("outcome root coverage does not match declared independent clusters")
+    grouped = _cluster_maximum(errors, clusters)
+    bound = root_coverage["contrast_bound"]
+    cluster_rows = [
+        {"cluster_id": cluster, "max_root_contrast_error": error,
+         "covered": None if bound is None else bool(error <= float(bound))}
+        for cluster, error in sorted(grouped.items())
+    ]
+    covered = None if bound is None else int(sum(bool(row["covered"]) for row in cluster_rows))
+    return {
+        "schema": "clustered_task_contrast_coverage.v1", "contrast_bound": bound,
+        "outcome_cluster_count": len(cluster_rows), "covered_cluster_count": covered,
+        "empirical_cluster_coverage": None if covered is None else float(covered / len(cluster_rows)),
+        "clusters": cluster_rows,
+        "claim_boundary": "empirical fixed-bank coverage over declared independent clusters; not permit-conditional or state-conditional coverage",
+    }
+
+
 def _winner(rows: list[dict[str, Any]], field: str) -> dict[str, Any]:
     return min(rows, key=lambda row: (float(row[field]), int(row["candidate_id"])))
 
@@ -150,6 +241,7 @@ def evaluate_records(
     seed: int = 20261021,
     certificate_kind: str = "unique_winner",
     regret_budget: float | None = None,
+    cluster_by_root: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Evaluate frozen HTSC and its identical-coverage fallback.
 
@@ -166,20 +258,27 @@ def evaluate_records(
     elif regret_budget is not None:
         raise ValueError("regret_budget is only valid with certificate_kind='regret_budget'")
     grouped = _validate_records(records)
+    root_to_cluster, clusters_by_split = _cluster_map(grouped, cluster_by_root)
     calibration_rows = [row for rows in grouped["calibration"].values() for row in rows]
     calibration_groups = np.asarray([
         row["root_id"] for row in calibration_rows
     ], dtype=object)
-    contrast = calibrate_contrast_bound(
+    root_contrast = calibrate_contrast_bound(
         np.asarray([float(row["true_cost"]) for row in calibration_rows]),
         np.asarray([float(row["wm_score"]) for row in calibration_rows]),
         calibration_groups,
         sorted(grouped["calibration"]),
         alpha=alpha,
     )
-    calibration_risks = np.asarray([
-        float(rows[0]["risk_score"]) for _, rows in sorted(grouped["calibration"].items())
-    ])
+    contrast = _clustered_conformal_calibration(
+        root_contrast, {root: root_to_cluster[root] for root in grouped["calibration"]}, alpha=alpha,
+    )
+    root_risks = {
+        root: float(rows[0]["risk_score"]) for root, rows in grouped["calibration"].items()
+    }
+    calibration_risks = np.asarray(list(_cluster_maximum(
+        root_risks, {root: root_to_cluster[root] for root in grouped["calibration"]},
+    ).values()))
     # A heuristic empirical quantile cannot be described as finite-sample
     # calibrated.  Use the same split-conformal rank convention as the
     # contrast envelope and fail closed when this calibration panel is too
@@ -279,14 +378,25 @@ def evaluate_records(
         np.asarray([str(row["root_id"]) for row in test_candidate_rows]),
         contrast["bound"],
     )
+    cluster_coverage = _clustered_coverage(
+        coverage, {root: root_to_cluster[root] for root in grouped["test"]},
+    )
     coverage_by_root = {str(row["group_id"]): row["covered"] for row in coverage["roots"]}
     for row in test_rows:
         # Outcome-only diagnosis, written after the frozen gate and candidate
         # choice.  It must never feed the release/recovery policy above.
         row["posthoc_contrast_covered"] = coverage_by_root[str(row["root_id"])]
         row["posthoc_coverage_failure"] = not bool(row["posthoc_contrast_covered"])
-    regret_gain = np.asarray([float(row["paired_regret_gain"]) for row in test_rows])
-    success_gain = np.asarray([float(row["paired_success_gain"]) for row in test_rows])
+    regret_gain_by_cluster = _cluster_mean(
+        {str(row["root_id"]): float(row["paired_regret_gain"]) for row in test_rows},
+        {root: root_to_cluster[root] for root in grouped["test"]},
+    )
+    success_gain_by_cluster = _cluster_mean(
+        {str(row["root_id"]): float(row["paired_success_gain"]) for row in test_rows},
+        {root: root_to_cluster[root] for root in grouped["test"]},
+    )
+    regret_gain = np.asarray(list(regret_gain_by_cluster.values()))
+    success_gain = np.asarray(list(success_gain_by_cluster.values()))
     released = [row for row in test_rows if row["status"] == "permit"]
     failure_counts = {
         key: int(sum(bool(row["gate_failure_vector"][key]) for row in test_rows))
@@ -302,17 +412,19 @@ def evaluate_records(
             "candidate_generation": "fixed before calibration and test scoring",
             "certificate_kind": certificate_kind,
             "regret_budget": None if regret_budget is None else float(regret_budget),
-            "risk_gate": "root-level model-only risk threshold fitted on calibration roots",
+            "risk_gate": "cluster-maximum model-only risk threshold fitted on calibration clusters",
             "matched_fallback": "uses the exact HTSC release mask; differs only on permitted roots",
             "test_outcome_used_for_selection": False,
-            "conformal_scope": "marginal fixed-bank root-level contrast coverage under exchangeability",
+            "conformal_scope": "marginal fixed-bank independent-cluster contrast coverage under exchangeability",
+            "independent_unit": "root" if cluster_by_root is None else "declared cluster",
+            "cluster_counts": {split: len(values) for split, values in clusters_by_split.items()},
         },
         "calibration": {
             "contrast": contrast,
             "risk_quantile": float(risk_quantile),
         "risk_threshold": risk_threshold,
         "risk_calibration": risk_calibration,
-            "risk_calibration_root_count": int(calibration_risks.size),
+        "risk_calibration_root_count": int(calibration_risks.size),
         },
         "test": {
             "root_count": int(len(test_rows)),
@@ -327,6 +439,7 @@ def evaluate_records(
             "paired_regret_gain_bootstrap": _bootstrap_mean(regret_gain, draws=bootstrap_draws, seed=seed),
             "paired_success_gain_bootstrap": _bootstrap_mean(success_gain, draws=bootstrap_draws, seed=seed + 1),
             "conformal_outcome_coverage": coverage,
+            "cluster_conformal_outcome_coverage": cluster_coverage,
             "roots": test_rows,
         },
         "claim_boundary": (

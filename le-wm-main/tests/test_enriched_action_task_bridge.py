@@ -62,6 +62,8 @@ def test_observed_zero_effect_is_paired_and_exposed_to_metric_fit() -> None:
             "target": np.asarray([1.7, 2.7]),
             "pred_downstream": np.asarray([1.6, 2.6]),
             "target_downstream": np.asarray([1.8, 2.8]),
+            "action_sequence": np.asarray([[0.2, -0.1]]),
+            "predictor_action_sequence": np.asarray([[0.2, -0.1]]),
         }
     }
     zero = {
@@ -72,6 +74,8 @@ def test_observed_zero_effect_is_paired_and_exposed_to_metric_fit() -> None:
             "target": np.asarray([1.7, 2.7]),
             "pred_downstream": np.asarray([1.2, 2.3]),
             "target_downstream": np.asarray([1.8, 2.8]),
+            "action_sequence": np.asarray([[0.2, -0.1]]),
+            "predictor_action_sequence": np.zeros((1, 2)),
         }
     }
     audit = _attach_observed_zero_effect(observed, zero)
@@ -84,6 +88,31 @@ def test_observed_zero_effect_is_paired_and_exposed_to_metric_fit() -> None:
     effect = np.tile(observed["0:0"]["latent_action_effect"], (3, 1))
     metrics = _metric_matrices(x, proprio, action, delta, floor=0.05, ridge=0.05, latent_action_effect=effect)
     assert "observed_zero_action_effect_pullback" in metrics
+
+
+def test_observed_zero_effect_rejects_undeclared_or_nonzero_predictor_control() -> None:
+    observed = {
+        "0:0": {
+            "episode_id": 0, "latent": np.asarray([1.0, 2.0]),
+            "pred": np.asarray([1.5, 2.5]), "target": np.asarray([1.7, 2.7]),
+            "pred_downstream": np.asarray([1.6, 2.6]), "target_downstream": np.asarray([1.8, 2.8]),
+            "action_sequence": np.asarray([[0.2, -0.1]]), "predictor_action_sequence": np.asarray([[0.2, -0.1]]),
+        }
+    }
+    control = {
+        "0:0": {
+            "episode_id": 0, "latent": np.asarray([[1.0, 2.0], [1.0, 2.0], [1.0, 2.0]]),
+            "pred": np.asarray([1.1, 2.2]), "target": np.asarray([1.7, 2.7]),
+            "pred_downstream": np.asarray([1.2, 2.3]), "target_downstream": np.asarray([1.8, 2.8]),
+            "action_sequence": np.asarray([[0.2, -0.1]]), "predictor_action_sequence": np.asarray([[0.1, 0.0]]),
+        }
+    }
+    import pytest
+    with pytest.raises(ValueError, match="non-zero predictor actions"):
+        _attach_observed_zero_effect(observed, control)
+    del control["0:0"]["predictor_action_sequence"]
+    with pytest.raises(ValueError, match="lacks predictor_action_blocks_normalized"):
+        _attach_observed_zero_effect(observed, control)
 
 
 def test_local_candidate_family_preserves_spectrum_and_augmented_geometry_is_finite() -> None:

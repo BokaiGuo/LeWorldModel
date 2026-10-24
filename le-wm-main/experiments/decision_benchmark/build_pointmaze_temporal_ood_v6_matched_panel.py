@@ -1397,6 +1397,16 @@ def frozen_preflight_provenance(
         raise ValueError("V6 declared goal differs from the frozen preflight ledger")
     if candidate.get("held_shape") != [HELD_CANDIDATES, TOTAL_STEPS, 2] or candidate.get("train_shape") != [TRAIN_CANDIDATES, TOTAL_STEPS, 2]:
         raise ValueError("frozen V6 preflight ledger has incompatible candidate-bank dimensions")
+    if value.get("schema") == FROZEN_PREFLIGHT_SCHEMA:
+        expected_role_counts = value.get("calibration_role_counts")
+        role_names = {"selector", "arm_certificate", "risk_calibration"}
+        if (
+            not isinstance(expected_role_counts, dict)
+            or set(expected_role_counts) != role_names
+            or any(not isinstance(expected_role_counts[name], int) or expected_role_counts[name] <= 0 for name in role_names)
+            or sum(expected_role_counts.values()) != int(expected_counts["calibration"])
+        ):
+            raise ValueError("frozen endpoint V6 preflight lacks a complete calibration role-count binding")
     # V7/V8 bind not just available roots, but exact split/action-bank seeds.
     # Historical V6 ledgers predate this field and remain readable only as
     # historical evidence.
@@ -1625,6 +1635,14 @@ def frozen_preflight_provenance(
         "context_count": len(prior_context_sha256),
         "dataset_states_sha256": value["dataset_states_sha256"],
         "root_counts": dict(expected_counts),
+        # Endpoint V6 hash-partitions calibration roots by the exact emitted
+        # ``instance_id``.  Preserve the static role-count ledger so the
+        # runner can reject a build whose preflight partition was computed in
+        # a different identity namespace.
+        "calibration_role_counts": (
+            dict(value["calibration_role_counts"])
+            if value.get("schema") == FROZEN_PREFLIGHT_SCHEMA else None
+        ),
         # The build stage must retain candidate-bank evidence from the sealed
         # ledger.  V22 consumes its exact V20 action hashes here; omitting this
         # field made a valid static ledger look like an empty declaration only
@@ -1740,6 +1758,28 @@ def _renderer_chart_roots_v6(dataset_root: Path, v6_split_roots: set[int]) -> li
     if len(selected) < 40:
         raise ValueError("V6 needs 40 stored-RGB roots outside its own train/calibration/outcome split for renderer calibration")
     return selected[:40]
+
+
+def visible_history_roots_v6(dataset_root: Path, states: np.ndarray, candidate_roots: np.ndarray) -> np.ndarray:
+    """Return roots whose declared eight-frame RGB history is observable.
+
+    This is a hard input contract, not a fallback detector: a root with an
+    off-frame marker cannot support an RGB-only history estimator.
+    """
+    chart_roots = _renderer_chart_roots_v6(dataset_root, set())
+    calibration = fit_visual_calibration(dataset_root, chart_roots, max_frames=1600)
+    images, _ = load_episode(dataset_root, chart_roots[0])
+    renderer = DatasetMatchedRenderer.from_episode(images, calibration)
+    frames, _ = causal_history8(SOURCE_FRAME, np.zeros((SOURCE_FRAME, 2), dtype=np.float64))
+    visible: list[int] = []
+    for root in np.asarray(candidate_roots, dtype=np.int64):
+        try:
+            for frame in frames:
+                green_center(renderer.render(states[int(root), int(frame)]))
+        except ValueError:
+            continue
+        visible.append(int(root))
+    return np.asarray(visible, dtype=np.int64)
 
 
 def _renderer_chart_provenance(chart_roots: list[int], v6_split_roots: set[int], historical_roots: set[int]) -> dict[str, Any]:
@@ -1936,6 +1976,8 @@ def build_panel(
     allowed_root_ids = _eligible_roots(
         root_count=root_count, root_id_min=root_id_min, root_id_max_exclusive=root_id_max_exclusive,
     )
+    visible_root_ids = visible_history_roots_v6(dataset_root, states, allowed_root_ids)
+    invisible_roots = set(map(int, allowed_root_ids)) - set(map(int, visible_root_ids))
     if candidate_design in {"velocity_matched_acceleration_pairs", "velocity_matched_braking_pairs"}:
         frozen_split_roots = preflight_provenance.get("split_roots") if isinstance(preflight_provenance, dict) else None
         if not isinstance(frozen_split_roots, dict) or set(frozen_split_roots) != set(split_counts):
@@ -1957,7 +1999,7 @@ def build_panel(
             raise RuntimeError("V14 frozen grouped split roots violate the declared panel contract")
     else:
         split = _split_roots_v6(
-            seed=int(root_seed), forbidden=old_roots, root_count=root_count, split_counts=split_counts,
+            seed=int(root_seed), forbidden=old_roots | invisible_roots, root_count=root_count, split_counts=split_counts,
             root_id_min=root_id_min, root_id_max_exclusive=root_id_max_exclusive,
         )
     if set(split) & old_roots:
@@ -2191,6 +2233,7 @@ def build_panel(
         "renderer_backed_frozen_observation_control": True,
         "state_action_pool_root_count": root_count,
         "declared_root_range": [int(allowed_root_ids.min()), int(allowed_root_ids.max()) + 1],
+        "visible_history_root_count": int(len(visible_root_ids)),
         "privileged_source_state_role": "offline paired task-cost readout only; not a live visual-planning input",
         "supplied_prior_context_roots_excluded": sorted(old_roots),
         "renderer_chart_provenance": chart_provenance,

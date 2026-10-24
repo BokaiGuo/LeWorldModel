@@ -1,7 +1,16 @@
 # PointMaze V24: Stratum-calibrated repair on fresh roots
 
-Status: `completed on host CUDA; high-motion transfer is positive, while the
-direct-zero-motion stratum retains a coverage shortfall`.
+Status: `superseded by a code/protocol defect audit on 2026-10-23`.
+
+The original host-CUDA run was real, but its direct-zero-motion pool generated
+each zero-velocity source trajectory twice under distinct root IDs. The
+nominal 128 roots in each direct stratum therefore contained 64 independent
+observable contexts, invalidating its conformal sample-size and coverage
+interpretation. The V24 audit now fails closed before reporting a diagnosis;
+the published 0.875 direct-stratum coverage and pooled C3 result must not be
+used as evidence. This correction does not alter the immutable artifact or
+retune the opened panel. A successor must use a fresh pool built with the
+unique-observation guard and fresh roots.
 
 ## Question
 
@@ -32,12 +41,12 @@ claiming that the same repair applies to a direct, zero-motion regime.
 | direct zero motion | 20 / 128 | 0.87500 | 0.00000 | [0.00000, 0.00000] | 0.00000 |
 | pooled descriptive total | 141 / 256 | 0.89063 | +0.08795 | [+0.07006, +0.10628] | +0.22656 |
 
-All covered-root regret bounds held.  The high-motion stratum therefore
-provides a positive, independently evaluated fixed-bank transfer result under
-the frozen route.  The zero-motion stratum does not validate a 90% marginal
-coverage claim: its Wilson 95% interval is `[0.80657, 0.92157]`, and its
-observed point coverage is below 0.90.  Pooled coverage must not be reported
-as a global calibrated-control result.
+These historical summaries are preserved for traceability only. Because the
+direct pool duplicated contexts in all splits, neither its nominal coverage
+nor the pooled result is a valid independent-root C3 evaluation. The
+high-motion component was not duplicated by this failure mode, but V24 is not
+reported as a complete stratified C3 result after the aggregate protocol
+failure.
 
 ## Integrity and claim boundary
 

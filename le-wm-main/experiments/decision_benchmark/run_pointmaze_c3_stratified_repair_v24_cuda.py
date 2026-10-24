@@ -21,6 +21,7 @@ from experiments.decision_benchmark import run_htsc_matched_transfer as htsc
 from experiments.decision_benchmark import run_pointmaze_c3_regret_budget_v23_cuda as v23
 from experiments.decision_benchmark import run_pointmaze_mixed_velocity_repairability_v20_cuda as v20
 from experiments.decision_benchmark import run_pointmaze_temporal_ood_v6_interaction as interaction
+from experiments.decision_benchmark.root_observation_identity import assert_unique_root_observations
 from experiments.gdd_wm import preflight_pointmaze_c3_stratified_repair_v24 as preflight
 from experiments.gpu_preflight import require_cuda_recurrent_cell
 
@@ -36,6 +37,10 @@ REGRET_BUDGET = float(preflight.REGRET_BUDGET)
 POLICY = {"kind": "history_energy_gate", "direction": "recurrent_when_high", "threshold": .02,
           "motion_source": "source_history_visual_state", "fixed_threshold": True}
 POOL_MODULE = "experiments.decision_benchmark.build_pointmaze_v24_c3_stratified_repair_pool"
+# Successors with deliberately paired physical sources set this mapping before
+# calling ``main``.  The default preserves the original one-root-per-unit
+# protocol for historical runs.
+CLUSTER_BY_ROOT: dict[str, str] | None = None
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -128,12 +133,21 @@ def _calibration_gate(records: list[dict[str, Any]]) -> dict[str, Any]:
     for stratum in ("high_motion", "direct_zero_motion"):
         rows = [row for row in records if row["split"] == "calibration" and row["stratum"] == stratum]
         roots = sorted({str(row["root_id"]) for row in rows})
-        contrast = htsc.calibrate_contrast_bound(np.asarray([row["true_cost"] for row in rows]), np.asarray([row["wm_score"] for row in rows]),
-                                                 np.asarray([row["root_id"] for row in rows]), roots, alpha=.1)
-        risks = np.asarray([next(float(row["risk_score"]) for row in rows if str(row["root_id"]) == root) for root in roots])
+        root_contrast = htsc.calibrate_contrast_bound(np.asarray([row["true_cost"] for row in rows]), np.asarray([row["wm_score"] for row in rows]),
+                                                      np.asarray([row["root_id"] for row in rows]), roots, alpha=.1)
+        clusters = {root: root for root in roots} if CLUSTER_BY_ROOT is None else {
+            root: CLUSTER_BY_ROOT[root] for root in roots
+        }
+        contrast = htsc._clustered_conformal_calibration(root_contrast, clusters, alpha=.1)
+        root_risks = {
+            root: next(float(row["risk_score"]) for row in rows if str(row["root_id"]) == root)
+            for root in roots
+        }
+        risks = np.asarray(list(htsc._cluster_maximum(root_risks, clusters).values()))
         risk = htsc.calibrate_root_score_bound(risks, alpha=.1)
         if contrast["bound"] is None or risk["bound"] is None: raise RuntimeError("V24 stratum calibration is insufficient")
-        result[stratum] = {"contrast": contrast, "risk": risk, "calibration_root_count": len(roots)}
+        result[stratum] = {"contrast": contrast, "risk": risk, "calibration_root_count": len(roots),
+                           "calibration_cluster_count": len(set(clusters.values()))}
     return result
 
 
@@ -170,6 +184,9 @@ def main() -> int:
                                            protocol_reference="V24 fixed visual-motion route with stratum-specific C3 calibration", policy=POLICY)
     frozen = _read(frozen_path)
     _meta, rows = interaction._read_panel(context, interaction.CONTEXT_SCHEMA)
+    # A new root ID is not an independent conformal draw when the renderer
+    # input and physical source state are byte-for-byte the same.
+    assert_unique_root_observations(rows)
     nonoutcome = [row for row in rows if str(row["split"]) != "outcome"]
     calibration_labels = v23._labels(nonoutcome)
     rec, act, routed = _costs(nonoutcome, frozen)
@@ -195,7 +212,11 @@ def main() -> int:
     for stratum in ("high_motion", "direct_zero_motion"):
         report = htsc.evaluate_records([row for row in all_records if row["stratum"] == stratum], alpha=.1, risk_quantile=.9,
                                        bootstrap_draws=10_000, seed=202611809 if stratum == "high_motion" else 202611810,
-                                       certificate_kind="regret_budget", regret_budget=REGRET_BUDGET)
+                                       certificate_kind="regret_budget", regret_budget=REGRET_BUDGET,
+                                       cluster_by_root=None if CLUSTER_BY_ROOT is None else {
+                                           str(row["root_id"]): CLUSTER_BY_ROOT[str(row["root_id"])]
+                                           for row in all_records if row["stratum"] == stratum
+                                       })
         if report["calibration"]["contrast"]["bound"] != gate[stratum]["contrast"]["bound"] or report["calibration"]["risk_threshold"] != gate[stratum]["risk"]["bound"]:
             raise RuntimeError("V24 evaluator does not reproduce sealed stratum calibration")
         reports[stratum] = report

@@ -71,3 +71,7 @@ def test_run_unseen_bank_seals_labels_until_postfit_and_uses_new_candidate_ident
     assert report["contract"]["action_hash_overlap"] == []
     assert report["unseen_bank"]["outcomes_opened_after_fit"] is True
     assert report["protocol"]["outcome_used_for_fit_or_model_selection"] is False
+    support = report["protocol"]["action_support_scope"]
+    assert support["fitted_distinct_action_sequences"] == 2
+    assert support["held_distinct_action_sequences"] == 4
+    assert support["continuous_action_coverage_tested"] is False

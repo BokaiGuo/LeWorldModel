@@ -264,6 +264,22 @@ def _validate_v10_contract(source: dict[str, Any], context: dict[str, Any]) -> d
     }
     if observed_split_roots != expected_split_roots:
         raise ValueError("V10 execution split-root identities differ from the immutable static-preflight ledger")
+    expected_role_counts = ledger.get("calibration_role_counts")
+    role_names = ("selector", "certification")
+    if not isinstance(expected_role_counts, dict) or set(expected_role_counts) != set(role_names):
+        raise ValueError("V10 static preflight lacks calibration role-count binding")
+    actual_role_counts = {name: 0 for name in role_names}
+    calibration_instance_ids = {str(row["instance_id"]) for row in held_rows if row.get("split") == "calibration"}
+    for root in calibration_instance_ids:
+        actual_role_counts[role_names[_calibration_role(root)]] += 1
+    if (
+        any(not isinstance(expected_role_counts[name], int) for name in role_names)
+        or actual_role_counts != expected_role_counts
+    ):
+        raise ValueError(
+            "V10 calibration role partition differs from the immutable static-preflight ledger: "
+            f"actual={actual_role_counts}, expected={expected_role_counts}"
+        )
     return {
         "verified": True,
         "ledger_path": str(Path(ledger_path).resolve()),
@@ -273,6 +289,7 @@ def _validate_v10_contract(source: dict[str, Any], context: dict[str, Any]) -> d
         "repair_arm": str(bank["repair_arm"]),
         "declared_root_counts": dict(ledger.get("root_counts", {})),
         "declared_split_roots": {name: sorted(values) for name, values in expected_split_roots.items()},
+        "calibration_role_counts": actual_role_counts,
     }
 
 

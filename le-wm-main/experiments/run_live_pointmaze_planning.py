@@ -40,10 +40,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from experiments.decision_benchmark.fit_pointmaze_online_effect_policy import (
     OnlineEffectPolicy,
 )
+from experiments.spectral_reachability.pointmaze_physical_evaluator import (
+    FRAME_SKIP,
+    VELOCITY_LIMIT,
+)
 
 GOAL_STATE = np.asarray([1.2, 1.2], dtype=np.float64)
 MARKER_RADIUS = 9
-FRAME_STRIDE = 5
+FRAME_STRIDE = FRAME_SKIP
 HORIZONS = (1, 2, 4)
 GATE_TOLERANCE_GRID = (0.05, 0.10, 0.20, 0.30, 0.50)
 # ``-1`` is an explicit visual-only control: visual regret is non-negative,
@@ -1599,9 +1603,22 @@ class LegacyPointMazeRuntime:
         self._mujoco.mj_forward(self.model, self.data)
 
     def step_block(self, action: np.ndarray, steps: int = FRAME_STRIDE) -> np.ndarray:
+        """Execute exactly one archive-level ``MazeEnv.step`` action.
+
+        The published PointMaze archive clips velocity before applying an
+        action and then advances five MuJoCo ticks.  Any online consequence
+        must share that clock; otherwise a controller is evaluated on a
+        different environment from the SRA labels.
+        """
         action = np.asarray(action, dtype=np.float64)
-        for _ in range(steps):
-            self.data.ctrl[:] = action
+        if action.shape != (2,) or not np.isfinite(action).all():
+            raise ValueError("PointMaze block action must be finite shape [2]")
+        if int(steps) != FRAME_SKIP:
+            raise ValueError(f"PointMaze archive contract requires exactly {FRAME_SKIP} MuJoCo ticks per action")
+        self.data.qvel[:] = np.clip(self.data.qvel, -VELOCITY_LIMIT, VELOCITY_LIMIT)
+        self._mujoco.mj_forward(self.model, self.data)
+        self.data.ctrl[:] = np.clip(action, -1.0, 1.0)
+        for _ in range(FRAME_SKIP):
             self._mujoco.mj_step(self.model, self.data)
         return self.state
 

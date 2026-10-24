@@ -2,7 +2,9 @@ import numpy as np
 
 from experiments.run_pusht_repaired_predictor_mpc import (
     CalibratedResidualAdapter,
+    PREDICTOR_POLICIES,
     block_cost,
+    candidate_rng,
     make_action_sequence,
     proposal_sequences,
     staged_proposal_sequences,
@@ -32,6 +34,20 @@ def test_proposals_are_bounded_and_include_guided_controls():
     assert candidates.shape == (12, 8, 2)
     assert np.all(candidates <= 1.0) and np.all(candidates >= -1.0)
     assert np.allclose(candidates[0], 0.0)
+
+
+def test_candidate_noise_is_matched_by_episode_not_policy():
+    """A paired predictor comparison cannot use policy-specific proposal RNG."""
+    first = candidate_rng(8421, 3).normal(size=(4, 2))
+    repeated = candidate_rng(8421, 3).normal(size=(4, 2))
+    other_episode = candidate_rng(8421, 4).normal(size=(4, 2))
+    assert np.allclose(first, repeated)
+    assert not np.allclose(first, other_episode)
+
+
+def test_all_predictor_backed_policies_score_candidates():
+    """Residual-gated MPC must not silently take the zero-action fallback."""
+    assert PREDICTOR_POLICIES == {"base_mpc", "repaired_mpc", "residual_gated_mpc"}
 
 
 def test_task_cost_is_zero_at_goal_and_penalizes_agent_and_block():

@@ -53,6 +53,19 @@ from experiments.run_live_pointmaze_planning import (
     validate_fixed_candidate_bank,
     validate_runtime_candidate_bank,
 )
+
+
+def test_legacy_runtime_matches_the_audited_high_level_transition_contract() -> None:
+    from experiments.run_live_pointmaze_planning import LegacyPointMazeRuntime
+    from experiments.spectral_reachability.pointmaze_physical_evaluator import build_model, replay_recorded_actions
+
+    source = np.asarray([0.0, 0.0, 7.0, -7.0], dtype=np.float64)
+    action = np.asarray([1.5, -1.5], dtype=np.float64)
+    runtime = LegacyPointMazeRuntime(source)
+    actual = runtime.step_block(action)
+    expected = replay_recorded_actions(build_model(), source, action.reshape(1, 2))
+
+    assert np.allclose(actual, expected, atol=1.0e-12, rtol=0.0)
 from experiments.run_pointmaze_rgb_closed_loop_strict import (
     DEPLOYABLE_METHODS as STRICT_DEPLOYABLE_METHODS,
     PRIVILEGED_METHODS as STRICT_PRIVILEGED_METHODS,

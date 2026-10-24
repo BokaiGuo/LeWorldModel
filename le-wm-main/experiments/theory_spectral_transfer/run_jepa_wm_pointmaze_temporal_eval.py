@@ -386,6 +386,16 @@ def main() -> None:
                                     .reshape(-1).detach().cpu().tolist()
                                     for j in range(max_h)
                                 ],
+                                # The realised action blocks above label the physical
+                                # target.  Keep the (potentially intervened) predictor
+                                # input separate so a zero/reverse/shuffle artifact can
+                                # be verified from its own provenance rather than from
+                                # the command line that generated it.
+                                "predictor_action_blocks_normalized": [
+                                    batch_blocks[local_index][j].detach().cpu().tolist()
+                                    for j in range(max_h)
+                                ],
+                                "predictor_action_mode": args.action_mode,
                                 "latent_by_horizon": {},
                             }
                             enriched_records.append(existing)

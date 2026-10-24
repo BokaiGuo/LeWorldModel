@@ -32,7 +32,12 @@ def lejepa_forward(self, batch, stage, cfg):
     ctx_emb = emb[:, :ctx_len]
     ctx_act = act_emb[:, : ctx_len]
 
-    tgt_emb = emb[:, n_preds:] # label
+    # A future RGB embedding is a supervision target, not a second branch of
+    # the dynamics update.  Leaving this attached lets the encoder/projector
+    # reduce prediction loss by moving the observed successor representation
+    # toward the predictor, weakening action-to-successor discrimination.
+    # Keep this causal JEPA target fixed for the current update.
+    tgt_emb = emb[:, n_preds:].detach() # label
     pred_emb = self.model.predict(ctx_emb, ctx_act) # pred
 
     # LeWM loss

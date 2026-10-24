@@ -19,6 +19,11 @@ import numpy as np
 import torch
 
 from experiments.decision_benchmark.run_unseen_action_bank_pointmaze import _legacy_pointmaze_xml
+from experiments.spectral_reachability.pointmaze_physical_evaluator import (
+    FRAME_SKIP,
+    VELOCITY_LIMIT,
+    build_model,
+)
 
 
 SCHEMA = "pointmaze_independent_state_action_extension.v1"
@@ -34,23 +39,34 @@ def _sha256(path: Path) -> str:
 
 
 def rollout_trajectory(initial_state: np.ndarray, actions: np.ndarray) -> np.ndarray:
-    """Roll a single MuJoCo trajectory on the exact candidate-bank physics."""
+    """Roll one trajectory on the archive's high-level MazeEnv clock.
+
+    One stored action is a MazeEnv.step call, not one MuJoCo tick: it clips
+    velocity, clips raw controls, and advances FRAME_SKIP ticks.  This keeps
+    fresh roots aligned with SRA's audited physical evaluator.
+    """
     import mujoco
 
     initial = np.asarray(initial_state, dtype=np.float64)
     controls = np.asarray(actions, dtype=np.float64)
     if initial.shape != (4,) or controls.ndim != 2 or controls.shape[1] != 2 or not np.isfinite(initial).all() or not np.isfinite(controls).all():
         raise ValueError("initial state must be [4] and actions must be finite [steps,2]")
-    model = mujoco.MjModel.from_xml_string(_legacy_pointmaze_xml())
+    model = build_model()
     data = mujoco.MjData(model)
     data.qpos[:] = initial[:2]
     data.qvel[:] = initial[2:]
     mujoco.mj_forward(model, data)
-    states = np.empty((len(controls), 4), dtype=np.float32)
+    # The released archive stores state/action tensors in float64.  Downcasting
+    # a reset state before a long MuJoCo replay can noticeably diverge after
+    # collisions, so a fresh root must retain that contract end-to-end.
+    states = np.empty((len(controls), 4), dtype=np.float64)
     states[0] = np.r_[data.qpos[:2], data.qvel[:2]]
     for index in range(1, len(controls)):
+        data.qvel[:] = np.clip(data.qvel, -VELOCITY_LIMIT, VELOCITY_LIMIT)
+        mujoco.mj_forward(model, data)
         data.ctrl[:] = np.clip(controls[index - 1], -1.0, 1.0)
-        mujoco.mj_step(model, data)
+        for _ in range(FRAME_SKIP):
+            mujoco.mj_step(model, data)
         states[index] = np.r_[data.qpos[:2], data.qvel[:2]]
     if not np.isfinite(states).all():
         raise RuntimeError("generated PointMaze rollout is non-finite")
@@ -65,10 +81,12 @@ def build_extension(input_root: Path, output: Path, *, episode_count: int = DEFA
     states_path, actions_path = input_root / "states.pth", input_root / "actions.pth"
     if not states_path.is_file() or not actions_path.is_file() or not (input_root / "obses").is_dir():
         raise FileNotFoundError("input root needs states.pth, actions.pth, and obses/")
-    states = torch.load(states_path, map_location="cpu", weights_only=True).detach().cpu().numpy().astype(np.float32)
-    actions = torch.load(actions_path, map_location="cpu", weights_only=True).detach().cpu().numpy().astype(np.float32)
+    states = torch.load(states_path, map_location="cpu", weights_only=True).detach().cpu().numpy().astype(np.float64)
+    actions = torch.load(actions_path, map_location="cpu", weights_only=True).detach().cpu().numpy().astype(np.float64)
     if states.ndim != 3 or states.shape[1:] != (100, 4) or actions.shape != (states.shape[0], 100, 2):
         raise ValueError("input state/action tensors must be [roots,100,4] and [roots,100,2]")
+    import mujoco
+
     rng = np.random.default_rng(int(seed))
     # Sample distinct empirical reset states and perturb them continuously. The
     # resulting root identity is a newly rolled trajectory, not a relabelled
@@ -78,10 +96,10 @@ def build_extension(input_root: Path, output: Path, *, episode_count: int = DEFA
     initial[:, :2] += rng.uniform(-0.025, 0.025, size=(len(initial), 2))
     initial[:, 2:] += rng.uniform(-0.10, 0.10, size=(len(initial), 2))
     generated_actions = rng.uniform(-1.0, 1.0, size=(int(episode_count), 100, 2)).astype(np.float64)
-    generated_states = np.stack([rollout_trajectory(start, controls) for start, controls in zip(initial, generated_actions)]).astype(np.float32)
+    generated_states = np.stack([rollout_trajectory(start, controls) for start, controls in zip(initial, generated_actions)])
     output.mkdir(parents=True, exist_ok=False)
     torch.save(torch.from_numpy(np.concatenate((states, generated_states), axis=0)), output / "states.pth")
-    torch.save(torch.from_numpy(np.concatenate((actions, generated_actions.astype(np.float32)), axis=0)), output / "actions.pth")
+    torch.save(torch.from_numpy(np.concatenate((actions, generated_actions), axis=0)), output / "actions.pth")
     if (input_root / "seq_lengths.pth").is_file():
         lengths = torch.load(input_root / "seq_lengths.pth", map_location="cpu", weights_only=True)
         torch.save(torch.cat((lengths, torch.full((int(episode_count),), 100, dtype=lengths.dtype))), output / "seq_lengths.pth")
@@ -92,6 +110,19 @@ def build_extension(input_root: Path, output: Path, *, episode_count: int = DEFA
         "base_root_count": int(len(states)), "extended_root_count": int(len(states) + episode_count),
         "new_root_id_range": [int(len(states)), int(len(states) + episode_count - 1)],
         "trajectory_backend": "MuJoCo legacy PointMaze XML used by candidate-bank simulator",
+        "mujoco_version": str(mujoco.__version__),
+        "state_action_dtype": "float64",
+        "rollout_transition_contract": {
+            "name": "mazeenv_high_level_action_v1",
+            "state_clock": "states[0] is reset; states[t+1] follows actions[t]",
+            "velocity_clip_before_action": float(VELOCITY_LIMIT),
+            "raw_action_clip": [-1.0, 1.0],
+            "mujoco_steps_per_action": int(FRAME_SKIP),
+            "physical_evaluator_sha256": _sha256(
+                Path(__file__).resolve().parents[1] / "spectral_reachability" / "pointmaze_physical_evaluator.py"
+            ),
+            "xml_sha256": hashlib.sha256(_legacy_pointmaze_xml().encode("utf-8")).hexdigest(),
+        },
         "reset_protocol": "distinct empirical reset draws plus continuous qpos/qvel perturbation; random independent 100-step controls",
         "stored_rgb_role": "read-only symlink for fixed renderer calibration only; new state/action trajectories are renderer-on-demand",
         "states_sha256": _sha256(output / "states.pth"), "actions_sha256": _sha256(output / "actions.pth"),

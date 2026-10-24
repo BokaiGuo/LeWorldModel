@@ -1,18 +1,16 @@
 from __future__ import annotations
 
+import pytest
+
 from experiments.decision_benchmark import audit_pointmaze_c3_stratified_repair_v24 as audit
 
 
-def test_v24_audit_separates_the_positive_high_motion_result_from_direct_coverage_boundary() -> None:
-    result = audit.audit()
-    assert result["integrity"]["split_root_disjoint"] is True
-    assert result["integrity"]["held_actions_supported_by_train"] is True
-    assert result["integrity"]["gate_sha256_matches_outcome_binding"] is True
-    high = result["certificate"]["strata"]["high_motion"]
-    direct = result["certificate"]["strata"]["direct_zero_motion"]
-    assert high["release_count"] == 121
-    assert high["paired_regret_gain_bootstrap"]["lower"] > 0.0
-    assert high["coverage"] >= .9
-    assert direct["paired_regret_gain"] == 0.0
-    assert direct["coverage"] < .9
-    assert result["diagnosis"] == "high_motion_repair_transfers_with_direct_stratum_residual_coverage_shortfall"
+def test_v24_audit_rejects_nominal_roots_that_repeat_one_observable_context() -> None:
+    """V24's archived panel is invalid after the root-identity correction.
+
+    A former test re-promoted this panel's numerical summaries even though its
+    paired source roots duplicated the same observable state/history/goal.
+    Root IDs alone are not independent calibration or outcome observations.
+    """
+    with pytest.raises(ValueError, match="duplicate one observable context"):
+        audit.audit()

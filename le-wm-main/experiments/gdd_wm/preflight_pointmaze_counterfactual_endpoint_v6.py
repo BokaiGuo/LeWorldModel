@@ -26,6 +26,19 @@ from experiments.gdd_wm.run_pointmaze_planning_shaped_control import _canonical_
 
 
 SCHEMA = "pointmaze_counterfactual_endpoint_v6_static_preflight.v1"
+CALIBRATION_ROLE_NAMES = ("selector", "arm_certificate", "risk_calibration")
+
+
+def _panel_instance_id(root_id: int) -> str:
+    """Return the root identity emitted by the V6 panel builder.
+
+    Calibration roles are defined over the runner's ``instance_id``, not over
+    the numeric episode index used while constructing the panel.  Keeping the
+    spelling here explicit prevents a preflight-only role partition from
+    silently diverging from the partition later used for arm selection.
+    """
+
+    return f"pointmaze_v6_episode_{int(root_id)}"
 
 
 def _sha256(path: Path) -> str:
@@ -65,8 +78,11 @@ def preflight(
     counts = panel._validated_split_counts({
         "train": int(train_root_count), "calibration": int(calibration_root_count), "outcome": int(outcome_root_count),
     })
+    allowed = panel._eligible_roots(root_count=len(states), root_id_min=int(root_id_min), root_id_max_exclusive=int(root_id_max_exclusive))
+    visible = panel.visible_history_roots_v6(root, states, allowed)
+    invisible = set(map(int, allowed)) - set(map(int, visible))
     split = panel._split_roots_v6(
-        seed=int(root_seed), forbidden=old_roots, root_count=len(states), split_counts=counts,
+        seed=int(root_seed), forbidden=old_roots | invisible, root_count=len(states), split_counts=counts,
         root_id_min=int(root_id_min), root_id_max_exclusive=int(root_id_max_exclusive),
     )
     visual_roots = panel._renderer_chart_roots_v6(root, set(split))
@@ -82,10 +98,10 @@ def preflight(
     held_hashes = {panel.sequence_hash(action) for action in held}
     train_hashes = {panel.sequence_hash(action) for action in train}
     collision_pairs = _collision_pairs(held)
-    role_counts = {name: 0 for name in ("selector", "arm_certificate", "risk_calibration")}
+    role_counts = {name: 0 for name in CALIBRATION_ROLE_NAMES}
     for root_id, role in split.items():
         if role == "calibration":
-            role_counts[("selector", "arm_certificate", "risk_calibration")[_calibration_role(str(root_id))]] += 1
+            role_counts[CALIBRATION_ROLE_NAMES[_calibration_role(_panel_instance_id(root_id))]] += 1
     checks = {
         "contexts_present": bool(loaded_contexts),
         "split_disjoint_from_prior_roots": not (set(split) & old_roots),
@@ -106,6 +122,7 @@ def preflight(
         "root_counts": {name: sum(value == name for value in split.values()) for name in counts},
         "calibration_role_counts": role_counts,
         "visual_chart_root_count": len(visual_roots), "interaction_design_root_count": len(design_roots),
+        "visible_history_root_count": int(len(visible)), "invisible_history_root_count": int(len(invisible)),
         "candidate_bank": {
             "candidate_design": "goal_balanced_interaction_pairs", "goal_qpos": goal.tolist(),
             "held_shape": list(held.shape), "train_shape": list(train.shape),
