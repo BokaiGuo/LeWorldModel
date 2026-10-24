@@ -1525,6 +1525,39 @@ calibration roots 的 Jacobian Frobenius norm 为 `0.056526--0.096180`，中心�
 在真实执行后重新以 RGB 编译，并以 root-disjoint receipt 决定能否打开任何 outcome 或强基线
 比较。
 
+#### PushT-D2P P1：先修复代码合同，再作 root-disjoint 物理判定（2026-10-24）
+
+PushT P0 的旧 receipt 随后发现一个会改变冻结 action encoder 输入的代码缺陷：
+`repeat_interleave(5, dim=1)` 产生 `[ax,ax,ax,ax,ax,ay,ay,ay,ay,ay]`，而发布数据和
+checkpoint 合同要求 time-major `[ax,ay]` 重复五次。该 receipt 已降级为诊断，修复后的
+`preflight_pusht_d2p_p0.py` 改为 whole-pair repeat；新的 host-CUDA P0 receipt
+`results/pusht_d2p_p0_preflight_packet_layout_repair_20261024_cuda/report.json` 在四个独立 roots
+通过全部 action-Jacobian、中心差分（中位相对误差 `0.003524--0.006759`）、冻结 hash 与 RGB-only
+gates。
+
+在进入 P1 物理结论前又发现第二处形状正确但语义错误的实现：P1 `_advance()` 在
+`LeWM.rollout()` 所需的 history-only bootstrap prediction 之前插入 candidate action，造成 action 与
+transition 错一拍。修复版先使用完整已观察 action history 预测 bootstrap successor，再 append prefix；
+P1 receipt 同时升级为 replay-bound schema，记录 root seed、候选 bank、horizon、damping 和 sketch
+维度。该修复后的 calibration admission（4 roots）与 physical receipt 分别为
+`results/pusht_d2p_p1_rollout_alignment_repair_20261024_cuda/report.json` 和
+`results/pusht_d2p_p1_physical_calibration_rollout_alignment_repair_20261024_cuda/report.json`：四根均
+通过 same-root raw-zero、observed-successor RGB recompile、非零 Jacobian、冻结 hash 和独立 replay；
+selected prefix 在 block pose cost 上均不比 raw-zero 更贪心。
+
+随后以 P0 预留 seed `202710281` 打开独立 24-root outcome cohort；它与 calibration roots 显式
+hash-disjoint，并要求 calibration receipt 已通过。模型侧有 `23/24` 个 non-greedy witness，但物理
+outcome receipt `results/pusht_d2p_p1_outcome_physical_20261024_cuda/report.json` fail-closed：所有 CUDA、
+frozen hash、sealed-prefix reconstruction、same-root raw-zero、observed-successor recompile、独立 replay 与
+root-disjoint gates 均通过，然而 23 个 model-eligible roots 中有 5 个 selected prefix 真实 pose cost
+反而低于 raw-zero（最小 selected-minus-zero 为 `-7.0581`）。因此物理 non-greediness 没有由 calibration
+泛化到 outcome；P2--P5 不得打开。
+
+这条 PushT 负结论不能归因于此前的 action packet 或 rollout 时间对齐 bug：两者均在 outcome 前修复、单测覆盖并
+以新的不可覆盖 CUDA receipts 重跑。当前精确边界是：在该冻结 `pusht/lewm` checkpoint、one-prefix /
+observed-successor-recompile 合同下，模型内 reachability 排序尚不能稳定识别物理上非贪心的 contact prefix；它既不
+否定 D2P/世界模型的一般理论，也不授权通过事后调阈值绕过 root-disjoint outcome gate。
+
 ## 论文主张的可证伪形式
 
 若后续 P1--P5 全部通过，主张应被限定为：冻结视觉世界模型的有限时域 action

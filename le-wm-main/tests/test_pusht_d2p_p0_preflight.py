@@ -24,7 +24,10 @@ def test_action_token_transform_is_time_major_and_preserves_gradients():
     live = torch.tensor([[0.5, -0.25], [0.1, 0.2]], requires_grad=True)
     tokens = _model_action_tokens(live, action_block=5)
     assert tuple(tokens.shape) == (2, 10)
-    assert torch.allclose(tokens[0, :2], tokens[0, 2:4])
+    normalized = (live / 100.0 - torch.tensor([-0.0087, 0.0068])) / torch.tensor([0.2019, 0.2002])
+    assert torch.allclose(tokens, normalized.repeat(1, 5))
+    assert torch.allclose(tokens[0, 0::2], normalized[0, 0].expand(5))
+    assert torch.allclose(tokens[0, 1::2], normalized[0, 1].expand(5))
     tokens.sum().backward()
     assert live.grad is not None
     assert bool(torch.isfinite(live.grad).all())

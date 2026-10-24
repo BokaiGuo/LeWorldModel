@@ -90,7 +90,12 @@ def _model_action_tokens(live_actions: torch.Tensor, *, action_block: int) -> to
     mean = torch.as_tensor(PUBLIC_ACTION_MEAN, dtype=live_actions.dtype, device=live_actions.device)
     std = torch.as_tensor(PUBLIC_ACTION_STD, dtype=live_actions.dtype, device=live_actions.device)
     normalized = (live_actions / 100.0 - mean) / std
-    return normalized.repeat_interleave(int(action_block), dim=1)
+    # One model packet is five consecutive two-coordinate actions, flattened
+    # in ordinary row-major order: [ax, ay, ax, ay, ...].  Repeating each
+    # coordinate instead would construct [ax, ax, ..., ay, ay, ...], which
+    # has the same width and gradients but a different frozen action-encoder
+    # input.  Keep the physical time axis intact while tiling whole pairs.
+    return normalized.repeat(1, int(action_block))
 
 
 def _collect_causal_rgb_context(
