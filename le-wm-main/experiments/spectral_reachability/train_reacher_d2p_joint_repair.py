@@ -31,6 +31,7 @@ from experiments.checkpoint_compat import load_compatible_pretrained
 from experiments.run_live_reacher_planning import _load_action_stats
 from experiments.spectral_reachability.build_reacher_d2p_training_action_stats import validate_training_semantic_receipt
 from experiments.spectral_reachability.train_reacher_d2p_counterfactual_repair import _Pairs, counterfactual_loss
+from experiments.spectral_reachability.reacher_d2p_training_normalization import BN_POLICIES, dynamics_mode, normalization_snapshot, verify_normalization
 from experiments.spectral_reachability.train_reacher_d2p_dynamics_repair import (
     _EpisodeChunkBatchSampler,
     _EpisodeDisjointClips,
@@ -108,12 +109,12 @@ def _run_epoch(
     device: torch.device, mean: torch.Tensor, std: torch.Tensor, transition_temperature: float,
     counterfactual_temperature: float, counterfactual_weight: float, optimizer: torch.optim.Optimizer | None,
     steps: int,
+    batchnorm_policy: str = "frozen-base-statistics",
 ) -> dict[str, float]:
     if steps < 1 or counterfactual_weight <= 0.0:
         raise ValueError("joint repair needs positive steps and counterfactual weight")
     train = optimizer is not None
-    for module in (model.predictor, model.action_encoder, model.pred_proj):
-        module.train(train)
+    dynamics_mode(model, train, batchnorm_policy)
     transition_iter, pair_iter = iter(transition_loader), iter(pair_loader)
     retention_iter = iter(retention_pair_loader) if retention_pair_loader is not None else None
     totals: dict[str, float] = {}
@@ -156,6 +157,7 @@ def train(
     base_checkpoint: Path, output: Path, seed: int, epochs: int, transition_batch_size: int,
     pair_batch_size: int, steps_per_epoch: int, learning_rate: float, counterfactual_weight: float,
     transition_temperature: float, counterfactual_temperature: float, device_name: str,
+    batchnorm_policy: str = "frozen-base-statistics",
 ) -> dict[str, Any]:
     if output.exists() or min(epochs, transition_batch_size, pair_batch_size, steps_per_epoch) < 1:
         raise ValueError("joint repair output exists or dimensions are invalid")
@@ -195,14 +197,16 @@ def train(
     retention_validation_loader = DataLoader(retention_validation, batch_size=pair_batch_size, shuffle=False, num_workers=0, pin_memory=True, drop_last=True) if retention_validation is not None else None
     model = load_compatible_pretrained(base_checkpoint, device=device).eval()
     trainable = _freeze_visual_target(model)
+    normalization_before = normalization_snapshot(model)
     optimizer = torch.optim.AdamW(trainable, lr=learning_rate, weight_decay=1.0e-4)
     history: list[dict[str, Any]] = []
     best_key, best_epoch, best_state = float("inf"), 0, None
     started = time.time()
     for epoch in range(1, epochs + 1):
-        train_metrics = _run_epoch(model=model, transition_loader=transition_train_loader, pair_loader=pair_train_loader, retention_pair_loader=retention_train_loader, device=device, mean=mean, std=std, transition_temperature=transition_temperature, counterfactual_temperature=counterfactual_temperature, counterfactual_weight=counterfactual_weight, optimizer=optimizer, steps=steps_per_epoch)
+        train_metrics = _run_epoch(model=model, transition_loader=transition_train_loader, pair_loader=pair_train_loader, retention_pair_loader=retention_train_loader, device=device, mean=mean, std=std, transition_temperature=transition_temperature, counterfactual_temperature=counterfactual_temperature, counterfactual_weight=counterfactual_weight, optimizer=optimizer, steps=steps_per_epoch, batchnorm_policy=batchnorm_policy)
         with torch.no_grad():
-            validation_metrics = _run_epoch(model=model, transition_loader=transition_validation_loader, pair_loader=pair_validation_loader, retention_pair_loader=retention_validation_loader, device=device, mean=mean, std=std, transition_temperature=transition_temperature, counterfactual_temperature=counterfactual_temperature, counterfactual_weight=counterfactual_weight, optimizer=None, steps=steps_per_epoch)
+            validation_metrics = _run_epoch(model=model, transition_loader=transition_validation_loader, pair_loader=pair_validation_loader, retention_pair_loader=retention_validation_loader, device=device, mean=mean, std=std, transition_temperature=transition_temperature, counterfactual_temperature=counterfactual_temperature, counterfactual_weight=counterfactual_weight, optimizer=None, steps=steps_per_epoch, batchnorm_policy=batchnorm_policy)
+        verify_normalization(model, normalization_before, batchnorm_policy)
         history.append({"epoch": epoch, "train": train_metrics, "validation": validation_metrics})
         if validation_metrics["joint_loss"] < best_key:
             best_key, best_epoch = validation_metrics["joint_loss"], epoch
@@ -214,6 +218,7 @@ def train(
     shutil.copy2(base_checkpoint / "config.json", output / "config.json")
     result = {
         "schema": SCHEMA, "status": "trained_joint_source_only",
+        "normalization_contract": verify_normalization(model, normalization_before, batchnorm_policy),
         "base_checkpoint": str(base_checkpoint.resolve()), "base_weights_sha256": _sha256(base_checkpoint / "weights.pt"),
         "transition_dataset": str(dataset.resolve()), "transition_dataset_sha256": _sha256(dataset),
         "counterfactual_pool": str(pair_pool.resolve()), "counterfactual_pool_sha256": _sha256(pair_pool),
@@ -236,8 +241,9 @@ def main() -> None:
     parser.add_argument("--dataset", type=Path, required=True); parser.add_argument("--pair-pool", type=Path, required=True); parser.add_argument("--pair-manifest", type=Path, required=True); parser.add_argument("--retention-pair-pool", type=Path); parser.add_argument("--retention-pair-manifest", type=Path)
     parser.add_argument("--adapter-artifact", type=Path, required=True); parser.add_argument("--base-checkpoint", type=Path, required=True); parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=20268001); parser.add_argument("--epochs", type=int, default=8); parser.add_argument("--transition-batch-size", type=int, default=32); parser.add_argument("--pair-batch-size", type=int, default=8); parser.add_argument("--steps-per-epoch", type=int, default=128); parser.add_argument("--learning-rate", type=float, default=1.0e-5); parser.add_argument("--counterfactual-weight", type=float, default=1.0); parser.add_argument("--transition-temperature", type=float, default=0.1); parser.add_argument("--counterfactual-temperature", type=float, default=0.05); parser.add_argument("--device", default="cuda")
+    parser.add_argument("--batchnorm-policy", choices=BN_POLICIES, default="frozen-base-statistics")
     args = parser.parse_args()
-    train(dataset=args.dataset, pair_pool=args.pair_pool, pair_manifest=args.pair_manifest, retention_pair_pool=args.retention_pair_pool, retention_pair_manifest=args.retention_pair_manifest, adapter_artifact=args.adapter_artifact, base_checkpoint=args.base_checkpoint, output=args.output, seed=args.seed, epochs=args.epochs, transition_batch_size=args.transition_batch_size, pair_batch_size=args.pair_batch_size, steps_per_epoch=args.steps_per_epoch, learning_rate=args.learning_rate, counterfactual_weight=args.counterfactual_weight, transition_temperature=args.transition_temperature, counterfactual_temperature=args.counterfactual_temperature, device_name=args.device)
+    train(dataset=args.dataset, pair_pool=args.pair_pool, pair_manifest=args.pair_manifest, retention_pair_pool=args.retention_pair_pool, retention_pair_manifest=args.retention_pair_manifest, adapter_artifact=args.adapter_artifact, base_checkpoint=args.base_checkpoint, output=args.output, seed=args.seed, epochs=args.epochs, transition_batch_size=args.transition_batch_size, pair_batch_size=args.pair_batch_size, steps_per_epoch=args.steps_per_epoch, learning_rate=args.learning_rate, counterfactual_weight=args.counterfactual_weight, transition_temperature=args.transition_temperature, counterfactual_temperature=args.counterfactual_temperature, device_name=args.device, batchnorm_policy=args.batchnorm_policy)
 
 
 if __name__ == "__main__":

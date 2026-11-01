@@ -1,0 +1,27 @@
+# 并行交付的MAIN实际验收：不以准备代替运行
+
+## P2工程合同
+
+MAIN完整审读agent_p2_resume_20261027_next源码273行、tests189行及innerdoc，实际109项联合RAM测试通过，真实saved verify退出0。prepare SHA b3ba3450b7833d872ee3992134c8382e343bbdd58170fb2d6edeb69cfa7b7bcb。base/edge/失败不退款与固定8臂/480候选是工程合同，尚非新CUDA/物理runner；独立P1/freshness/真实task-goal7及完整成本轴仍缺。
+
+## P3冷启动：真实CUDA与严格验收后仍为零增益
+
+MAIN完整读码、33RAMtests通过、actual verify通过后执行主机CUDA。512 predict/AE/predictor/pred_proj实际调用，42.925秒；四策略各128，原谱signal获取成本同口径另列，0新增AD/编码/物理。新cold-bank候选去掉原三个incumbents但固定沿用PCG64原stream与后续三项，未按新outcome调参。
+
+- report：results/agent_p3_resume_20261027_next_cuda_MAIN01/report.json，SHA 5bb52423c796713899a4947f9c0167ad9dfa32d1b336b7abf858d17dd45f8462
+- strict consume：results/agent_p3_resume_20261027_next_consume_MAIN01.json，SHA 0403affb31fa137308502f5875a05960222c60540b9cf28b91012984310cd65c
+
+全部240候选/512context/1536模块桥接、真实配额、精确replay、stable argmin通过。四策略两根winner仍为index12和1，都位于共同最低15候选，动作全部碰撞，D−U/N/S均[0,0]，不追加相同动作的物理运行来冒充调度增益。这是当前固定库/调度实验的零收益；不是配额取整/未消费尾候选的旧bug，也不是物理不可达或理论被推翻。禁止事后删除新赢家或改变floor救结果。
+
+更重要的是原C3要求同一任务中动力学决定程序类型、组合扩展与horizon；跨根分配次数只是有界原型，不替代原C3全部要求。Bohr已接新独占runtime合同准备任务，P1科学门不打开。
+
+## 同观察前缀CEM64：真实CUDA完成并验收，物理仍缺
+
+MAIN完整审读agent_baselines_resume_20261027_next三文件、32tests及actual verify通过。四个旧observed-prefix固定各64候选+1独立replay，主机CUDA实际260 predict/AE/pred_proj，模型冻结、0新视觉/物理/训练。
+
+- report：results/agent_baselines_resume_20261027_next_cuda_MAIN01/report.json，SHA 83f9b6fa5ad991022af6bc38063c0fa6c72fca350578692b3c30f4a7e4854a6b
+- exact saved source.consume：results/agent_baselines_resume_20261027_next_consume_MAIN01.json，SHA b81abd4c2f6600bae69513228a9b6896e2a67f09c3e0ab46fc6901a4034f47d3
+
+四个model-Q为0.3764550575、0.04392555886、0.8703004317、0.1282644897。全部64 RNG/proposal/update、780真实模块、原context/token与独立winner replay通过。这些不是物理成功率；Pauli正在准备其精确重建物理adapter。该四prefix属于旧observed链，不与最新moving8-prefix直接混比；Poincare已接最新固定8teacher-prefix同协议CEM准备任务，禁止按当前成功根选子集。65predict与ridge5predict或新spectral13predict+J均不宣称等总算力。
+
+238作者报告cells仍与本地结果分栏，GRASP/Hi-LeWM/LeWM/PlanWAM不同任务/协议数值不作直接胜负。以上全部仍非独立P1/C1-C3或原三实验族完整闭环，goal active。

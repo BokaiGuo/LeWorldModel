@@ -7,7 +7,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-OUTPUT="${1:-results/pusht_d2p_p0_preflight_20261024_cuda}"
+OUTPUT="${1:-results/pusht_d2p_p0_packet_contract_v2_20261026_cuda}"
+PACKET_CONTRACT_EVIDENCE="${2:-results/pusht_d2p_packet_contract_20261026_physical_v1/report.json}"
 ATTEMPTS="${GPU_PREFLIGHT_ATTEMPTS:-3}"
 if [[ "$ATTEMPTS" -lt 1 ]]; then
   echo "GPU_PREFLIGHT_ATTEMPTS must be positive" >&2
@@ -18,6 +19,7 @@ for ((attempt = 1; attempt <= ATTEMPTS; attempt++)); do
   if .venv/bin/python -m experiments.gpu_preflight --device cuda; then
     exec .venv/bin/python -m experiments.spectral_reachability.preflight_pusht_d2p_p0 \
       --output "$OUTPUT" \
+      --packet-contract-evidence "$PACKET_CONTRACT_EVIDENCE" \
       --device cuda \
       --calibration-roots 4 \
       --reserved-outcome-roots 24 \

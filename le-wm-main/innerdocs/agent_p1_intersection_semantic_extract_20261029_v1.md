@@ -1,0 +1,13 @@
+# P1 intersection saved semantic extraction
+
+This saved-only tool hashes the explicitly supplied normalized artifact, semantic spec and prepare, and every physical binding. It reconstructs the projected six-slot spec and the entire normalized wrapper from its bound physical v2 strict receipt, before extracting the original semantic receipt. It does not rerun upstream strict, physics, model inference, or assert the external receipt independently. Both output commands refuse overwrite; verification reconstructs and compares the entire canonical output byte-for-byte.
+
+The analysis uses the sealed original semantic arithmetic, not an independent implementation. It includes all six slots and 24 checkpoints, including missing points, and carries the complete checkpoint provenance: cp0 success/distance are calculated from the bound root, not a native step return; later labels come from the corresponding native return. Goal7 and its velocity components are unchanged. Native success and native7 distance remain separate. No RGB velocity collision is tested, the two roots are known, and no new root, P1/P2 admission, or trustworthy external preregistration timing is established. A saved hash cannot establish when an artifact was created.
+
+All paths must be absolute. Use the same arguments for extract, verify-extract, analyze and verify-analysis, changing the command and output path. `--prepared` refers to the semantic prepare, not physical prepare. Example from the project root:
+
+```bash
+.venv/bin/python -m experiments.spectral_reachability.agent_p1_intersection_semantic_extract_20261029_v1 extract --normalized /home/gbk/code/LeWorldModel/le-wm-main/results/agent_p1_intersection_goal_receipt_adapter_20261029_v1_MAIN01.json --normalized-sha fae9926a3f0c7f663224db15f27aef8e2f20de067e16d07081867a988b2bd734 --spec /home/gbk/code/LeWorldModel/le-wm-main/results/agent_p1_intersection_goal_adapter_20261029_v2_spec_MAIN01.json --spec-sha 8fd89e22374c61df38de33362338b3634bb73f1c07b58c1f6a8befa217e6ce3e --prepared /home/gbk/code/LeWorldModel/le-wm-main/results/agent_p1_prospective_goal_semantics_20261029_v1_prepare_MAIN01.json --prepared-sha f77f4323d5f1c47a6ece122924df4cac060456a9250826f8303072b8e69fdc7c --output /home/gbk/code/LeWorldModel/le-wm-main/results/agent_p1_intersection_semantic_extract_20261029_v1_receipt_MAIN01.json
+```
+
+For analysis use `analyze` and a separate output named `agent_p1_intersection_semantic_extract_20261029_v1_analysis_MAIN01.json`. Verify each file with `verify-extract` or `verify-analysis` and the same respective output path. Test: `.venv/bin/python -m pytest -q tests/test_agent_p1_intersection_semantic_extract_20261029_v1.py`.

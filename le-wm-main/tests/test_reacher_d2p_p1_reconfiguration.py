@@ -107,7 +107,7 @@ def test_observed_suffix_reuses_the_bounded_single_step_solver_used_for_ranking(
         action_lower=torch.tensor([-1.0]), action_upper=torch.tensor([1.0]), damping=0.1,
     )
     assert params.shape == (1, 1, 1)
-    assert receipt["program_type"] == "bounded_single_step_dls"
+    assert receipt["program_type"] == p1.SUFFIX_SOLVER
     assert receipt["selection_equivalent_suffix_solver"]
     assert receipt["relinearization_steps_executed"] == 1
 

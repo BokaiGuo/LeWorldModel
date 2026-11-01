@@ -1,0 +1,11 @@
+# 固定24后缀编译 v2 预执行修订
+
+保留原协议 D2P_CAPABILITY_SUFFIX_FACTORIAL_PROTOCOL_MAIN_20261027.md 的全部科学设计、24分母、预算和限制。本修订只纠正真实CUDA动作与拟执行动作的数值接口，不根据任何新物理outcome改变设计。
+
+v1原报告SHA ecee5a23c7137741289e65992f758d06f88b5ae5b3cccb477532d908842d3cf5。严格消费者发现235/312次动作token因CUDA与NumPy tanh差异不逐位相等，v1不放行物理、不作理论负结果。
+
+v2各forward（包括Jacobian forward）只生成一次CUDA float32 raw，将原buffer保存为独立tensor收据，使用同一buffer预测。候选raw和winner raw直接复制该buffer，不由NumPy参数重建。固定全24重跑；312 predict及936模块计数不变，另保存312 raw调用身份、参数、tensor和持久化attempt/return。winner重放同时检查原raw和prediction逐位相等。
+
+独立消费者验证全部候选/谱库/非线性Q/稳定winner及所有raw收据。NumPy tanh仅为函数诊断容许4*float32 epsilon，不用于生成执行命令；保存raw→normalization→实际AE输入必须逐位精确，物理命令直接消费保存raw。任何失败不放行，修复另起版本。
+
+仍为探索性两个known roots；不训练、不放宽P1、不按outcome挑根或条件。物理适配器须仅接受v2和本次MAIN消费者通过的实际报告哈希。

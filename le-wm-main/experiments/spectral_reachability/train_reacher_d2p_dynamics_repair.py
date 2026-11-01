@@ -33,6 +33,7 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 
 from experiments.checkpoint_compat import load_compatible_pretrained
 from experiments.run_live_reacher_planning import _load_action_stats
+from experiments.spectral_reachability.reacher_d2p_training_normalization import BN_POLICIES, dynamics_mode, normalization_snapshot, verify_normalization
 from stable_pretraining import data as spt_data
 from stable_worldmodel.data.formats.hdf5 import HDF5Dataset
 
@@ -333,12 +334,10 @@ def _epoch(
     max_batches: int,
     epoch: int,
     split: str,
+    batchnorm_policy: str = "frozen-base-statistics",
 ) -> dict[str, float]:
     train = optimizer is not None
-    if train:
-        model.predictor.train(); model.action_encoder.train(); model.pred_proj.train()
-    else:
-        model.predictor.eval(); model.action_encoder.eval(); model.pred_proj.eval()
+    dynamics_mode(model, train, batchnorm_policy)
     _progress(phase="epoch_started", epoch=epoch, split=split, max_batches=max_batches)
     totals: dict[str, float] = {"loss": 0.0, "prediction_mse": 0.0, "action_swap_ranking_loss": 0.0, "action_swap_ranking_accuracy": 0.0}
     examples = 0
@@ -389,6 +388,7 @@ def train(
     train_batches_per_epoch: int,
     validation_batches: int,
     device_name: str,
+    batchnorm_policy: str = "frozen-base-statistics",
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite immutable repaired checkpoint directory: {output}")
@@ -437,6 +437,7 @@ def train(
     _progress(phase="action_contract_verified")
     model = load_compatible_pretrained(base_checkpoint, device=device).eval()
     trainable = _freeze_visual_target(model)
+    normalization_before = normalization_snapshot(model)
     _progress(phase="model_ready", trainable_parameter_count=sum(parameter.numel() for parameter in trainable))
     optimizer = torch.optim.AdamW(trainable, lr=learning_rate, weight_decay=1.0e-4)
     history: list[dict[str, Any]] = []
@@ -445,8 +446,9 @@ def train(
     best_epoch = 0
     started = time.time()
     for epoch in range(1, epochs + 1):
-        train_metrics = _epoch(model=model, loader=train_loader, device=device, action_mean=action_mean, action_std=action_std, optimizer=optimizer, ranking_temperature=ranking_temperature, max_batches=train_batches_per_epoch, epoch=epoch, split="train")
-        validation_metrics = _epoch(model=model, loader=validation_loader, device=device, action_mean=action_mean, action_std=action_std, optimizer=None, ranking_temperature=ranking_temperature, max_batches=validation_batches, epoch=epoch, split="validation")
+        train_metrics = _epoch(model=model, loader=train_loader, device=device, action_mean=action_mean, action_std=action_std, optimizer=optimizer, ranking_temperature=ranking_temperature, max_batches=train_batches_per_epoch, epoch=epoch, split="train", batchnorm_policy=batchnorm_policy)
+        validation_metrics = _epoch(model=model, loader=validation_loader, device=device, action_mean=action_mean, action_std=action_std, optimizer=None, ranking_temperature=ranking_temperature, max_batches=validation_batches, epoch=epoch, split="validation", batchnorm_policy=batchnorm_policy)
+        verify_normalization(model, normalization_before, batchnorm_policy)
         key = (validation_metrics["action_swap_ranking_accuracy"], -validation_metrics["prediction_mse"])
         if key > best_key:
             best_key = key
@@ -462,6 +464,7 @@ def train(
     manifest = {
         "schema": SCHEMA,
         "status": "trained_train_source_only",
+        "normalization_contract": verify_normalization(model, normalization_before, batchnorm_policy),
         "base_checkpoint": str(base_checkpoint.resolve()),
         "base_weights_sha256": _sha256(base_checkpoint / "weights.pt"),
         "dataset": str(dataset.resolve()),
@@ -520,8 +523,9 @@ def main() -> None:
     parser.add_argument("--train-batches-per-epoch", type=int, default=512, help="fixed randomized source batches per epoch; avoids silently treating an unfinished full sweep as evidence")
     parser.add_argument("--validation-batches", type=int, default=128)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--batchnorm-policy", choices=BN_POLICIES, default="frozen-base-statistics")
     args = parser.parse_args()
-    train(dataset=args.dataset, base_checkpoint=args.base_checkpoint, adapter_artifact=args.adapter_artifact, output=args.output, seed=args.seed, epochs=args.epochs, batch_size=args.batch_size, learning_rate=args.learning_rate, ranking_temperature=args.ranking_temperature, train_batches_per_epoch=args.train_batches_per_epoch, validation_batches=args.validation_batches, device_name=args.device)
+    train(dataset=args.dataset, base_checkpoint=args.base_checkpoint, adapter_artifact=args.adapter_artifact, output=args.output, seed=args.seed, epochs=args.epochs, batch_size=args.batch_size, learning_rate=args.learning_rate, ranking_temperature=args.ranking_temperature, train_batches_per_epoch=args.train_batches_per_epoch, validation_batches=args.validation_batches, device_name=args.device, batchnorm_policy=args.batchnorm_policy)
 
 
 if __name__ == "__main__":

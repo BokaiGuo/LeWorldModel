@@ -27,6 +27,7 @@ from experiments.checkpoint_compat import load_compatible_pretrained
 from experiments.run_live_reacher_planning import _load_action_stats
 from experiments.spectral_reachability.build_reacher_d2p_training_action_stats import validate_training_semantic_receipt
 from experiments.spectral_reachability.train_reacher_d2p_dynamics_repair import _freeze_visual_target, _preprocess_pixels, _require_cuda
+from experiments.spectral_reachability.reacher_d2p_training_normalization import BN_POLICIES, dynamics_mode, normalization_snapshot, verify_normalization
 
 
 SCHEMA = "reacher_d2p_counterfactual_calibration_repair.v1"
@@ -120,10 +121,9 @@ def counterfactual_loss(model: torch.nn.Module, batch: dict[str, torch.Tensor], 
     }
 
 
-def _run_epoch(*, model: torch.nn.Module, loader: DataLoader[dict[str, torch.Tensor]], device: torch.device, mean: torch.Tensor, std: torch.Tensor, optimizer: torch.optim.Optimizer | None, temperature: float) -> dict[str, float]:
+def _run_epoch(*, model: torch.nn.Module, loader: DataLoader[dict[str, torch.Tensor]], device: torch.device, mean: torch.Tensor, std: torch.Tensor, optimizer: torch.optim.Optimizer | None, temperature: float, batchnorm_policy: str = "frozen-base-statistics") -> dict[str, float]:
     train = optimizer is not None
-    for module in (model.predictor, model.action_encoder, model.pred_proj):
-        module.train(train)
+    dynamics_mode(model, train, batchnorm_policy)
     totals = {"loss": 0.0, "successor_mse": 0.0, "counterfactual_order_loss": 0.0, "counterfactual_order_accuracy": 0.0}
     examples = 0
     for batch in loader:
@@ -158,7 +158,7 @@ def _run_epoch(*, model: torch.nn.Module, loader: DataLoader[dict[str, torch.Ten
     return {key: value / examples for key, value in totals.items()}
 
 
-def train(*, pool: Path, pool_manifest: Path, adapter_artifact: Path, base_checkpoint: Path, output: Path, seed: int, epochs: int, batch_size: int, learning_rate: float, temperature: float, device_name: str) -> dict[str, Any]:
+def train(*, pool: Path, pool_manifest: Path, adapter_artifact: Path, base_checkpoint: Path, output: Path, seed: int, epochs: int, batch_size: int, learning_rate: float, temperature: float, device_name: str, batchnorm_policy: str = "frozen-base-statistics") -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite immutable counterfactual checkpoint: {output}")
     if min(epochs, batch_size) < 1 or learning_rate <= 0.0:
@@ -179,14 +179,16 @@ def train(*, pool: Path, pool_manifest: Path, adapter_artifact: Path, base_check
     validation_loader = DataLoader(validation_set, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
     model = load_compatible_pretrained(base_checkpoint, device=device).eval()
     trainable = _freeze_visual_target(model)
+    normalization_before = normalization_snapshot(model)
     optimizer = torch.optim.AdamW(trainable, lr=learning_rate, weight_decay=1.0e-4)
     best_state: dict[str, torch.Tensor] | None = None
     best_epoch, best_accuracy = 0, -float("inf")
     history: list[dict[str, Any]] = []
     started = time.time()
     for epoch in range(1, epochs + 1):
-        train_metrics = _run_epoch(model=model, loader=train_loader, device=device, mean=mean, std=std, optimizer=optimizer, temperature=temperature)
-        validation_metrics = _run_epoch(model=model, loader=validation_loader, device=device, mean=mean, std=std, optimizer=None, temperature=temperature)
+        train_metrics = _run_epoch(model=model, loader=train_loader, device=device, mean=mean, std=std, optimizer=optimizer, temperature=temperature, batchnorm_policy=batchnorm_policy)
+        validation_metrics = _run_epoch(model=model, loader=validation_loader, device=device, mean=mean, std=std, optimizer=None, temperature=temperature, batchnorm_policy=batchnorm_policy)
+        verify_normalization(model, normalization_before, batchnorm_policy)
         history.append({"epoch": epoch, "train": train_metrics, "validation": validation_metrics})
         if validation_metrics["counterfactual_order_accuracy"] > best_accuracy:
             best_accuracy = validation_metrics["counterfactual_order_accuracy"]
@@ -199,6 +201,7 @@ def train(*, pool: Path, pool_manifest: Path, adapter_artifact: Path, base_check
     shutil.copy2(base_checkpoint / "config.json", output / "config.json")
     result = {
         "schema": SCHEMA, "status": "trained_counterfactual_source_only",
+        "normalization_contract": verify_normalization(model, normalization_before, batchnorm_policy),
         "base_checkpoint": str(base_checkpoint.resolve()), "base_weights_sha256": _sha256(base_checkpoint / "weights.pt"),
         "counterfactual_pool": str(pool.resolve()), "counterfactual_pool_sha256": _sha256(pool),
         "counterfactual_pool_manifest": str(pool_manifest.resolve()), "counterfactual_pool_manifest_sha256": _sha256(pool_manifest),
@@ -218,8 +221,9 @@ def main() -> None:
     parser.add_argument("--pool", type=Path, required=True); parser.add_argument("--pool-manifest", type=Path, required=True)
     parser.add_argument("--adapter-artifact", type=Path, required=True); parser.add_argument("--base-checkpoint", type=Path, required=True); parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=20267001); parser.add_argument("--epochs", type=int, default=8); parser.add_argument("--batch-size", type=int, default=8); parser.add_argument("--learning-rate", type=float, default=1.0e-5); parser.add_argument("--ranking-temperature", type=float, default=0.05); parser.add_argument("--device", default="cuda")
+    parser.add_argument("--batchnorm-policy", choices=BN_POLICIES, default="frozen-base-statistics")
     args = parser.parse_args()
-    result = train(pool=args.pool, pool_manifest=args.pool_manifest, adapter_artifact=args.adapter_artifact, base_checkpoint=args.base_checkpoint, output=args.output, seed=args.seed, epochs=args.epochs, batch_size=args.batch_size, learning_rate=args.learning_rate, temperature=args.ranking_temperature, device_name=args.device)
+    result = train(pool=args.pool, pool_manifest=args.pool_manifest, adapter_artifact=args.adapter_artifact, base_checkpoint=args.base_checkpoint, output=args.output, seed=args.seed, epochs=args.epochs, batch_size=args.batch_size, learning_rate=args.learning_rate, temperature=args.ranking_temperature, device_name=args.device, batchnorm_policy=args.batchnorm_policy)
     print(json.dumps({"output": str(args.output), "selected_validation": result["selected_validation"], "status": result["status"]}, sort_keys=True))
 
 

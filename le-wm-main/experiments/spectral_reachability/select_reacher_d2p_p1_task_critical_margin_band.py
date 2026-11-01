@@ -65,7 +65,30 @@ def select(report: dict[str, Any], *, minimum_passing_roots: int) -> dict[str, A
         raise ValueError("no contiguous model-margin interval is physically non-greedy on source calibration")
     admitted, low, high = max(candidates, key=lambda item: (len(item[0]), item[2] - item[1], -item[1], item[2]))
     protocol = report["protocol"]
-    return {"schema": SCHEMA, "status": "pass", "selection_rule": "largest calibration-only contiguous closed interval of model-side non-greedy margins with no evaluator-qpos greedy prefix; ties favor support then width; source roots are never outcomes", "selected": {"min_non_greedy_margin": low, "max_non_greedy_margin": high, "calibration_admitted_root_count": len(admitted), "calibration_admitted_root_seeds": [row["seed"] for row in admitted]}, "calibration_rows": rows, "protocol_binding": {"checkpoint_weights_sha256": report.get("inputs", {}).get("weights_sha256"), "adapter_sha256": report.get("inputs", {}).get("adapter_sha256"), "runner_sha256": report.get("inputs", {}).get("runner_sha256"), "mechanism_observability": "qpos_distance", **{key: protocol.get(key) for key in ("reconfiguration_horizon", "recompiled_progress_horizon", "proposals", "proposal_distribution", "selection_metric", "damping", "action_block", "max_relative_reachability_improvement", "min_second_to_first_singular_ratio", "warmup_policy", "target_delta")}}, "claim_boundary": "Calibration-only physical-task abstention rule. qpos is evaluator-only and never reaches the frozen RGB planner; fresh root-disjoint calibration is required before an outcome can open."}
+    return {
+        "schema": SCHEMA, "status": "pass",
+        "selection_rule": "largest calibration-only contiguous closed interval of model-side non-greedy margins with no evaluator-qpos greedy prefix; ties favor support then width; source roots are never outcomes",
+        "selected": {"min_non_greedy_margin": low, "max_non_greedy_margin": high,
+                     "calibration_admitted_root_count": len(admitted),
+                     "calibration_admitted_root_seeds": [row["seed"] for row in admitted]},
+        "calibration_rows": rows,
+        "protocol_binding": {
+            "checkpoint_weights_sha256": report.get("inputs", {}).get("weights_sha256"),
+            "adapter_sha256": report.get("inputs", {}).get("adapter_sha256"),
+            "runner_sha256": report.get("inputs", {}).get("runner_sha256"),
+            "context_module_sha256": report.get("inputs", {}).get("context_module_sha256"),
+            "mechanism_observability": "qpos_distance",
+            "future_reference": protocol.get("future_reference", "zero_prefix"),
+            "recompiled_suffix_solver": protocol.get("recompiled_suffix_solver"),
+            **{key: protocol.get(key) for key in (
+                "reconfiguration_horizon", "recompiled_progress_horizon", "proposals",
+                "proposal_distribution", "selection_metric", "damping", "action_block",
+                "max_relative_reachability_improvement", "min_second_to_first_singular_ratio",
+                "warmup_policy", "target_delta",
+            )},
+        },
+        "claim_boundary": "Calibration-only physical-task abstention rule. qpos is evaluator-only and never reaches the frozen RGB planner; fresh root-disjoint calibration is required before an outcome can open.",
+    }
 
 
 def main() -> None:

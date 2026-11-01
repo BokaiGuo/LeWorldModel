@@ -73,7 +73,11 @@ def main() -> None:
         raise RuntimeError("candidate-prefix diagnostic requires host CUDA; CPU fallback is forbidden")
     if min(args.candidates, args.action_block, args.proposals) < 1 or args.proposals < 2 or args.damping <= 0.0:
         raise ValueError("invalid candidate-prefix diagnostic dimensions")
-    p0_evidence = p1._validate_upstream_p0(args.p0_evidence)
+    expected_context_support, expected_warmup_policy = p1._p0_context_contract(args.proposal_distribution)
+    p0_evidence = p1._validate_upstream_p0(
+        args.p0_evidence, expected_context_support=expected_context_support,
+        expected_warmup_policy=expected_warmup_policy, expected_qpos_binding={"enabled": False},
+    )
     preflight_report = p1.resolve_preflight_report(args.p1_preflight_evidence)
     preflight = json.loads(preflight_report.read_text(encoding="utf-8"))
     if preflight.get("status") != "pass" or not all(preflight.get("gates", {}).values()):
@@ -82,8 +86,15 @@ def main() -> None:
         raise ValueError("candidate-prefix diagnostic must use the preflight proposal distribution")
     if preflight.get("protocol", {}).get("selection_metric") != args.selection_metric:
         raise ValueError("candidate-prefix diagnostic must use the preflight selection metric")
-    if preflight.get("protocol", {}).get("warmup_policy") != WARMUP_POLICY:
+    if preflight.get("protocol", {}).get("warmup_policy") != expected_warmup_policy:
         raise ValueError("candidate-prefix diagnostic must use the current warmup action-packet policy")
+    if preflight.get("protocol", {}).get("context_support") != expected_context_support:
+        raise ValueError("candidate-prefix diagnostic must use the current context-support distribution")
+    if args.proposal_distribution == p1.SOURCE_SUPPORTED_PROPOSAL_DISTRIBUTION:
+        raise ValueError(
+            "candidate-prefix diagnostic does not load the immutable source packet bank; "
+            "use the source-supported P1 preflight or runner instead"
+        )
     install_missing_field_compat()
     device = torch.device("cuda")
     mean, std = _load_action_stats(args.adapter_artifact, "swm/ReacherDMControl-v0")

@@ -1,0 +1,35 @@
+# Independent read-only v7 CUDA receipt review
+
+Verdict: verified bounded forward-consumer receipts, NOT P5 admission or a Jacobian compiler. No neural execution, training, source change or CUDA job was performed by this review. Machine-readable per-row checks and source hashes are in le-wm-main/results/p5_jepa_official_action_fidelity_20261027_v7/p5_jepa_official_action_fidelity_20261027_v7_readonly_review_v1.json.
+
+18 independent global checks and seven checks for each of all eight rows pass. All 303 manifest-bound files match current SHA256; manifest byte SHA remains 8d614c0ad056965855b638e73268aba5040629617201f296e04f42b759669cf0. Report SHA256 is 757b75d8011964feaea7e32ba23456d35bbab422189893101649c137fa43ba76. Imported official/JEPA module paths are correctly rooted and sealed. Native strict predictor 92 keys and proprio 2 keys match without missing/extra/shape/dtype errors; all 175 official destination shapes match the frozen mapping. Finite CUDA/frozen/eval state hashes remain identical before/after, official weights match v6 and dynamics/proprio weights match v5.
+
+The review independently decoded all eight videos at 0/5/10/15 and read SHA/size-restricted tensor arrays with weights_only=True, never native dataset pickle. It independently reproduced RGB hashes and lengths; raw/normalized proprio; raw actions and normalized three 5×2 packets; all controls; all recorded history hashes and values. v7 prepared rows are exactly v5's fixed rows. Control packets preserve both historical packets and only change the last packet. Normalized zero means native mean, not raw zero. Recorded feature layout and target index are correct. Every row trace is official encoder, proprio encoder, predictor×4; totals 8/8/32, no HF forward. Preprocessing difference is zero in every row.
+
+## What the reported conditional metric actually says
+
+The review independently recomputed ordering, differences and summary from saved scalar MSE values:
+
+| Control | Actual lower / equal / higher | Mean control MSE minus actual MSE |
+|---|---|---|
+| normalized mean action | 8 / 0 / 0 | +0.1992299216352411 |
+| negative normalized packet | 8 / 0 / 0 | +0.31800755704442374 |
+| reversed five steps | 5 / 0 / 3 | −0.0010068781612453054 |
+
+Reverse ordering is mixed, and its average favors reversal slightly. No general temporal-order fidelity, physical control benefit, good absolute prediction, or causal counterfactual accuracy follows. Relative to v5, episode6 reverse ordering changes from actual-higher to actual-lower; other reverse signs stay the same. The encoder implementation AND feature-space target change, and backend numerics differ. Cross-version absolute MSE decreases are not evidence of improvement on one fixed metric. These same eight validation roots were previously opened; they are not a new independent holdout. v6 failed equivalence is preserved, with no sole-cause assertion. The official implementation is authenticated source; cached HF weight provenance remains conditional.
+
+Limitation: feature/successor tensors were not saved, only SHA receipts/scalar MSEs. Without new neural execution this review cannot independently reconstruct official target features or recompute the neural MSE. It checks source semantics, real-input replay, recorded hashes, finite receipts, metric arithmetic and selection completeness—not a second model run.
+
+## Concrete interfaces/resources missing for RGB→D2P Jacobian compilation
+
+1. Reusable strict CUDA module loader and explicit state API. v7's validator is monolithic and returns a report, not a reusable frozen module bundle. Existing pusht_full_packet_compiler_20261027.make_transition expects LeWM emb[1,3,192], model.predict and separate model.action_encoder; JEPA requires visual[1,3,1,16,16,384], actions[1,3,10], proprio[1,3,256,16]. These are not drop-in compatible.
+
+2. Complete-history autoregressive transition. Append a real new packet to both real historical packets, predict the last visual AND patchwise proprio features, slide all three histories for prefix/suffix. Never substitute future ground-truth proprio. The local EncPredWM.unroll in app/vjepa_wm/modelcustom/simu_env_planning/vit_enc_preds.py:289 accepts no historical action buffer and at :324 pads missing slots with normalized zero. Calling it directly would violate the v7 full-history contract. Its native predicted-proprio branch does exist; it is not a missing checkpoint, but needs a history-preserving adapter and validation. No arbitrary decoding/re-encoding of predicted patchwise proprio as raw 4-vectors.
+
+3. Gradient-enabled action response. v7 executes everything in inference_mode and provides no derivative evidence. For compilation freeze parameters but enable action derivatives, create ordinary detached context tensors with no_grad (not inference tensors saved for backward), and avoid detach along candidate-dependent prefix/suffix state. Native training VideoWM.rollout defaults rollout_stop_gradient=True and must not silently cut the own-state derivative chain. CUDA JVP/VJP/finite-difference validation and actual memory receipts are absent.
+
+4. Declare action coordinates before running. For physical env command c in [-1,1], native env multiplies by100 and dataset raw arrays are divided by100; normalized action is (c−mean)/std, not another /100. A bounded atanh/tanh chart is a possible NEW compiler protocol, not part of v7 and not imposed on native normalized action probes. A new action-response prerequisite can instead differentiate the ten native normalized coordinates directly around the actual packet, without clamping. Zero nominal must explicitly distinguish raw/env zero from normalized mean.
+
+5. Freeze goal and metric. Official visual feature dimension is 256×384=98,304, not LeWM 192. Old Q/goal matrices cannot be reused; no unstated pooling. A shared implicit visual MSE metric is possible. Native ReprTargetDistMPCObjective also supports visual+alpha·proprio MSE; that is a different objective from v7 visual-only MSE and must be explicit. Bind actual target RGB and optional target proprio plus source/config hashes. Input is RGB-conditioned plus measured proprio, not RGB-only.
+
+6. Bound resources/costs and then separately validate physical use. A float32 98,304×10 response is 3.75 MiB, but a dense 98,304-square metric is 36 GiB (72 GiB float64), and reverse-mode dense output-identity workspaces can OOM. Use implicit metric and input-dimensional JVP columns/low-dimensional Gram, no dense metric, with measured peak CUDA memory and exact forward/derivative counts. Backward peak memory/operator support is unmeasured. Disk snapshot was 1.7 GiB free. Torch/safetensors/decord/tensordict/einops/gym/pymunk package locations exist, which is not a full planner runtime test. No new checkpoint/download/extraction/decoder/training is needed for the same-PushT local derivative prerequisite. Full D2P additionally needs a prospective root/goal/bank/horizon/regularizer protocol and matched physical environment/action semantics; those are not established by v7.

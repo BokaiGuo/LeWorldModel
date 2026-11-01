@@ -1,0 +1,7 @@
+# MAIN：原shared-panel大report的前置读取ABI
+
+原resolver48项回归通过，但实际prepare在读取原planner report时失败：132MiB文件超过resolver的通用128MiB metadata上限。原shared-panel合同允许256MiB final reserve，已完成完整strict的report没有违反原合同。该失败是saved resolver输入ABI问题，不是模型负结果，不以此缩小根/动作/事件分母。
+
+本独占版本保留旧source与全部封存结果，只有planner_report这个显式输入角色使用原256MiB上限，其余五个输入、journal及单行cap不变。全部六份显式SHA、原encoder来源绑定、逐原生R三边真实IO/归一化/上下文/资源账/journal链、A完整history与缺项blocked逻辑复用冻结resolver.resolve。无monkeypatch、无新模型/物理调用、无上游fullstrict重跑。自有source/tests/doc与旧resolver三件套全部绑定，输出schema明确compat版本，不伪装旧resolver已成功。
+
+输出继续使用原resolver结果namespace，但独占新尾缀MAIN02，不能覆盖MAIN01或其他结果。MAIN执行相同六path/SHA参数，模块改成`main_p3_history_preconditions_compat_20261029_v1`，不带`prepare`子命令。后续runtime必须认证此schema与actualSHA；不得沿用旧inspect假称支持新schema。无ready子集release，P1/P3/C3继续false。测试复用完整八槽saved fixture、缺journal、坏SHA及严格输入角色cap检查，不执行模型。

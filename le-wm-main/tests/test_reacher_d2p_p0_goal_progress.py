@@ -53,21 +53,21 @@ def test_d2p_outcome_requires_matching_disjoint_damping_selection(tmp_path):
             "relinearization_steps": 1, "d2p_restarts": 1,
             "d2p_initialization": "gaussian_restarts",
             "d2p_proposal_samples": 32, "d2p_proposal_elites": 4,
-            "context_mode": "executed_warmup", "rollout_root_conditioning": "observed_post_warmup_rgb_anchor", "execution_root_reconstruction": "evaluator_only_observed_root_snapshot_restore", "warmup_policy": WARMUP_POLICY,
+            "context_mode": "executed_warmup", "context_support": "uniform", "qpos_readout_binding": {"enabled": False}, "rollout_root_conditioning": "observed_post_warmup_rgb_anchor", "execution_root_reconstruction": "evaluator_only_observed_root_snapshot_restore", "warmup_policy": WARMUP_POLICY,
         },
     }))
     binding = _validate_outcome_calibration(
         (receipt,), damping=0.1, relinearization_steps=1, d2p_restarts=1,
         d2p_initialization="gaussian_restarts", d2p_proposal_samples=32,
-        d2p_proposal_elites=4, outcome_seeds={20, 21},
+        d2p_proposal_elites=4, outcome_seeds={20, 21}, context_support="uniform", expected_warmup_policy=WARMUP_POLICY, expected_qpos_binding={"enabled": False},
     )
     assert binding["calibration_root_seeds"] == [10, 11]
     with pytest.raises(ValueError, match="differs"):
-        _validate_outcome_calibration((receipt,), damping=1.0, relinearization_steps=1, d2p_restarts=1, d2p_initialization="gaussian_restarts", d2p_proposal_samples=32, d2p_proposal_elites=4, outcome_seeds={20, 21})
+        _validate_outcome_calibration((receipt,), damping=1.0, relinearization_steps=1, d2p_restarts=1, d2p_initialization="gaussian_restarts", d2p_proposal_samples=32, d2p_proposal_elites=4, outcome_seeds={20, 21}, context_support="uniform", expected_warmup_policy=WARMUP_POLICY, expected_qpos_binding={"enabled": False})
     with pytest.raises(ValueError, match="disjoint"):
-        _validate_outcome_calibration((receipt,), damping=0.1, relinearization_steps=1, d2p_restarts=1, d2p_initialization="gaussian_restarts", d2p_proposal_samples=32, d2p_proposal_elites=4, outcome_seeds={11, 21})
+        _validate_outcome_calibration((receipt,), damping=0.1, relinearization_steps=1, d2p_restarts=1, d2p_initialization="gaussian_restarts", d2p_proposal_samples=32, d2p_proposal_elites=4, outcome_seeds={11, 21}, context_support="uniform", expected_warmup_policy=WARMUP_POLICY, expected_qpos_binding={"enabled": False})
     with pytest.raises(ValueError, match="relinearization"):
-        _validate_outcome_calibration((receipt,), damping=0.1, relinearization_steps=2, d2p_restarts=1, d2p_initialization="gaussian_restarts", d2p_proposal_samples=32, d2p_proposal_elites=4, outcome_seeds={20, 21})
+        _validate_outcome_calibration((receipt,), damping=0.1, relinearization_steps=2, d2p_restarts=1, d2p_initialization="gaussian_restarts", d2p_proposal_samples=32, d2p_proposal_elites=4, outcome_seeds={20, 21}, context_support="uniform", expected_warmup_policy=WARMUP_POLICY, expected_qpos_binding={"enabled": False})
 
 
 def test_d2p_outcome_rejects_restart_count_different_from_calibration(tmp_path):
@@ -81,11 +81,11 @@ def test_d2p_outcome_rejects_restart_count_different_from_calibration(tmp_path):
             "relinearization_steps": 1, "d2p_restarts": 4,
             "d2p_initialization": "gaussian_restarts",
             "d2p_proposal_samples": 32, "d2p_proposal_elites": 4,
-            "context_mode": "executed_warmup", "rollout_root_conditioning": "observed_post_warmup_rgb_anchor", "execution_root_reconstruction": "evaluator_only_observed_root_snapshot_restore", "warmup_policy": WARMUP_POLICY,
+            "context_mode": "executed_warmup", "context_support": "uniform", "qpos_readout_binding": {"enabled": False}, "rollout_root_conditioning": "observed_post_warmup_rgb_anchor", "execution_root_reconstruction": "evaluator_only_observed_root_snapshot_restore", "warmup_policy": WARMUP_POLICY,
         },
     }))
     with pytest.raises(ValueError, match="restart"):
-        _validate_outcome_calibration((receipt,), damping=0.1, relinearization_steps=1, d2p_restarts=1, d2p_initialization="gaussian_restarts", d2p_proposal_samples=32, d2p_proposal_elites=4, outcome_seeds={20, 21})
+        _validate_outcome_calibration((receipt,), damping=0.1, relinearization_steps=1, d2p_restarts=1, d2p_initialization="gaussian_restarts", d2p_proposal_samples=32, d2p_proposal_elites=4, outcome_seeds={20, 21}, context_support="uniform", expected_warmup_policy=WARMUP_POLICY, expected_qpos_binding={"enabled": False})
 
 
 def test_d2p_trust_region_selects_nonascending_actual_model_cost():
@@ -195,6 +195,11 @@ def test_d2p_program_rejects_unknown_initialization():
 
 
 def test_d2p_p1_requires_affirmative_paired_outcome_not_absence_of_no_go():
-    assert _p1_admission({"ci95": [0.10, 0.50]}, calibration_only=False)[0] is False
-    assert _p1_admission({"ci95": [-0.50, -0.10]}, calibration_only=False)[0] is True
-    assert _p1_admission({"ci95": [-0.50, -0.10]}, calibration_only=True)[0] is False
+    from experiments.spectral_reachability.d2p_stage_admission import P0_INTEGRITY_KEYS
+    gates = {key: True for key in P0_INTEGRITY_KEYS}
+    assert _p1_admission({"ci95": [0.10, 0.50]}, calibration_only=False, implementation_gates=gates)[0] is False
+    assert _p1_admission({"ci95": [-0.50, -0.10]}, calibration_only=False, implementation_gates=gates)[0] is True
+    assert _p1_admission({"ci95": [-0.50, -0.10]}, calibration_only=True, implementation_gates=gates)[0] is False
+    assert _p1_admission({"ci95": [-0.50, -0.10]}, calibration_only=False)[0] is False
+    assert _p1_admission({"ci95": [0., 0.]}, calibration_only=False, implementation_gates=gates)[0] is False
+    assert _p1_admission({"ci95": [-.5, 0.]}, calibration_only=False, implementation_gates=gates)[0] is False

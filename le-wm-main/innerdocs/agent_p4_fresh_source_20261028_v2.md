@@ -1,0 +1,21 @@
+# Fresh source v2：实际动作与 renderer goal_pose 遥测
+
+独占新版本；v1保持冻结。不执行四个预留根，包括calibration_only。
+固定四槽、原moving.episode、native factory、recipe、动作尺度、计量及失败分母不变。
+Meter在每个真实public_step返回后、operation_completed之前持久化latest_action原float32值与bits；
+GateStore将同一operation_id及再次读取的实际值/bits写入每步native_return与warmup_return。
+读值dtype/shape不符即拒绝，不用cast修复。PNG capture后若动作改变也拒绝。
+初始goal_pose与每次reset/set_state/goal_setter/goal_render/goal_bind/public_step/explicit_render
+entry/return均保存float64[3]原值和bits；操作中变化保存return再failclosed，保留pending。
+失败调用只有entry没有return，不补造遥测。无physics内部连续轨迹声明。
+原生__init__不创建goal_pose；v1 phase前直接读取该字段的生命周期问题在v2修正：
+constructor后/首次reset entry允许明确null，首次reset return以后必须有真实float64 pose；
+不额外reset以制造字段、不把null填0。新增原生延迟初始化RAM回归。
+
+prepare/verify/run CLI与v1同形，但module/stem为agent_p4_fresh_source_20261028_v2。
+fresh_candidate仍需真实历史certificate；缺证prepare拒绝。calibration_only不具freshness资格，
+且本任务禁止在四个保留槽使用。新增遥测不授予confirmed/P1/P4/physical release。
+完整原生依赖闭包与本版本source/tests/doc字节SHA由prepare绑定；MAIN prepare后不得修改。
+
+RAM测试：原41项继承回归，加实际action/pose接线、dtype拒绝、变化后pending保留。
+测试仅fake API，不是物理或freshness证据。无实际prepare、采集或sourcepack。

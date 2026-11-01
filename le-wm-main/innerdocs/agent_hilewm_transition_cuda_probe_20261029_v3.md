@@ -1,0 +1,7 @@
+# MAIN Hi gradient probe v3
+
+机械继承v2完整合同和固定判据，仅将differentiable facade改为v2（source SHA `7b10f644320a9c55d4805a3414901cbbc7472e3505baa03c5b2bb360820f713a`）。旧v2 report SHA `a7b28cddf19c5a1d62b60811c936a53ad80bdfbf8b2f8d26586808dabb1c5bb8`保留：reference三步前向与30维VJP实际已返回，但whole入口Conv1d结构list/tuple ABI守卫拒绝；不是科学负结果。
+
+facade v2只对已认证IR的Conv1d stride/padding/dilation单整数list重建tuple；数值方程、权重与seam守卫不改。原v1/v2 reference32个保存forward数组已经MAIN逐位核验相同，前向一致但autograd行为不同；这仅是reference前缀接线证据，不替代whole/segmented/FD的最终真实CUDA与consume。
+
+所有CLI沿v2，独占stem改v3。前3route用可微facade，两FD route显式用原graph无梯度reference，不训练参数、不降CPU、不放宽bitwise/固定FD容差、不重选动作。仍非官方类独立parity/P2配对/P1科学准入。实际运行及结果待MAIN。

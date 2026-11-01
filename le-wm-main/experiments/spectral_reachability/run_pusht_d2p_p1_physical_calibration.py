@@ -38,7 +38,22 @@ from experiments.spectral_reachability import preflight_pusht_d2p_p0 as p0
 from experiments.spectral_reachability import preflight_pusht_d2p_p1_reconfiguration as p1
 
 
-SCHEMA = "pusht_d2p_p1_physical_calibration.v1"
+SCHEMA = "pusht_d2p_p1_physical_calibration.v3"
+REQUIRED_GATES = {"cuda_only", "frozen_parameter_hash_unchanged", "sealed_prefixes_reconstructed",
+    "same_root_raw_zero_controls", "all_observed_successors_recompiled", "enough_model_eligible_roots",
+    "all_selected_prefixes_physically_no_more_goal_greedy_than_raw_zero", "independent_replay_exact",
+    "root_disjoint_from_physical_calibration", "cohort_binding_valid",
+    "all_selected_prefixes_actual_rgb_no_more_goal_greedy_than_zero",
+    "prerun_implementation_and_upstream_unchanged", "same_root_shared_suffix_projection"}
+
+
+def _root_identities(rows: list[dict[str, Any]]) -> set[str]:
+    identities = [row.get("root_sha256") for row in rows]
+    if (not identities or any(not isinstance(key, str) or len(key) != 64
+                             or any(c not in "0123456789abcdef" for c in key) for key in identities)
+            or len(set(identities)) != len(identities)):
+        raise ValueError("nonempty unique SHA256 root identities required")
+    return set(identities)
 
 
 def _sha256(value: np.ndarray) -> str:
@@ -54,18 +69,48 @@ def _pose_label(state: np.ndarray, goal: np.ndarray) -> dict[str, float]:
 
 def _reset_and_warmup(env: gym.Env, root: dict[str, np.ndarray], *, history_len: int) -> tuple[list[np.ndarray], np.ndarray, np.ndarray]:
     """Recreate the P1 source history and leave env at its live decision state."""
-    state, goal = np.asarray(root["state"], dtype=np.float64), np.asarray(root["goal"], dtype=np.float64)
-    env.reset(seed=0, options={"state": goal.copy(), "goal_state": goal.copy()})
-    goal_rgb = np.asarray(env.render(), dtype=np.uint8).copy()
-    env.reset(seed=0, options={"state": state.copy(), "goal_state": goal.copy()})
-    actions = np.zeros((history_len, 2), dtype=np.float32)
-    frames: list[np.ndarray] = []
-    for action in actions:
-        frames.append(np.asarray(env.render(), dtype=np.uint8).copy())
-        _obs, _reward, terminated, truncated, _info = env.step(action)
-        if terminated or truncated:
-            raise RuntimeError("PushT causal warmup terminated")
-    return frames, actions, goal_rgb
+    return p0._collect_root_anchored_rgb_context(env, root, history_len=history_len)
+
+
+def _seal_run(output: Path, evidence: Path, calibration: Path | None) -> dict[str, Any]:
+    """Persist implementation and upstream bytes BEFORE any experiment work."""
+    output.mkdir(parents=True, exist_ok=False)
+    snapshots = output / "prerun_inputs"
+    snapshots.mkdir()
+    paths = [Path(__file__).resolve(), Path(p0.__file__).resolve(),
+             Path(p1.__file__).resolve(), Path(p0.packets.__file__).resolve(),
+             ROOT / "experiments/checkpoint_compat.py", ROOT / "experiments/gpu_preflight.py",
+             evidence.resolve()]
+    if calibration is not None:
+        paths.append(calibration.resolve())
+    entries = []
+    for index, path in enumerate(paths):
+        data = path.read_bytes()
+        saved = snapshots / f"{index:02d}_{path.name}"
+        saved.write_bytes(data)
+        entries.append({"path": str(path), "snapshot": str(saved.resolve()),
+                        "sha256": hashlib.sha256(data).hexdigest()})
+    seal = {"schema": "pusht_physical_prerun_seal.v1", "created_unix": time.time(),
+            "argv": sys.argv, "inputs": entries,
+            "scope": "Pre-run local source/upstream seal, not a complete environment or archive hash."}
+    (output / "prerun_seal.json").write_text(json.dumps(seal, indent=2, sort_keys=True) + "\n")
+    return seal
+
+
+def _seal_unchanged(seal: dict[str, Any]) -> bool:
+    return all(hashlib.sha256(Path(item[key]).read_bytes()).hexdigest() == item["sha256"]
+               for item in seal["inputs"] for key in ("path", "snapshot"))
+
+
+def _prefix_metric_gates(rows: list[dict[str, Any]]) -> dict[str, bool]:
+    """Keep physical-pose and same-metric RGB checks explicitly separate."""
+    eligible = [row for row in rows if row["model_eligible"]]
+    return {
+        "all_selected_prefixes_physically_no_more_goal_greedy_than_raw_zero": bool(eligible) and all(
+            row["selected"]["after_prefix_label"]["pose_cost"] >= row["raw_zero_control"]["after_prefix_label"]["pose_cost"] - 1e-8 for row in eligible),
+        "all_selected_prefixes_actual_rgb_no_more_goal_greedy_than_zero": bool(eligible) and all(
+            row["selected"]["suffix_recompile"]["observed_successor_goal_cost"] >= row["raw_zero_control"]["suffix_recompile"]["observed_successor_goal_cost"] - 1e-8 for row in eligible),
+    }
 
 
 def _observed_suffix(
@@ -77,8 +122,25 @@ def _observed_suffix(
     projection = p1._frozen_projection(latent_dim=int(goal.numel()), sketch=sketch_dims, device=device, seed=projection_seed)
     reach = p1._reachability(model, goal, emb, encoded_actions, horizon=1, damping=damping, projection=projection)
     action = torch.tanh(reach.pop("dls_params"))[0].detach().cpu().numpy().astype(np.float32)
-    receipt = {**reach, "projection_sha256": _sha256(projection.detach().cpu().numpy())}
+    receipt = {**reach, "projection_sha256": _sha256(projection.detach().cpu().numpy()),
+        "observed_successor_vector": emb[0, -1].detach().cpu().tolist(), "goal_vector": goal.detach().cpu().tolist(),
+        "observed_successor_goal_cost": float((emb[0, -1]-goal).square().mean().detach())}
     return action, receipt
+
+
+def _predict_prefix(model: torch.nn.Module, frames: list[np.ndarray], history: np.ndarray,
+                    goal_rgb: np.ndarray, prefix: np.ndarray, *, transform: Any,
+                    device: torch.device) -> dict[str, Any]:
+    with torch.no_grad():
+        emb, encoded = p1._encode_context(model, frames, history, transform, device)
+        goal = p0._goal_latent(model, goal_rgb, transform=transform, device=device)
+        command = torch.as_tensor(prefix, dtype=torch.float32, device=device).reshape(1, 1, 2)
+        params = torch.atanh(command.clamp(-1 + torch.finfo(command.dtype).eps, 1 - torch.finfo(command.dtype).eps))
+        predicted, _ = p1._advance(model, emb, encoded, params)
+        return {"predicted_successor_vector": predicted[0, -1].cpu().tolist(),
+                "goal_vector": goal.cpu().tolist(),
+                "predicted_goal_cost": float((predicted[0, -1] - goal).square().mean()),
+                "live_action_roundtrip_max_abs": float((torch.tanh(params) - command).abs().max())}
 
 
 def _execute_branch(
@@ -87,9 +149,10 @@ def _execute_branch(
 ) -> dict[str, Any]:
     frames, history, goal_rgb = _reset_and_warmup(env, root, history_len=3)
     root_state = np.asarray(env.unwrapped._get_obs(), dtype=np.float64).copy()
-    _obs, _reward, terminated, truncated, _info = env.step(np.asarray(prefix, dtype=np.float32))
-    if terminated or truncated:
-        raise RuntimeError("PushT prefix terminated")
+    # Freeze a same-action prediction before execution; actual successor RGB
+    # below is evaluator-only and never feeds this prefix prediction.
+    prediction = _predict_prefix(model, frames, history, goal_rgb, prefix, transform=transform, device=device)
+    p0.packets.execute_packet(env, p0.packets.repeat_command(prefix))
     successor_rgb = np.asarray(env.render(), dtype=np.uint8).copy()
     successor_state = np.asarray(env.unwrapped._get_obs(), dtype=np.float64).copy()
     successor_frames = frames[1:] + [successor_rgb]
@@ -98,9 +161,7 @@ def _execute_branch(
         model, successor_frames, successor_actions, goal_rgb, transform=transform, device=device,
         damping=damping, sketch_dims=sketch_dims, projection_seed=projection_seed,
     )
-    _obs, _reward, terminated, truncated, _info = env.step(suffix[0])
-    if terminated or truncated:
-        raise RuntimeError("PushT recompiled suffix terminated")
+    p0.packets.execute_packet(env, p0.packets.repeat_command(suffix[0]))
     final_rgb = np.asarray(env.render(), dtype=np.uint8).copy()
     final_state = np.asarray(env.unwrapped._get_obs(), dtype=np.float64).copy()
     return {
@@ -112,6 +173,7 @@ def _execute_branch(
         "successor_rgb_sha256": _sha256(successor_rgb), "final_rgb_sha256": _sha256(final_rgb),
         "successor_state": successor_state.tolist(), "final_state": final_state.tolist(),
         "suffix_recompile": suffix_receipt,
+        "prefix_prediction_before_execution": prediction,
     }
 
 
@@ -122,21 +184,31 @@ def _replay_matches(first: dict[str, Any], second: dict[str, Any], *, atol: floa
 
 def _load_preflight(path: Path) -> dict[str, Any]:
     report = json.loads(path.read_text(encoding="utf-8"))
-    if report.get("schema") != p1.SCHEMA or report.get("status") != "pass" or not all(report.get("gates", {}).values()):
-        raise ValueError("physical calibration requires a passing replay-bound PushT P1 preflight")
+    p1._require_complete_pass(report, p1.SCHEMA, p1.REQUIRED_GATES)
+    if report.get("protocol", {}).get("packet_contract") != p0.packets.contract_spec():
+        raise ValueError("physical P1 rejects historical token/history contracts")
+    if report["protocol"].get("root_context") != p1.ROOT_CONTEXT:
+        raise ValueError("P1 must start from the actual observed current RGB, not an imagined bootstrap")
     required = ("root_seed", "root_count", "prefix_horizon", "suffix_horizon", "damping", "sketch_dims")
     if any(key not in report.get("protocol", {}) for key in required):
         raise ValueError("P1 receipt lacks deterministic replay binding")
     if int(report["protocol"]["prefix_horizon"]) != 1 or int(report["protocol"]["suffix_horizon"]) != 1:
         raise ValueError("physical calibration v1 seals one action in each stage")
+    _root_identities(report.get("rows", []))
+    if len(report["rows"]) != int(report["protocol"]["root_count"]):
+        raise ValueError("P1 root count differs from replay-bound protocol")
     return report
 
 
 def _load_calibration(path: Path) -> set[str]:
     report = json.loads(path.read_text(encoding="utf-8"))
-    if report.get("schema") != SCHEMA or report.get("status") != "pass" or not all(report.get("gates", {}).values()):
-        raise ValueError("outcome requires a passing physical calibration receipt")
-    return {str(row["root_sha256"]) for row in report.get("rows", [])}
+    p1._require_complete_pass(report, SCHEMA, REQUIRED_GATES)
+    if (report.get("protocol", {}).get("cohort") != "calibration"
+            or report.get("protocol", {}).get("packet_contract") != p0.packets.contract_spec()
+            or report.get("protocol", {}).get("root_context") != p1.ROOT_CONTEXT
+            or report.get("protocol", {}).get("outcome_roots_opened") is not False):
+        raise ValueError("only the corrected calibration contract may authorize outcome")
+    return _root_identities(report.get("rows", []))
 
 
 def main() -> None:
@@ -152,6 +224,7 @@ def main() -> None:
     if cohort == "outcome" and args.calibration_evidence is None:
         raise ValueError("outcome physical execution requires --calibration-evidence")
     calibration_roots = set() if args.calibration_evidence is None else _load_calibration(args.calibration_evidence)
+    seal = _seal_run(args.output, args.p1_evidence, args.calibration_evidence)
     runtime = require_cuda_allocation("cuda"); device = torch.device("cuda")
     model = load_compatible_pretrained("pusht/lewm", device=device).eval(); model.requires_grad_(False)
     if validate_action_protocol(model, action_dim=2, action_block=5) != 5:
@@ -175,10 +248,16 @@ def main() -> None:
             model_eligible = bool(compilation["non_greedy_witness_found"])
             selected_prefix = np.asarray(compilation["selected_prefix_live_action"], dtype=np.float32)[0] if model_eligible else np.zeros(2, dtype=np.float32)
             zero_prefix = np.zeros(2, dtype=np.float32)
-            selected_seed = int(protocol["root_seed"]) + index + 20_000
+            selected_seed = int(protocol["root_seed"]) + index + 10_000
             selected = _execute_branch(env, root, selected_prefix, model=model, transform=transform, device=device, damping=float(protocol["damping"]), sketch_dims=int(protocol["sketch_dims"]), projection_seed=selected_seed)
-            zero = _execute_branch(env, root, zero_prefix, model=model, transform=transform, device=device, damping=float(protocol["damping"]), sketch_dims=int(protocol["sketch_dims"]), projection_seed=selected_seed if not model_eligible else int(protocol["root_seed"]) + index + 30_000)
+            zero = _execute_branch(env, root, zero_prefix, model=model, transform=transform, device=device, damping=float(protocol["damping"]), sketch_dims=int(protocol["sketch_dims"]), projection_seed=selected_seed)
+            p0.packets.require_shared_suffix_projection(selected["suffix_recompile"]["projection_sha256"], zero["suffix_recompile"]["projection_sha256"])
+            if selected["suffix_recompile"]["projection_sha256"] != compilation["reachability_projection_sha256"]:
+                raise RuntimeError("observed suffix projection differs from sealed root projection")
             selected_replay = _execute_branch(env, root, selected_prefix, model=model, transform=transform, device=device, damping=float(protocol["damping"]), sketch_dims=int(protocol["sketch_dims"]), projection_seed=selected_seed)
+            if (selected["warmup_rgb_sha256"] != admitted["history_rgb_sha256"]
+                    or selected["goal_rgb_sha256"] != admitted["goal_rgb_sha256"]):
+                raise RuntimeError("physical root RGB context differs from sealed P1 context")
             rows.append({"root_id": index, "root_sha256": root_fingerprint(root), "model_eligible": model_eligible, "sealed_compilation": compilation, "selected": selected, "raw_zero_control": zero, "selected_independent_replay_matches": _replay_matches(selected, selected_replay)})
             print(json.dumps({"root_id": index, "selected_after_prefix": selected["after_prefix_label"]["pose_cost"], "zero_after_prefix": zero["after_prefix_label"]["pose_cost"], "replay": rows[-1]["selected_independent_replay_matches"]}))
     finally:
@@ -187,7 +266,16 @@ def main() -> None:
     minimum_eligible = 1 if cohort == "calibration" else max(1, int(np.ceil(0.8 * len(rows))))
     gates = {"cuda_only": True, "frozen_parameter_hash_unchanged": before == p0._parameter_hash(model), "sealed_prefixes_reconstructed": True, "same_root_raw_zero_controls": True, "all_observed_successors_recompiled": all(row["selected"]["suffix_recompile"]["jacobian_frobenius_norm"] > 1e-10 and row["raw_zero_control"]["suffix_recompile"]["jacobian_frobenius_norm"] > 1e-10 for row in rows), "enough_model_eligible_roots": len(eligible_rows) >= minimum_eligible, "all_selected_prefixes_physically_no_more_goal_greedy_than_raw_zero": bool(eligible_rows) and all(row["selected"]["after_prefix_label"]["pose_cost"] >= row["raw_zero_control"]["after_prefix_label"]["pose_cost"] - 1e-8 for row in eligible_rows), "independent_replay_exact": all(row["selected_independent_replay_matches"] for row in rows), "root_disjoint_from_physical_calibration": not bool(calibration_roots & {row["root_sha256"] for row in rows}), "cohort_binding_valid": cohort == "calibration" or args.calibration_evidence is not None}
     report = {"schema": SCHEMA, "status": "pass" if all(gates.values()) else "fail", "scope": "CUDA-only P1 physical calibration" if cohort == "calibration" else "CUDA-only root-disjoint P1 outcome measurement; it records a paired mechanism contrast but does not open P2.", "cuda_host": {**runtime, "python": platform.python_version()}, "upstream_p1": {"path": str(args.p1_evidence.resolve()), "sha256": hashlib.sha256(args.p1_evidence.read_bytes()).hexdigest()}, "protocol": {"cohort": cohort, "planner_input": "RGB/action histories and rendered goal RGB only", "evaluator_only_labels": "PushT state after execution", "prefix_control": "same-root raw zero", "stages": ["sealed prefix", "observed successor RGB recompile", "one action DLS suffix"], "calibration_evidence": None if args.calibration_evidence is None else str(args.calibration_evidence.resolve()), "outcome_roots_opened": cohort == "outcome", "minimum_model_eligible_roots": minimum_eligible}, "gates": gates, "eligibility": {"model_eligible_root_count": len(eligible_rows), "model_ineligible_root_count": len(rows) - len(eligible_rows)}, "rows": rows, "elapsed_seconds": time.time() - started}
-    args.output.mkdir(parents=True); (args.output / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    gates.update(_prefix_metric_gates(rows))
+    gates["prerun_implementation_and_upstream_unchanged"] = _seal_unchanged(seal)
+    gates["same_root_shared_suffix_projection"] = all(row["selected"]["suffix_recompile"]["projection_sha256"] == row["raw_zero_control"]["suffix_recompile"]["projection_sha256"] for row in rows)
+    report["status"] = "pass" if all(gates.values()) else "fail"
+    report["protocol"].update({"packet_contract": p0.packets.contract_spec(), "root_context": p1.ROOT_CONTEXT, "raw_commands_per_model_token": 5,
+        "stages": ["sealed five-command prefix", "contiguous observed successor RGB recompile", "five-command DLS suffix"],
+        "shared_suffix_projection": True, "checkpoint_training_statistics_certified": False})
+    report["prerun_seal"] = {"path": str((args.output / "prerun_seal.json").resolve()),
+        "sha256": hashlib.sha256((args.output / "prerun_seal.json").read_bytes()).hexdigest()}
+    (args.output / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"status": report["status"], "gates": gates, "output": str(args.output)}, indent=2))
 
 

@@ -1,0 +1,11 @@
+# P2 四已知根八臂物理校准：MAIN 执行审读
+
+仅授权原四个frontier known roots，不是两个moving roots。原封存480候选库、原source_Q、完整三帧历史和normalizer、8个winner动作见证均不变；本轮不加载神经模型、不重选候选、不训练或拟合。组合是prefix真实预测后编译suffix的两段程序，不宣称任意多层组合或P1/P2科学通过。
+
+MAIN完整读新 `agent_p2_composition_execution_20261028_v1.py`、原 `agent_p2_execution_assets_20261028_v1.py` 的build/execute与文档。原已封存source按SHA验证；新consumer补artifact/PNG/原生label/public计账。物理费用只有public step/reset完整计量，内部physics/constructor/render未计量为unknown，不能补0或宣称等总资源。原生earlystop和RGB guard abort保留，不补到10。
+
+MAIN首次新consumer回归44pass/1fail：object_only故障测试对第一行赋值并未改变值（原official/object_only均true），不是生产校验漏拒绝实质变化。工作者在MAIN冻结请求处理前已经原地修正测试为第二行，并显式assert official=false/object_only=true，再改变值。MAIN保留首次失败记录，重新审读此测试修正；联合原assets回归 **67 passed in12.83s**。当前三文件冻结，后续必须新版本。
+
+新consumer source `6ba8b0c96eac320f7a05b82ba21c8e8dfbfd2e0a59f55747ed0e9980015ea262`，tests `7ca508086a472f14f1ef368438735fe1e4eb579cdd4ccb6cc749111bd662aa8b`。原assets prepare实际成功SHA `58d0c982d550b016efaa839cf8e24abe524d830a3da637ff5bd22286c84f0b83`，只含原资产闭包；新文件source审读由本文外部SHA在execution.json绑定。
+
+可执行的是known-root工程校准，不是独立确认或科学准入。主机物理单独运行，无CPU神经fallback。MAIN之后以实际terminal report与strict saved消费为完成依据；本文不是结果或成功证书。

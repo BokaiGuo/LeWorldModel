@@ -53,9 +53,11 @@ def select(reports: list[dict[str, Any]]) -> dict[str, Any]:
             "d2p_proposal_samples": protocol.get("d2p_proposal_samples"),
             "d2p_proposal_elites": protocol.get("d2p_proposal_elites"),
             "context_mode": protocol.get("context_mode"),
+            "context_support": protocol.get("context_support"),
             "rollout_root_conditioning": protocol.get("rollout_root_conditioning"),
             "execution_root_reconstruction": protocol.get("execution_root_reconstruction"),
             "warmup_policy": protocol.get("warmup_policy"),
+            "qpos_readout_binding": protocol.get("qpos_readout_binding"),
             "warmup_steps": protocol.get("warmup_steps"),
             "seeds": [row.get("seed") for row in rows],
         }

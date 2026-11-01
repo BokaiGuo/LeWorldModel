@@ -1,0 +1,765 @@
+{
+  "P1_admission": false,
+  "arms_in_fixed_order": [
+    {
+      "id": "rgb_chunk_model_choice",
+      "method": "model_choice",
+      "prefix": "rgb_chunk"
+    },
+    {
+      "id": "rgb_chunk_direct_approach",
+      "method": "direct_approach",
+      "prefix": "rgb_chunk"
+    },
+    {
+      "id": "zero_prefix_model_choice",
+      "method": "model_choice",
+      "prefix": "zero_prefix"
+    },
+    {
+      "id": "zero_prefix_direct_approach",
+      "method": "direct_approach",
+      "prefix": "zero_prefix"
+    }
+  ],
+  "classification": "post_outcome_development_contrast",
+  "controller_lifecycle": "new proposal-only controller each opportunity; actual action and RGB verified by independent chronological history",
+  "cost": "same five-iteration V13 scoring per available decision in both methods",
+  "cost_fairness_boundary": "opportunity and per-decision compute matched; realized totals can differ after abstention or failure",
+  "cuda_execution_authorized_by_contract": false,
+  "design_source_report_sha256": "23e66529af689ed6a13e19c9b3d6f5ecc85813c5b1b05a3ec22ac31c0f5f78ee",
+  "feasibility": "both abstain if the existing RGB seed geometry or one-step guard fails",
+  "feedback_protocol_sha256": "c9d8938a9b6ddb9e4efd2265bcbba00b87114da41be32641b63466f4119b5568",
+  "full_cost_certified": false,
+  "implementation_sha256": {
+    "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev303_feedback_choice_contrast_20261102_codex_exclusive.py": "3ec9b8286d8ef77a44a509636da37be73b14b0f2a75defc9de227d653803eb67",
+    "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev303_feedback_choice_contrast_saved_20261102_codex_exclusive.py": "740537ac1d9cc1247a4d45184e094e70c912bf1e4d2ade517a320b0f5cc69bb4",
+    "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev303_feedback_live_20261102_codex_exclusive.py": "a50b49269791f2c03bf7027a53037ce8b5f8d70ee8d8d8f126fb02f05ec8eed1",
+    "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev303_feedback_live_saved_20261102_codex_exclusive.py": "0fdbbd2274a50fb9e72a268ae8d54fd7363f1e5f628ecb7b1aac5eaf2361ecfb"
+  },
+  "independent_confirmation": false,
+  "method_rules": {
+    "direct_approach": "execute the predeclared RGB approach seed after the same full scoring",
+    "model_choice": "execute the V13 robust-score winner"
+  },
+  "opportunities": "up to five one-action decisions and fresh real RGB per arm; no padding after stop",
+  "physical_execution_authorized_by_contract": false,
+  "schema": "p1_dev303_feedback_choice_contrast_20261102_codex_exclusive.contract.v1",
+  "selection": "method fixed in advance; never select an action using physical outcome",
+  "source_feedback_preparation_sha256": "74b31b22db7a4bfb803264aa45889876fe935d361567949f8aa41e93a054d686",
+  "source_replay": {
+    "P1_admission": false,
+    "arms_in_fixed_order": [
+      "rgb_chunk",
+      "zero_prefix"
+    ],
+    "classification": "development_only_after_opened_prefix_not_holdout",
+    "early_stop": "stop arm on mismatch, exception, termination or truncation; no padding",
+    "failure": "record failure; attempt other fixed arm with fresh environment",
+    "implementation_sha256": {
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev301_blind_plan_physical_20261101_codex.py": "689bd9e30f2b30596cbbec213879172cbf34f398c1e623a9f9554b5367b7f6d2",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev301_blind_plan_physical_saved_20261101_codex.py": "954c373e50c4d0cf9991763035a0c6e905df7f63f3996462aecac39cfbd4594f",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev303_cp5_rgb_action_export_20261102_exclusive.py": "8228935922ed14ebb7fe3045ae773de79da83371e8e0685494ef8198d4a65eb8",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev303_cp5_tail_handoff_20261102_exclusive.py": "55e22850a3c539073b3f22fce90b884ac8d79199137d0cc445b44838853e6dd5",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev303_cp5_tail_physical_20261102_exclusive.py": "4fed46236cea99f941fb781ffa90e8c6874c4447d97775a6987ba544241d0f09",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev303_cp5_tail_physical_saved_20261102_exclusive.py": "9dead190cd162e61e4c68a8753a505aef21a82a6574a4753b05b93113048a62f",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev303_rgb_chunk_diagnostic_20261102_exclusive.py": "c54492f81e4ad85c511a50732f9e60a33665e5693b27f4e855a4a99f9e8cd6e2",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev303_rgb_chunk_saved_20261102_exclusive.py": "d628c7e2b75f943bb5708fc292af022ece72e0d4fa387c07bbf2d0f9028494de",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/p1_dev_reset_bound_20261101_codex.py": "f52c19b85c26123853a8e2c5f44a63cee13aba1f7c9a37d5849d6a685b56d48c"
+    },
+    "independent_confirmation": false,
+    "physical_actions_authorized_by_contract": false,
+    "prefix": "five actual actions; exact state, snapshot and RGB at every step",
+    "reset_and_goal": "exact original reset, goal state and goal RGB",
+    "schema": "p1_dev303_cp5_tail_physical_20261102_exclusive.contract.v1",
+    "seed": 301000003,
+    "source": {
+      "P1_admission": false,
+      "classification": "development_only",
+      "independent_confirmation": false,
+      "limitation": "no physical runner or saved-output verifier implemented",
+      "physical_actions_authorized": false,
+      "planner_preparation_sha256": "e5e5cfc630bb32e03b7b6a88e7c2fc2d8f23793182ab06e0124e2791f0e1154e",
+      "planner_report_sha256": "817e86b6855dcab634791fc9361c5362742d9081ce4c8138b108adcd2fdc51fd",
+      "prefix_report_sha256": "694faea5854ee2d5b558fb9b10530aa5ecb20865cf5d2ce27473ec5c2c417625",
+      "roles": [
+        {
+          "arm": "rgb_chunk",
+          "cp5_pixel_sha256": "a19e7c43d28671e49869b30ac55b7f88c6c9bbdf3fbd96c0e13ef82bc9878ab1",
+          "prefix": [
+            [
+              -0.0678391233086586,
+              0.2406197339296341
+            ],
+            [
+              -0.06752504408359528,
+              0.24070805311203003
+            ],
+            [
+              -0.06537220627069473,
+              0.24130162596702576
+            ],
+            [
+              -0.06703285127878189,
+              0.24084559082984924
+            ],
+            [
+              -0.06828424334526062,
+              0.2404937893152237
+            ]
+          ],
+          "prefix_checkpoints": [
+            {
+              "file": "rgb_chunk_control_01.png",
+              "file_sha256": "02a2164605d905d82e98480adb4f46567494a3733542247ab68c047c342b7299",
+              "phase": "control",
+              "pixel_sha256": "6d3c46608e13ee9edc73eeb40184a266d65f4535c434841774bdac6ba4d6dd02",
+              "snapshot": {
+                "bodies": {
+                  "agent": {
+                    "angle": 0.0,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      160.0810330689902,
+                      149.59126986699812
+                    ],
+                    "velocity": [
+                      -25.381832122802734,
+                      90.02725982666016
+                    ]
+                  },
+                  "block": {
+                    "angle": -4.894466053800889,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      127.63204019203553,
+                      357.7835450499992
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "state": [
+                  160.0810330689902,
+                  149.59126986699812,
+                  127.63204019203553,
+                  357.7835450499992,
+                  1.3887192533786976,
+                  -25.381832122802734,
+                  90.02725982666016
+                ]
+              },
+              "state": [
+                160.0810330689902,
+                149.59126986699812,
+                127.63204019203553,
+                357.7835450499992,
+                1.3887192533786976,
+                -25.381832122802734,
+                90.02725982666016
+              ],
+              "step": 1
+            },
+            {
+              "file": "rgb_chunk_control_02.png",
+              "file_sha256": "dd7e2af68054f59a03922ba754fbd1318e08243510f2a9bcdb3c4f4edc912068",
+              "phase": "control",
+              "pixel_sha256": "91b0c5ef2356537aae29173bddc609a31dfff4b60ae505c647a62f7f74a1053b",
+              "snapshot": {
+                "bodies": {
+                  "agent": {
+                    "angle": 0.0,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      157.32478579649876,
+                      159.40300334172957
+                    ],
+                    "velocity": [
+                      -25.09798812866211,
+                      89.47042083740234
+                    ]
+                  },
+                  "block": {
+                    "angle": -4.894465977728833,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      127.63223560277885,
+                      357.7835484166545
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "state": [
+                  157.32478579649876,
+                  159.40300334172957,
+                  127.63223560277885,
+                  357.7835484166545,
+                  1.388719329450753,
+                  -25.09798812866211,
+                  89.47042083740234
+                ]
+              },
+              "state": [
+                157.32478579649876,
+                159.40300334172957,
+                127.63223560277885,
+                357.7835484166545,
+                1.388719329450753,
+                -25.09798812866211,
+                89.47042083740234
+              ],
+              "step": 2
+            },
+            {
+              "file": "rgb_chunk_control_03.png",
+              "file_sha256": "1505da7341c9fcf2646df9f0c6d942fde2a98871ad1844eb0596bb1e80530222",
+              "phase": "control",
+              "pixel_sha256": "412e6633216a414f2a71c8b68ca9dfbe6374c0327971ccbb4702179d0d23bff0",
+              "snapshot": {
+                "bodies": {
+                  "agent": {
+                    "angle": 0.0,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      154.64068652281708,
+                      169.21562121587505
+                    ],
+                    "velocity": [
+                      -24.294410705566406,
+                      89.6961669921875
+                    ]
+                  },
+                  "block": {
+                    "angle": -4.894465937300873,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      127.63233945204396,
+                      357.7835502058399
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "state": [
+                  154.64068652281708,
+                  169.21562121587505,
+                  127.63233945204396,
+                  357.7835502058399,
+                  1.3887193698787135,
+                  -24.294410705566406,
+                  89.6961669921875
+                ]
+              },
+              "state": [
+                154.64068652281708,
+                169.21562121587505,
+                127.63233945204396,
+                357.7835502058399,
+                1.3887193698787135,
+                -24.294410705566406,
+                89.6961669921875
+              ],
+              "step": 3
+            },
+            {
+              "file": "rgb_chunk_control_04.png",
+              "file_sha256": "24480f4a0f8300f5270322dff28a8e260d78884af42182401e4080e734651b34",
+              "phase": "control",
+              "pixel_sha256": "d23a83aff41d1911db5e51d23589475915aeba97c99953d0d0379943b9175beb",
+              "snapshot": {
+                "bodies": {
+                  "agent": {
+                    "angle": 0.0,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      151.93154011855069,
+                      179.02151560979596
+                    ],
+                    "velocity": [
+                      -24.92098617553711,
+                      89.52410125732422
+                    ]
+                  },
+                  "block": {
+                    "angle": -4.894465915815754,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      127.63239464179276,
+                      357.7835511566883
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "state": [
+                  151.93154011855069,
+                  179.02151560979596,
+                  127.63239464179276,
+                  357.7835511566883,
+                  1.388719391363832,
+                  -24.92098617553711,
+                  89.52410125732422
+                ]
+              },
+              "state": [
+                151.93154011855069,
+                179.02151560979596,
+                127.63239464179276,
+                357.7835511566883,
+                1.388719391363832,
+                -24.92098617553711,
+                89.52410125732422
+              ],
+              "step": 4
+            },
+            {
+              "file": "rgb_chunk_control_05.png",
+              "file_sha256": "f2c10d0319b0e4cbd2be5e8cac6a4180abb8905d2db73c01bd3e56e1035c62aa",
+              "phase": "control",
+              "pixel_sha256": "a19e7c43d28671e49869b30ac55b7f88c6c9bbdf3fbd96c0e13ef82bc9878ab1",
+              "snapshot": {
+                "bodies": {
+                  "agent": {
+                    "angle": 0.0,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      149.1666340745443,
+                      188.81185740667095
+                    ],
+                    "velocity": [
+                      -25.385143280029297,
+                      89.39359283447266
+                    ]
+                  },
+                  "block": {
+                    "angle": -4.894465904397671,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      127.63242397188344,
+                      357.78355166200856
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "state": [
+                  149.1666340745443,
+                  188.81185740667095,
+                  127.63242397188344,
+                  357.78355166200856,
+                  1.3887194027819154,
+                  -25.385143280029297,
+                  89.39359283447266
+                ]
+              },
+              "state": [
+                149.1666340745443,
+                188.81185740667095,
+                127.63242397188344,
+                357.78355166200856,
+                1.3887194027819154,
+                -25.385143280029297,
+                89.39359283447266
+              ],
+              "step": 5
+            }
+          ],
+          "tail": [
+            [
+              -0.6028399467468262,
+              0.21451129019260406
+            ],
+            [
+              -0.15443448722362518,
+              0.07049521058797836
+            ],
+            [
+              -0.3759687840938568,
+              0.7592294216156006
+            ],
+            [
+              0.8534848093986511,
+              -0.4495224356651306
+            ],
+            [
+              0.04404064640402794,
+              0.16171622276306152
+            ],
+            [
+              0.13284055888652802,
+              -0.5390177965164185
+            ],
+            [
+              -0.09399974346160889,
+              1.0
+            ],
+            [
+              -0.48146119713783264,
+              0.34069380164146423
+            ],
+            [
+              0.5284576416015625,
+              0.06320329755544662
+            ],
+            [
+              -0.16930246353149414,
+              -0.163901224732399
+            ]
+          ],
+          "tail_sha256": "2c30257e1e3cd67a31b7137d44ffee04a8892a7bd48ca0725a5711298b2fa685"
+        },
+        {
+          "arm": "zero_prefix",
+          "cp5_pixel_sha256": "054c389d23e440961d65eb0091bdba836fc27b85e8d0c8b4a7ec983db2730e02",
+          "prefix": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ],
+          "prefix_checkpoints": [
+            {
+              "file": "zero_prefix_control_01.png",
+              "file_sha256": "00ab2999df2f43b6812ca4ce6c4cd800afb5821a34a7de86ebb4f9dac754c7f0",
+              "phase": "control",
+              "pixel_sha256": "054c389d23e440961d65eb0091bdba836fc27b85e8d0c8b4a7ec983db2730e02",
+              "snapshot": {
+                "bodies": {
+                  "agent": {
+                    "angle": 0.0,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      162.08684281477878,
+                      142.47682721334212
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "block": {
+                    "angle": -4.894466053800889,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      127.63204019203553,
+                      357.7835450499992
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "state": [
+                  162.08684281477878,
+                  142.47682721334212,
+                  127.63204019203553,
+                  357.7835450499992,
+                  1.3887192533786976,
+                  0.0,
+                  0.0
+                ]
+              },
+              "state": [
+                162.08684281477878,
+                142.47682721334212,
+                127.63204019203553,
+                357.7835450499992,
+                1.3887192533786976,
+                0.0,
+                0.0
+              ],
+              "step": 1
+            },
+            {
+              "file": "zero_prefix_control_02.png",
+              "file_sha256": "00ab2999df2f43b6812ca4ce6c4cd800afb5821a34a7de86ebb4f9dac754c7f0",
+              "phase": "control",
+              "pixel_sha256": "054c389d23e440961d65eb0091bdba836fc27b85e8d0c8b4a7ec983db2730e02",
+              "snapshot": {
+                "bodies": {
+                  "agent": {
+                    "angle": 0.0,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      162.08684281477878,
+                      142.47682721334212
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "block": {
+                    "angle": -4.894465977728833,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      127.63223560277885,
+                      357.7835484166545
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "state": [
+                  162.08684281477878,
+                  142.47682721334212,
+                  127.63223560277885,
+                  357.7835484166545,
+                  1.388719329450753,
+                  0.0,
+                  0.0
+                ]
+              },
+              "state": [
+                162.08684281477878,
+                142.47682721334212,
+                127.63223560277885,
+                357.7835484166545,
+                1.388719329450753,
+                0.0,
+                0.0
+              ],
+              "step": 2
+            },
+            {
+              "file": "zero_prefix_control_03.png",
+              "file_sha256": "00ab2999df2f43b6812ca4ce6c4cd800afb5821a34a7de86ebb4f9dac754c7f0",
+              "phase": "control",
+              "pixel_sha256": "054c389d23e440961d65eb0091bdba836fc27b85e8d0c8b4a7ec983db2730e02",
+              "snapshot": {
+                "bodies": {
+                  "agent": {
+                    "angle": 0.0,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      162.08684281477878,
+                      142.47682721334212
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "block": {
+                    "angle": -4.894465937300873,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      127.63233945204396,
+                      357.7835502058399
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "state": [
+                  162.08684281477878,
+                  142.47682721334212,
+                  127.63233945204396,
+                  357.7835502058399,
+                  1.3887193698787135,
+                  0.0,
+                  0.0
+                ]
+              },
+              "state": [
+                162.08684281477878,
+                142.47682721334212,
+                127.63233945204396,
+                357.7835502058399,
+                1.3887193698787135,
+                0.0,
+                0.0
+              ],
+              "step": 3
+            },
+            {
+              "file": "zero_prefix_control_04.png",
+              "file_sha256": "00ab2999df2f43b6812ca4ce6c4cd800afb5821a34a7de86ebb4f9dac754c7f0",
+              "phase": "control",
+              "pixel_sha256": "054c389d23e440961d65eb0091bdba836fc27b85e8d0c8b4a7ec983db2730e02",
+              "snapshot": {
+                "bodies": {
+                  "agent": {
+                    "angle": 0.0,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      162.08684281477878,
+                      142.47682721334212
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "block": {
+                    "angle": -4.894465915815754,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      127.63239464179276,
+                      357.7835511566883
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "state": [
+                  162.08684281477878,
+                  142.47682721334212,
+                  127.63239464179276,
+                  357.7835511566883,
+                  1.388719391363832,
+                  0.0,
+                  0.0
+                ]
+              },
+              "state": [
+                162.08684281477878,
+                142.47682721334212,
+                127.63239464179276,
+                357.7835511566883,
+                1.388719391363832,
+                0.0,
+                0.0
+              ],
+              "step": 4
+            },
+            {
+              "file": "zero_prefix_control_05.png",
+              "file_sha256": "00ab2999df2f43b6812ca4ce6c4cd800afb5821a34a7de86ebb4f9dac754c7f0",
+              "phase": "control",
+              "pixel_sha256": "054c389d23e440961d65eb0091bdba836fc27b85e8d0c8b4a7ec983db2730e02",
+              "snapshot": {
+                "bodies": {
+                  "agent": {
+                    "angle": 0.0,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      162.08684281477878,
+                      142.47682721334212
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "block": {
+                    "angle": -4.894465904397671,
+                    "angular_velocity": 0.0,
+                    "position": [
+                      127.63242397188344,
+                      357.78355166200856
+                    ],
+                    "velocity": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "state": [
+                  162.08684281477878,
+                  142.47682721334212,
+                  127.63242397188344,
+                  357.78355166200856,
+                  1.3887194027819154,
+                  0.0,
+                  0.0
+                ]
+              },
+              "state": [
+                162.08684281477878,
+                142.47682721334212,
+                127.63242397188344,
+                357.78355166200856,
+                1.3887194027819154,
+                0.0,
+                0.0
+              ],
+              "step": 5
+            }
+          ],
+          "tail": [
+            [
+              -0.3943561911582947,
+              0.12274600565433502
+            ],
+            [
+              -0.06752770394086838,
+              0.018782753497362137
+            ],
+            [
+              -0.23523801565170288,
+              0.43954429030418396
+            ],
+            [
+              1.0,
+              -0.22813142836093903
+            ],
+            [
+              -0.4364199936389923,
+              -0.14863288402557373
+            ],
+            [
+              0.1725395768880844,
+              -0.3106541037559509
+            ],
+            [
+              -0.2715623378753662,
+              0.8117095828056335
+            ],
+            [
+              -0.5004987716674805,
+              0.43821364641189575
+            ],
+            [
+              0.19984756410121918,
+              -0.032856233417987823
+            ],
+            [
+              0.026695219799876213,
+              -0.3512931168079376
+            ]
+          ],
+          "tail_sha256": "72c4b70b3222e21f946032a34ff728c26baf2b9a0913a1717639780340374fcf"
+        }
+      ],
+      "schema": "p1_dev303_cp5_tail_handoff_20261102_exclusive.handoff.v1"
+    },
+    "state_use": "replay consistency guard and logging only, never selection",
+    "tail": "ten frozen model-selected actions per arm; no replanning or replacement",
+    "warmup": "10 zero actions, exact original frames and snapshots at 0, 5, 10"
+  }
+}

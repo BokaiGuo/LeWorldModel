@@ -70,6 +70,22 @@ class ReacherGoalImageWrapper(gym.Wrapper):
         # the Gymnasium OrderEnforcing layer around ReacherDMControlWrapper.
         return self.env.unwrapped
 
+    @staticmethod
+    def _align_visible_target_to_finger(physics) -> None:
+        """Place the scene marker at the current fingertip without leaking it."""
+        try:
+            marker = np.asarray(physics.named.model.geom_pos["target"], dtype=np.float64).copy()
+            finger = np.asarray(physics.named.data.geom_xpos["finger"], dtype=np.float64)
+        except (AttributeError, KeyError, IndexError):
+            # Unit-test stand-ins and non-standard Reacher XMLs can omit the
+            # cosmetic marker.  Their RGB contract then has no marker to bind.
+            return
+        if marker.shape != finger.shape or marker.size < 2 or not np.isfinite(finger).all():
+            raise RuntimeError("Reacher visible target/fingertip geometry is incompatible")
+        marker[:2] = finger[:2]
+        physics.named.model.geom_pos["target"] = marker
+        physics.forward()
+
     def _render_target_and_restore(self, current_qpos: np.ndarray, current_qvel: np.ndarray) -> np.ndarray:
         raw = self._raw()
         physics = raw.env.physics
@@ -80,11 +96,26 @@ class ReacherGoalImageWrapper(gym.Wrapper):
         physics.data.qpos[:] = target_qpos
         physics.data.qvel[:] = 0.0
         physics.forward()
+        self._align_visible_target_to_finger(physics)
         goal = np.asarray(raw.render(width=224, height=224)).copy()
         physics.data.qpos[:] = current_qpos
         physics.data.qvel[:] = current_qvel
         physics.forward()
         return goal
+
+    def set_goal_from_state(self, current_qpos: np.ndarray, current_qvel: np.ndarray) -> np.ndarray:
+        """Bind the task goal image to an already restored physical root.
+
+        Source-state diagnostics restore a root from the official HDF5 after
+        ``reset``.  The reset goal belongs to a different random root, so
+        retaining it silently changes the qpos-match task.  This exposes the
+        same state-to-goal renderer transaction used at reset while restoring
+        the supplied root before returning.
+        """
+
+        goal = self._render_target_and_restore(current_qpos, current_qvel)
+        self._goal = goal.copy()
+        return goal.copy()
 
     def _with_goal(self, info: dict, goal: np.ndarray) -> dict:
         info = dict(info)

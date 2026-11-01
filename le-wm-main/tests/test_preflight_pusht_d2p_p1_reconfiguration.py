@@ -20,7 +20,7 @@ def test_batched_live_action_packets_preserve_each_time_step():
     packets = p1._batched_live_action_tokens(params, action_block=5)
 
     assert packets.shape == (2, 2, 10)
-    expected = (torch.tanh(params) / 100.0 - torch.as_tensor(p1.p0.PUBLIC_ACTION_MEAN)) / torch.as_tensor(p1.p0.PUBLIC_ACTION_STD)
+    expected = (torch.tanh(params) - torch.as_tensor(p1.p0.PUBLIC_ACTION_MEAN)) / torch.as_tensor(p1.p0.PUBLIC_ACTION_STD)
     assert torch.allclose(packets, expected.repeat(1, 1, 5))
     assert torch.allclose(packets[..., 0::2], expected[..., :1].expand(-1, -1, 5))
     assert torch.allclose(packets[..., 1::2], expected[..., 1:].expand(-1, -1, 5))
@@ -38,19 +38,17 @@ def test_advance_accepts_a_batched_prefix_and_keeps_causal_packet_shape():
     assert successor_actions.shape == (2, 3, 10)
 
 
-def test_advance_matches_rollout_action_timing_with_a_bootstrap_transition():
+def test_advance_starts_at_actual_observed_root_and_matches_shifted_outgoing_actions():
     model = _Model()
-    emb = torch.zeros((1, 3, 4))
-    actions = torch.zeros((1, 3, 10))
+    emb = torch.arange(12, dtype=torch.float32).reshape(1, 3, 4)
+    actions = torch.ones((1, 3, 10))
     prefix = torch.ones((1, 1, 2))
 
     successor, _ = p1._advance(model, emb, actions, prefix)
 
-    # The mock adds the mean of the first action pair.  A rollout-consistent
-    # prefix must produce the history-only bootstrap followed by the prefix
-    # transition, rather than applying the prefix to the bootstrap itself.
+    # Nonzero past actions make an extra imagined bootstrap observable.
     packet = p1._batched_live_action_tokens(prefix, action_block=5)
-    expected_last = packet[..., :2].mean(dim=-1, keepdim=True).expand(-1, -1, 4)
+    expected_last = emb[:, -1:]+packet[..., :2].mean(dim=-1, keepdim=True).expand(-1, -1, 4)
     assert torch.allclose(successor[:, -1:], expected_last)
 
 
@@ -65,4 +63,4 @@ def test_frozen_projection_is_deterministic_and_root_shared():
 
 
 def test_p1_receipt_schema_requires_self_contained_replay_binding():
-    assert p1.SCHEMA.endswith(".v3")
+    assert p1.SCHEMA.endswith(".v5")

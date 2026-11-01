@@ -1,0 +1,11 @@
+# MAIN Hi gradient接缝修复probe v2
+
+v1真实CUDA报告SHA `44ce2355c454f690016ad73d1565659881da796c354c1799044c7ed11512c02d`保留；旧可信loader内部inference_mode截断动作图。新driver从v1机械继承完整prepare/verify/run/consume、全部425权重、资源、固定动作和固定FD判据，不改冻结节点、权重、模型、旧结果或科学门。
+
+唯一执行接线变化：construct/hash之后，显式wrap为 `agent_hilewm_differentiable_low_20261029_v1`，source SHA `dd22dc0bb15adc2978e8fe385b59113d2c7e1515539e80fdfdf778229cde8904`。前3个grad-enabled reference/whole/segmented均执行新方程facade，所有graph参数仍冻结，state_dict/hash仍是原graph。source closure追加facade三件套与绑定方程源，安装torch文件由继承父闭包覆盖。
+
+两次无梯度FD的reference显式使用facade保存的原graph，而非违反facade必须grad-enabled合同。它们仍是同一组原权重、相同source assembly的前向，不加新调用、不放宽FD判据。MAIN必须另将v2未扰动reference与v1已保存未扰动完整forward逐位比较，确认导数检查对应同一数值函数；旧trace只读复算不是额外神经重复，也不证明整个官方网络独立parity。
+
+新测试机械继承v1的48项来源/数组/梯度/layout/FD/partial/saved消费回归，另联合facade28项和seam39项。RAM fixtures不是真实梯度证据。真实prepare→主机CUDA→完整consume尚待执行，任何失败保留新版本partial，不重试挑配置。仍非P2配对、raw inverse、P1/P2科学通过。
+
+CLI同v1，module和结果独占stem改为 `agent_hilewm_transition_cuda_probe_20261029_v2`；必须MAIN审核后执行，模型实验只准主机CUDA。

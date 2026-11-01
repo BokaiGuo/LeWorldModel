@@ -1,0 +1,15 @@
+# CUDA raw 动作接口修复：实际重跑与严格验收
+
+v1已完成CUDA，但235次token重建存在CUDA tanh与NumPy tanh的ULP差异。未放行物理，不把这一接口错误当作理论负结果。
+
+v2直接保存每次CUDA forward实际使用的float32 raw buffer，候选与执行计划引用原buffer；独立重放同时逐位检查raw和prediction。数学设计、固定24case与预算不变，11项RAM测试通过。
+
+实际主机CUDA重跑退出0：24/24 sealed，312 predict，312个实际raw buffer，936条完整模块记录。saved-only独立消费者完成全部谱库、候选Q、稳定winner、持久化事件和精确模型动作/normalization/token桥核验，状态all24_saved_verified。NumPy tanh仅用于函数诊断，不是执行动作来源；真实raw→token→执行计划仍要求精确一致。
+
+证据均在le-wm-main/results：
+
+- capability_suffix_factorial_cuda_MAIN_20261027_v2_prepare_MAIN01.json：330412c675844d7edff23ade45012cf4ef4920f64bd47a31a0c49e6872f673f5
+- capability_suffix_factorial_cuda_MAIN_20261027_v2_MAIN01/report.json：fc620c9fdcbb5046c1d076c79cd0703da999275ec921de799f3747c0204d69ab
+- consume_suffix_factorial_MAIN_20261027_v2_MAIN01.json：3b17d6b6a7323545d0fb81034dac5e0c1d479b5a76de307bb2ca1a1ae1d8ad58
+
+仅证明该接口代码错误已修复与封存动作链一致。尚无此次24后缀的物理执行结果，不能宣称控制改善、P1通过、独立新根泛化或理论命题成立。仍是两个已知校准根。Pauli并行准备仅接受v2的物理适配器，MAIN负责源码审计与最终执行准入。其余四个子智能体并行推进强基线、新根认证、P2和P3。

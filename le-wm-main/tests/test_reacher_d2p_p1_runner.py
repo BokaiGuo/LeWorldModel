@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import h5py
+import torch
 
 from experiments.spectral_reachability.audit_reacher_d2p_p1_physical_nongreediness import audit
 from experiments.spectral_reachability.audit_reacher_d2p_p1_physical_alignment_calibration import audit as audit_calibration
@@ -115,6 +116,7 @@ def test_p1_runner_rejects_proposal_training_pool_with_different_deployed_dampin
         "seed_range": [200, 210],
         "proposal_contract": {
             "history_len": 3, "action_block": 5, "damping": 10.0,
+            "recompiled_suffix_solver": p1.p1.SUFFIX_SOLVER,
             "proposals": 128, "proposal_distribution": "physical_uniform",
             "selection_metric": "bounded_dls_suffix_goal_cost",
         },
@@ -128,6 +130,13 @@ def test_p1_runner_rejects_proposal_training_pool_with_different_deployed_dampin
         p1._validate_p1_proposal_training_contract(binding, args=args)
     args.damping = 10.0
     p1._validate_p1_proposal_training_contract(binding, args=args)
+    binding[0]["proposal_contract"].pop("recompiled_suffix_solver")
+    with pytest.raises(ValueError, match="recompiled_suffix_solver"):
+        p1._validate_p1_proposal_training_contract(binding, args=args)
+    binding[0]["proposal_contract"]["recompiled_suffix_solver"] = p1.p1.SUFFIX_SOLVER
+    args.future_reference = "same_bank_greedy"
+    with pytest.raises(ValueError, match="future_reference"):
+        p1._validate_p1_proposal_training_contract(binding, args=args)
 
 
 def test_p1_runner_accepts_only_a_mixture_that_covers_the_deployed_damping(tmp_path):
@@ -139,6 +148,7 @@ def test_p1_runner_accepts_only_a_mixture_that_covers_the_deployed_damping(tmp_p
             "seed_range": [200 + index * 20, 210 + index * 20],
             "proposal_contract": {
                 "history_len": 3, "action_block": 5, "damping": damping,
+                "recompiled_suffix_solver": p1.p1.SUFFIX_SOLVER,
                 "proposals": 128, "proposal_distribution": "physical_uniform",
                 "selection_metric": "bounded_dls_suffix_goal_cost",
             },
@@ -235,7 +245,9 @@ def test_p1_margin_band_selection_binds_its_sources_and_runtime_contract(tmp_pat
         "protocol_binding": {
             "checkpoint_weights_sha256": digest(weights), "adapter_sha256": digest(adapter),
             "runner_sha256": p1._sha256_file(p1.Path(p1.__file__)),
+            "context_module_sha256": p1._sha256_file(p1.Path(p1.context_runtime.__file__)),
             "mechanism_observability": "observed_encoded_goal_cost", "proposal_distribution": "physical_uniform",
+            "recompiled_suffix_solver": p1.p1.SUFFIX_SOLVER,
             "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 10.0, "action_block": 5,
             "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2, "proposals": 128,
             "max_relative_reachability_improvement": None, "min_second_to_first_singular_ratio": None,
@@ -315,7 +327,9 @@ def test_p1_task_critical_margin_band_requires_qpos_and_binds_only_its_source_re
         "protocol_binding": {
             "checkpoint_weights_sha256": digest(weights), "adapter_sha256": digest(adapter),
             "runner_sha256": p1._sha256_file(p1.Path(p1.__file__)),
+            "context_module_sha256": p1._sha256_file(p1.Path(p1.context_runtime.__file__)),
             "mechanism_observability": "qpos_distance", "proposal_distribution": "physical_uniform",
+            "recompiled_suffix_solver": p1.p1.SUFFIX_SOLVER,
             "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 10.0, "action_block": 5,
             "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2, "proposals": 128,
             "max_relative_reachability_improvement": None, "min_second_to_first_singular_ratio": None,
@@ -355,6 +369,31 @@ def test_p1_paired_summary_reports_root_paired_final_distance_direction():
     assert np.all(np.asarray(summary["ci95"]) <= 0.0)
 
 
+def test_source_matched_greedy_uses_same_packet_bank_and_frozen_immediate_cost(monkeypatch):
+    bank = torch.tensor([[[0.0, 0.0]], [[0.1, 0.2]], [[0.3, 0.4]]])
+    costs = torch.tensor([2.0, 1.5, 0.5])
+    monkeypatch.setattr(p1.p0, "_cost_fn", lambda *args, **kwargs: costs)
+    selected, receipt = p1._source_matched_greedy_program(
+        object(), torch.zeros((1, 3, 2)), torch.zeros((1, 1, 2)), torch.zeros((1, 3, 2)),
+        proposal_bank=bank, action_lower=torch.full((2,), -1.0), action_upper=torch.full((2,), 1.0),
+    )
+    assert torch.equal(selected, bank[2:3])
+    assert receipt["selected_proposal_index"] == 2
+    assert receipt["zero_immediate_goal_cost"] == 2.0
+
+
+def test_source_matched_mechanism_compares_actual_successors_in_the_same_packet_bank():
+    reconfiguration = {"observed_first_chunk": {"candidate_goal_cost": 0.8}}
+    greedy = {"observed_first_chunk": {"candidate_goal_cost": 0.6}}
+    assert p1._mechanism_non_greedy(
+        reconfiguration, observability="source_matched_observed_goal_cost", source_matched_method=greedy,
+    )
+    greedy["observed_first_chunk"]["candidate_goal_cost"] = 0.9
+    assert not p1._mechanism_non_greedy(
+        reconfiguration, observability="source_matched_observed_goal_cost", source_matched_method=greedy,
+    )
+
+
 def test_p1_preflight_validation_accepts_only_the_same_frozen_planning_contract(tmp_path):
     directory = tmp_path / "preflight"
     directory.mkdir()
@@ -368,6 +407,7 @@ def test_p1_preflight_validation_accepts_only_the_same_frozen_planning_contract(
         "schema": "d2p_reacher_p1_reconfiguration_preflight.v1", "status": "pass", "gates": {"cuda_only": True},
         "protocol": {
             "history_len": 3, "min_model_witness_roots": p1.p1.DEFAULT_MIN_MODEL_WITNESS_ROOTS,
+            "recompiled_suffix_solver": p1.p1.SUFFIX_SOLVER,
             "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2,
             "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform",
             "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 10.0,
@@ -377,6 +417,7 @@ def test_p1_preflight_validation_accepts_only_the_same_frozen_planning_contract(
         "inputs": {
             "weights_sha256": digest(weights), "adapter_sha256": digest(adapter),
             "runner_sha256": p1._sha256_file(p1.Path(p1.p1.__file__)),
+            "context_module_sha256": p1._sha256_file(p1.Path(p1.context_runtime.__file__)),
         },
         "upstream_p0_evidence": {"sha256": digest(p0_evidence)},
     }), encoding="utf-8")
@@ -388,8 +429,34 @@ def test_p1_preflight_validation_accepts_only_the_same_frozen_planning_contract(
         target_delta=(0.65, -0.65),
     )
     assert p1._validate_preflight(directory, args=args)["path"] == str(report.resolve())
+    saved = report.read_text()
+    stale = json.loads(saved)
+    stale["protocol"]["recompiled_suffix_solver"] = "bounded_single_step_dls"
+    report.write_text(json.dumps(stale))
+    with pytest.raises(ValueError, match="recompiled_suffix_solver"):
+        p1._validate_preflight(directory, args=args)
+    del stale["protocol"]["recompiled_suffix_solver"]
+    report.write_text(json.dumps(stale))
+    with pytest.raises(ValueError, match="recompiled_suffix_solver"):
+        p1._validate_preflight(directory, args=args)
+    report.write_text(saved)
+    args.future_reference = "same_bank_greedy"
+    with pytest.raises(ValueError, match="future_reference"):
+        p1._validate_preflight(directory, args=args)
+    args.future_reference = "zero_prefix"
     args.proposals = 64
     with pytest.raises(ValueError, match="proposals"):
+        p1._validate_preflight(directory, args=args)
+    # A stronger preflight is valid only when its witness threshold is carried
+    # forward explicitly by the consuming P1 panel.
+    args.proposals = 128
+    args.min_model_witness_roots = 4
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    payload["protocol"]["min_model_witness_roots"] = 4
+    report.write_text(json.dumps(payload), encoding="utf-8")
+    assert p1._validate_preflight(directory, args=args)["path"] == str(report.resolve())
+    args.min_model_witness_roots = 2
+    with pytest.raises(ValueError, match="min_model_witness_roots"):
         p1._validate_preflight(directory, args=args)
 
 
@@ -478,12 +545,30 @@ def test_p1_outcome_rejects_overlapping_calibration_roots(tmp_path):
     receipt = tmp_path / "calibration.json"
     receipt.write_text(json.dumps({
         "schema": "d2p_reacher_p1_reconfiguration.v1", "status": "calibration_only",
-        "gates": {"ok": True}, "protocol": {"calibration_only": True, "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 1.0e-6, "max_non_greedy_margin": None, "min_eligible_calibration_roots": 4, "warmup_policy": WARMUP_POLICY, "target_delta": [0.65, -0.65]},
-        "inputs": {"runner_sha256": p1._sha256_file(p1.Path(p1.__file__))}, "rows": [{"seed": 10}, {"seed": 11}],
+        "gates": {"ok": True}, "protocol": {"recompiled_suffix_solver": p1.p1.SUFFIX_SOLVER, "calibration_only": True, "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 1.0e-6, "max_non_greedy_margin": None, "min_eligible_calibration_roots": 4, "warmup_policy": WARMUP_POLICY, "target_delta": [0.65, -0.65]},
+        "inputs": {"runner_sha256": p1._sha256_file(p1.Path(p1.__file__)), "selector_sha256": p1._sha256_file(p1.Path(p1.p1.__file__)), "context_module_sha256": p1._sha256_file(p1.Path(p1.context_runtime.__file__))}, "rows": [{"seed": 10}, {"seed": 11}],
     }), encoding="utf-8")
     args = type("Args", (), {"reconfiguration_horizon": 1, "progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 1.0e-6, "max_non_greedy_margin": None, "max_relative_reachability_improvement": None, "min_second_to_first_singular_ratio": None, "min_eligible_calibration_roots": 4, "target_delta": (0.65, -0.65)})()
     with pytest.raises(ValueError, match="disjoint"):
         p1._validate_outcome_calibration(receipt, args=args, outcome_seeds={11, 12})
+    assert p1._validate_outcome_calibration(receipt, args=args, outcome_seeds={12, 13})
+    saved = receipt.read_text()
+    payload = json.loads(saved)
+    payload["inputs"].pop("context_module_sha256")
+    receipt.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="execution context differs"):
+        p1._validate_outcome_calibration(receipt, args=args, outcome_seeds={12, 13})
+    receipt.write_text(saved)
+    payload = json.loads(receipt.read_text())
+    payload["protocol"].pop("recompiled_suffix_solver")
+    receipt.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="configuration differs"):
+        p1._validate_outcome_calibration(receipt, args=args, outcome_seeds={12, 13})
+    payload["protocol"]["recompiled_suffix_solver"] = p1.p1.SUFFIX_SOLVER
+    payload["inputs"]["selector_sha256"] = "stale-selector"
+    receipt.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="selector differs"):
+        p1._validate_outcome_calibration(receipt, args=args, outcome_seeds={12, 13})
 
 
 def test_p1_outcome_rejects_calibration_with_different_nongreedy_margin(tmp_path):
@@ -491,7 +576,7 @@ def test_p1_outcome_rejects_calibration_with_different_nongreedy_margin(tmp_path
     receipt.write_text(json.dumps({
         "schema": "d2p_reacher_p1_reconfiguration.v1", "status": "calibration_only",
         "gates": {"ok": True}, "protocol": {"calibration_only": True, "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 0.05, "max_non_greedy_margin": None, "min_eligible_calibration_roots": 4, "warmup_policy": WARMUP_POLICY, "target_delta": [0.65, -0.65]},
-        "inputs": {"runner_sha256": p1._sha256_file(p1.Path(p1.__file__))}, "rows": [{"seed": 10}, {"seed": 11}],
+        "inputs": {"runner_sha256": p1._sha256_file(p1.Path(p1.__file__)), "selector_sha256": p1._sha256_file(p1.Path(p1.p1.__file__)), "context_module_sha256": p1._sha256_file(p1.Path(p1.context_runtime.__file__))}, "rows": [{"seed": 10}, {"seed": 11}],
     }), encoding="utf-8")
     args = type("Args", (), {"reconfiguration_horizon": 1, "progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 1.0e-6, "max_non_greedy_margin": None, "max_relative_reachability_improvement": None, "min_second_to_first_singular_ratio": None, "min_eligible_calibration_roots": 4, "target_delta": (0.65, -0.65)})()
     with pytest.raises(ValueError, match="configuration differs"):

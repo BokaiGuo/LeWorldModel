@@ -40,6 +40,8 @@ from experiments.checkpoint_compat import load_compatible_pretrained
 from experiments.run_live_cube_action_adapter_planning import ActionNormalizer
 from experiments.run_live_reacher_planning import ReacherGoalImageWrapper, _load_action_stats, install_missing_field_compat
 from experiments.spectral_reachability import run_reacher_d2p_p0_goal_progress as p0
+from experiments.spectral_reachability import d2p_stage_admission as stage_admission
+from experiments.spectral_reachability import reacher_d2p_context as context_runtime
 from experiments.spectral_reachability.preflight_reacher_d2p_p0 import (
     _jacobian_and_fd,
     _normalized_action_bounds,
@@ -53,6 +55,27 @@ from experiments.spectral_reachability.reacher_d2p_context import (
     collect_executed_context,
     restore_execution_snapshot,
 )
+from experiments.spectral_reachability.reacher_d2p_qpos_readout import (
+    qpos_readout_binding,
+    with_qpos_readout,
+)
+from experiments.spectral_reachability.reacher_d2p_packet_support import (
+    SOURCE_SUPPORTED_PROPOSAL_DISTRIBUTION,
+    WARMUP_POLICY as SOURCE_WARMUP_POLICY,
+    load_runtime_support,
+    proposal_parameters,
+    sample_history_packets,
+)
+from experiments.spectral_reachability.reacher_d2p_state_conditioned_support import (
+    STATE_CONDITIONED_SOURCE_PROPOSAL_DISTRIBUTION,
+    build_support as build_state_conditioned_support,
+    is_source_supported,
+    is_state_conditioned,
+    proposal_bank as state_conditioned_proposal_bank,
+)
+from experiments.spectral_reachability.reacher_d2p_reconfiguration_reference import (
+    FUTURE_REFERENCES, future_reference_row, improves_future_reference,
+)
 
 DEFAULT_RECONFIGURATION_PROPOSALS = 128
 DEFAULT_MIN_MODEL_WITNESS_ROOTS = 2
@@ -60,12 +83,18 @@ DEFAULT_RECONFIGURATION_PROPOSAL_DISTRIBUTION = "physical_uniform"
 RECONFIGURATION_PROPOSAL_DISTRIBUTIONS = (
     "physical_uniform",
     "legacy_tanh_gaussian",
+    SOURCE_SUPPORTED_PROPOSAL_DISTRIBUTION,
+    STATE_CONDITIONED_SOURCE_PROPOSAL_DISTRIBUTION,
 )
 DEFAULT_RECONFIGURATION_SELECTION_METRIC = "bounded_dls_suffix_goal_cost"
 RECONFIGURATION_SELECTION_METRICS = (
     "bounded_dls_suffix_goal_cost",
     "analytic_v_reach",
 )
+SUFFIX_STEP_RULES = ("legacy_full_step", "backtracking")
+DEFAULT_SUFFIX_STEP_RULE = "backtracking"
+SUFFIX_SOLVER = "bounded_single_step_dls_backtracking_v2"
+TRUST_REGION_STEP_SCALES = (1.0, 0.5, 0.25, 0.125, 0.0625, 0.0)
 
 
 def _declared_future_score_improvement(
@@ -84,6 +113,8 @@ def _declared_future_score_improvement(
         key = "bounded_dls_suffix_goal_cost_improvement"
     else:
         raise ValueError(f"unknown reconfiguration selection metric: {selection_metric}")
+    if receipt.get("future_reference") == "same_bank_greedy":
+        return float(receipt["future_reference_score_improvement"])
     return float(receipt[key])
 
 
@@ -126,6 +157,8 @@ def _reconfiguration_proposal_bank(
         raise ValueError("proposal bank dimensions are invalid")
     if distribution not in RECONFIGURATION_PROPOSAL_DISTRIBUTIONS:
         raise ValueError(f"unknown reconfiguration proposal distribution: {distribution}")
+    if is_source_supported(distribution):
+        raise ValueError("source-supported Reacher proposals require an immutable source packet bank")
     generator = torch.Generator(device=device).manual_seed(int(seed))
     shape = (int(proposals), int(horizon), int(action_dim))
     if distribution == "physical_uniform":
@@ -208,6 +241,33 @@ def _terminal_from_state(
     return terminal
 
 
+def _accept_suffix_update(terminal, update, predicted, goal_coordinate, *, step_rule: str) -> tuple:
+    """One DLS linearization, accepted only by the nonlinear frozen objective.
+
+    Evaluate each trial as a singleton, including an exact reuse of the origin
+    prediction for the zero fallback. Thus batching numerics cannot turn the
+    fallback into an apparent ascent. Legacy full-step is explicit diagnostic
+    compatibility, never the production default.
+    """
+    if step_rule not in SUFFIX_STEP_RULES:
+        raise ValueError("unknown suffix DLS step rule")
+    scales = TRUST_REGION_STEP_SCALES if step_rule == "backtracking" else (1.0,)
+    with torch.no_grad():
+        trials = [predicted.detach() if scale == 0 else terminal(update * scale) for scale in scales]
+        costs = torch.stack([(trial - goal_coordinate).square().mean() for trial in trials])
+        if not torch.isfinite(costs).all():
+            raise RuntimeError("suffix trust-region costs are non-finite")
+        index = int(torch.argmin(costs))
+        cost_before = float((predicted - goal_coordinate).square().mean())
+        if step_rule == "backtracking" and float(costs[index]) > cost_before:
+            raise RuntimeError("suffix trust-region accepted an objective ascent")
+    return update.detach() * scales[index], trials[index], {
+        "dls_step_rule": step_rule, "accepted_step_scale": float(scales[index]),
+        "trust_region_step_scales": list(scales), "trust_region_trial_costs": [float(cost) for cost in costs],
+        "full_step_bounded_dls_suffix_goal_cost": float(costs[0]),
+    }
+
+
 def _reachability_value(
     model: torch.nn.Module,
     goal_latent: torch.Tensor,
@@ -219,26 +279,35 @@ def _reachability_value(
     action_upper: torch.Tensor,
     damping: float,
     return_suffix_params: bool = False,
+    diagnostic_dampings: tuple[float, ...] = (),
+    suffix_step_rule: str = DEFAULT_SUFFIX_STEP_RULE,
 ) -> dict[str, Any]:
     """Compute the local DLS reachability value at one post-prefix state."""
 
     if emb_context.shape[0] != action_context.shape[0] or emb_context.shape[0] != 1:
         raise ValueError("local reachability requires exactly one reconfiguration state")
+    if any(not np.isfinite(value) or value <= 0 for value in (damping, *diagnostic_dampings)):
+        raise ValueError("reachability damping must be finite and positive")
     action_dim = int(action_context.shape[-1])
     origin = torch.zeros(future_horizon * action_dim, device=emb_context.device, requires_grad=True)
 
+    terminal_forward_evaluations = 0
     def terminal(flat: torch.Tensor) -> torch.Tensor:
-        return _terminal_from_state(
+        nonlocal terminal_forward_evaluations
+        terminal_forward_evaluations += 1
+        latent = _terminal_from_state(
             model, emb_context, action_context,
             flat.reshape(1, future_horizon, action_dim),
             action_lower=action_lower, action_upper=action_upper,
         )[0]
+        return p0._planning_coordinate(model, latent, role="predicted")
 
     predicted = terminal(origin)
     jacobian = torch.autograd.functional.jacobian(terminal, origin, vectorize=True)
     if jacobian.ndim != 2 or not torch.isfinite(jacobian).all() or float(jacobian.norm()) <= 1.0e-10:
         raise RuntimeError("post-reconfiguration suffix Jacobian is non-finite or zero")
-    residual = goal_latent - predicted
+    goal_coordinate = p0._planning_coordinate(model, goal_latent, role="goal")
+    residual = goal_coordinate - predicted
     left, singular, right_h = torch.linalg.svd(jacobian, full_matrices=False)
     coordinates = left.T @ residual
     orthogonal = residual - left @ coordinates
@@ -253,19 +322,47 @@ def _reachability_value(
     update = right_h.T @ (
         singular / (singular.square() + float(damping)) * coordinates
     )
-    with torch.no_grad():
-        bounded_terminal = terminal(update)
+    accepted_update, bounded_terminal, acceptance = _accept_suffix_update(
+        terminal, update, predicted, goal_coordinate, step_rule=suffix_step_rule,
+    )
     receipt: dict[str, Any] = {
         "value": float(value.detach()),
-        "predicted_terminal_goal_cost": float((predicted - goal_latent).square().mean().detach()),
-        "bounded_dls_suffix_goal_cost": float((bounded_terminal - goal_latent).square().mean().detach()),
+        "predicted_terminal_goal_cost": float((predicted - goal_coordinate).square().mean().detach()),
+        "bounded_dls_suffix_goal_cost": float((bounded_terminal - goal_coordinate).square().mean().detach()),
         "unbounded_dls_parameter_l2": float(torch.linalg.vector_norm(update).detach()),
         "jacobian_frobenius_norm": float(jacobian.norm().detach()),
         "singular_values": [float(item) for item in singular.detach().cpu()],
         "effective_rank_1e-4": int((singular > singular[0] * 1.0e-4).sum()),
+        "residual_squared_norm": float(residual.square().sum().detach()),
+        "orthogonal_residual_squared_norm": float(orthogonal.square().sum().detach()),
+        "first_order_unreachable_residual_fraction": float((orthogonal.square().sum() / residual.square().sum().clamp_min(1e-12)).detach()),
+        "jacobian_output_dimension": int(jacobian.shape[0]),
+        "jacobian_input_dimension": int(jacobian.shape[1]),
+        "backward_vjp_rows": int(jacobian.shape[0]),
+        **acceptance,
     }
+    if diagnostic_dampings:
+        # Reuse the identical Jacobian/SVD; these are model-only diagnostic
+        # scores, never an automatic damping choice or a physical admission.
+        diagnostics = []
+        with torch.no_grad():
+            for candidate_damping in diagnostic_dampings:
+                candidate_update = right_h.T @ (singular / (singular.square() + float(candidate_damping)) * coordinates)
+                _, candidate_terminal, candidate_acceptance = _accept_suffix_update(
+                    terminal, candidate_update, predicted, goal_coordinate, step_rule=suffix_step_rule,
+                )
+                candidate_value = orthogonal.square().sum() + (float(candidate_damping) / (singular.square() + float(candidate_damping)) * coordinates.square()).sum()
+                diagnostics.append({"damping": float(candidate_damping), "value": float(candidate_value),
+                    "bounded_dls_suffix_goal_cost": float((candidate_terminal - goal_coordinate).square().mean()),
+                    "unbounded_dls_parameter_l2": float(torch.linalg.vector_norm(candidate_update)),
+                    "tanh_parameter_saturation_fraction": float((torch.tanh(candidate_update).abs() >= 0.99).float().mean()),
+                    **candidate_acceptance})
+        receipt["diagnostic_damping_scores"] = diagnostics
+    receipt["forward_rollout_evaluations"] = terminal_forward_evaluations
+    receipt["model_predict_sample_evaluations"] = terminal_forward_evaluations * int(future_horizon)
+    receipt["compute_accounting"] = "suffix terminal primal calls counted; reverse-mode VJP rows equal Jacobian output dimension, not rank"
     if return_suffix_params:
-        receipt["_bounded_dls_suffix_params"] = update.detach().reshape(1, future_horizon, action_dim)
+        receipt["_bounded_dls_suffix_params"] = accepted_update.reshape(1, future_horizon, action_dim)
     return receipt
 
 
@@ -296,7 +393,12 @@ def _bounded_single_step_dls_program(
     )
     params = reach.pop("_bounded_dls_suffix_params")
     return params, {
-        "program_type": "bounded_single_step_dls",
+        "program_type": SUFFIX_SOLVER,
+        "dls_step_rule": reach["dls_step_rule"],
+        "accepted_step_scale": reach["accepted_step_scale"],
+        "trust_region_step_scales": reach["trust_region_step_scales"],
+        "trust_region_trial_costs": reach["trust_region_trial_costs"],
+        "full_step_bounded_dls_suffix_goal_cost": reach["full_step_bounded_dls_suffix_goal_cost"],
         "initialization": "zero",
         "selection_equivalent_suffix_solver": True,
         "predicted_cost_before": reach["predicted_terminal_goal_cost"],
@@ -307,8 +409,11 @@ def _bounded_single_step_dls_program(
         "damping": float(damping),
         "relinearization_steps_requested": 1,
         "relinearization_steps_executed": 1,
-        "forward_rollout_evaluations": 1,
-        "backward_vjp_rows": len(reach["singular_values"]),
+        "forward_rollout_evaluations": reach["forward_rollout_evaluations"],
+        "model_predict_sample_evaluations": reach["model_predict_sample_evaluations"],
+        "backward_vjp_rows": reach["backward_vjp_rows"],
+        "jacobian_output_dimension": reach["jacobian_output_dimension"],
+        "jacobian_input_dimension": reach["jacobian_input_dimension"],
         "actual_model_cost_nonincreasing": reach["bounded_dls_suffix_goal_cost"] <= reach["predicted_terminal_goal_cost"] + 1.0e-6,
     }
 
@@ -333,9 +438,13 @@ def _compile_reconfiguration(
     min_second_to_first_singular_ratio: float | None = None,
     proposal_distribution: str = DEFAULT_RECONFIGURATION_PROPOSAL_DISTRIBUTION,
     selection_metric: str = DEFAULT_RECONFIGURATION_SELECTION_METRIC,
+    proposal_bank: torch.Tensor | None = None,
+    future_reference: str = "zero_prefix",
 ) -> tuple[torch.Tensor | None, dict[str, Any]]:
     """Select a non-greedy prefix by its *future* local reachability value."""
 
+    if future_reference not in FUTURE_REFERENCES:
+        raise ValueError("unknown P1 future reference")
     if proposals < 2 or reconfiguration_horizon < 1 or future_horizon < 1:
         raise ValueError("reconfiguration proposals and horizons must be positive")
     if non_greedy_margin < 0.0 or (max_non_greedy_margin is not None and max_non_greedy_margin < non_greedy_margin):
@@ -346,10 +455,16 @@ def _compile_reconfiguration(
         raise ValueError("minimum second-to-first singular ratio must lie in (0, 1]")
     if selection_metric not in RECONFIGURATION_SELECTION_METRICS:
         raise ValueError(f"unknown reconfiguration selection metric: {selection_metric}")
-    bank = _reconfiguration_proposal_bank(
-        proposals=proposals, horizon=reconfiguration_horizon, action_dim=history.shape[-1],
-        device=history.device, dtype=history.dtype, seed=seed, distribution=proposal_distribution,
-    )
+    if proposal_bank is None:
+        bank = _reconfiguration_proposal_bank(
+            proposals=proposals, horizon=reconfiguration_horizon, action_dim=history.shape[-1],
+            device=history.device, dtype=history.dtype, seed=seed, distribution=proposal_distribution,
+        )
+    else:
+        bank = proposal_bank.to(device=history.device, dtype=history.dtype)
+        expected = (int(proposals), int(reconfiguration_horizon), int(history.shape[-1]))
+        if tuple(bank.shape) != expected or not torch.isfinite(bank).all() or torch.count_nonzero(bank[0]) != 0:
+            raise ValueError("supplied Reacher proposal bank is not a finite zero-controlled P1 bank")
     goal_latent = p0._goal_latent(model, goal)
     immediate = p0._cost_fn(
         model, pixels, goal, history, bank,
@@ -379,11 +494,25 @@ def _compile_reconfiguration(
             raise RuntimeError("reconfiguration Jacobian requires two positive leading singular values")
         row["second_to_first_singular_ratio"] = float(singular[1] / singular[0])
     selected_score = "value" if selection_metric == "analytic_v_reach" else "bounded_dls_suffix_goal_cost"
+    reference = future_reference_row(rows, future_reference)
+    reference_receipt = {
+        "future_reference": future_reference,
+        "future_reference_proposal_index": int(reference["proposal_index"]),
+        "future_reference_score": float(reference[selected_score]),
+        "recompiled_suffix_solver": SUFFIX_SOLVER,
+        "forward_rollout_evaluations": int(2 * proposals + sum(row["forward_rollout_evaluations"] for row in rows)),
+        "model_predict_sample_evaluations": int(2 * proposals * reconfiguration_horizon + sum(row["model_predict_sample_evaluations"] for row in rows)),
+        "backward_vjp_rows": int(sum(row["backward_vjp_rows"] for row in rows)),
+        "compute_accounting": "sample-equivalent terminal/prefix rollouts; model.predict sample evaluations separate; reverse-mode VJP output rows, not singular-value count",
+    }
     eligible = [
         row for row in rows[1:]
         if row["immediate_goal_cost"] >= zero["immediate_goal_cost"] + float(non_greedy_margin)
         and (max_non_greedy_margin is None or row["immediate_goal_cost"] <= zero["immediate_goal_cost"] + float(max_non_greedy_margin))
         and row[selected_score] <= zero[selected_score] - float(reachability_margin)
+        and (future_reference == "zero_prefix" or improves_future_reference(
+            row, reference, score=selected_score, margin=float(reachability_margin)
+        ))
         and (max_relative_reachability_improvement is None or row["relative_reachability_value_improvement"] <= max_relative_reachability_improvement)
         and (min_second_to_first_singular_ratio is None or row["second_to_first_singular_ratio"] >= min_second_to_first_singular_ratio)
     ]
@@ -395,9 +524,8 @@ def _compile_reconfiguration(
             "proposal_rows": rows,
             "selected_proposal_index": None,
             "non_greedy_witness_found": False,
-            "reason": "no proposal lies in the frozen immediate-cost, relative-reachability-improvement, and spectral-balance bands while improving the declared bounded or analytic future score versus no reconfiguration",
-            "forward_rollout_evaluations": int(proposals),
-            "backward_vjp_rows": int(sum(len(row["singular_values"]) for row in rows)),
+            **reference_receipt,
+            "reason": "no proposal satisfies the frozen non-greedy bands and declared future-reference improvement",
         }
     selected = min(eligible, key=lambda row: (row[selected_score], row["proposal_index"]))
     return bank[selected["proposal_index"]:selected["proposal_index"] + 1].detach(), {
@@ -407,7 +535,9 @@ def _compile_reconfiguration(
         "proposal_rows": rows,
         "selected_proposal_index": int(selected["proposal_index"]),
         "non_greedy_witness_found": True,
-        "selection_rule": "minimum declared future score among chunks in frozen immediate-cost, relative-reachability-improvement, and spectral-balance bands that improve that score versus no reconfiguration",
+        **reference_receipt,
+        "future_reference_score_improvement": float(reference[selected_score] - selected[selected_score]),
+        "selection_rule": "minimum declared future score among chunks in frozen non-greedy bands that improve zero-prefix and, when requested, the same-bank greedy future reference",
         "non_greedy_model_margin": float(selected["immediate_goal_cost"] - zero["immediate_goal_cost"]),
         "min_non_greedy_margin": float(non_greedy_margin),
         "max_non_greedy_margin": None if max_non_greedy_margin is None else float(max_non_greedy_margin),
@@ -421,22 +551,39 @@ def _compile_reconfiguration(
         "min_second_to_first_singular_ratio": (
             None if min_second_to_first_singular_ratio is None else float(min_second_to_first_singular_ratio)
         ),
-        "forward_rollout_evaluations": int(proposals),
-        "backward_vjp_rows": int(sum(len(row["singular_values"]) for row in rows)),
     }
 
 
-def _validate_upstream_p0(path: Path) -> dict[str, Any]:
+def _p0_context_contract(proposal_distribution: str) -> tuple[str, str]:
+    """Return the P0 context distribution required by this P1 proposal law."""
+
+    if is_source_supported(proposal_distribution):
+        return "source_contiguous", SOURCE_WARMUP_POLICY + ".contiguous_history"
+    return "uniform", WARMUP_POLICY
+
+
+def _validate_upstream_p0(
+    path: Path, *, expected_context_support: str, expected_warmup_policy: str,
+    expected_qpos_binding: dict[str, Any],
+) -> dict[str, Any]:
     report = json.loads(path.read_text(encoding="utf-8"))
     if report.get("schema") != "d2p_reacher_p0_goal_progress.v1":
         raise ValueError("P1 requires a Reacher D2P P0 report")
-    if not report.get("stage_gate", {}).get("p1_unlocked"):
-        raise ValueError("P1 requires an affirmative P0 admission report")
-    if not all(report.get("gates", {}).values()):
-        raise ValueError("P1 upstream P0 report has a failed gate")
-    if report.get("protocol", {}).get("warmup_policy") != WARMUP_POLICY:
+    admission_reason = stage_admission.validate_p0_admission_report(report)
+    protocol = report.get("protocol", {})
+    if protocol.get("context_support") != expected_context_support:
+        raise ValueError("P1 upstream P0 report uses an incompatible context-support distribution")
+    if protocol.get("warmup_policy") != expected_warmup_policy:
         raise ValueError("P1 upstream P0 report uses an incompatible warmup action-packet policy")
-    return {"path": str(path.resolve()), "sha256": _sha256_file(path), "p1_unlocked": True}
+    if protocol.get("qpos_readout_binding") != expected_qpos_binding:
+        raise ValueError("P1 upstream P0 report uses an incompatible planning-coordinate binding")
+    return {
+        "path": str(path.resolve()), "sha256": _sha256_file(path), "p1_unlocked": True,
+        "context_support": expected_context_support, "warmup_policy": expected_warmup_policy,
+        "qpos_readout_binding": expected_qpos_binding,
+        "strict_admission_revalidated": True, "strict_admission_reason": admission_reason,
+        "stage_admission_sha256": _sha256_file(Path(stage_admission.__file__)),
+    }
 
 
 def main() -> None:
@@ -445,6 +592,10 @@ def main() -> None:
     parser.add_argument("--p0-evidence", type=Path, required=True)
     parser.add_argument("--policy", type=Path, default=Path("/home/gbk/.stable_worldmodel/checkpoints/reacher/lewm"))
     parser.add_argument("--adapter-artifact", type=Path, default=Path("results/live_cross_environment_prediction_20261015/reacher_cuda/cross_environment_prediction.json"))
+    parser.add_argument("--qpos-readout", type=Path, default=None,
+                        help="Optional frozen source-calibrated encoder qpos chart; requires --predicted-qpos-readout.")
+    parser.add_argument("--predicted-qpos-readout", type=Path, default=None,
+                        help="Optional frozen source-calibrated predictor qpos chart; requires --qpos-readout.")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=20262700)
     parser.add_argument("--roots", type=int, default=2)
@@ -465,6 +616,9 @@ def main() -> None:
         default=DEFAULT_RECONFIGURATION_PROPOSAL_DISTRIBUTION,
         help="Frozen candidate-bank measure; physical_uniform matches the calibration action Box.",
     )
+    parser.add_argument("--source-index-size", type=int, default=4096)
+    parser.add_argument("--source-index-seed", type=int, default=2026103700)
+    parser.add_argument("--source-index-batch-size", type=int, default=64)
     parser.add_argument(
         "--selection-metric", choices=RECONFIGURATION_SELECTION_METRICS,
         default=DEFAULT_RECONFIGURATION_SELECTION_METRIC,
@@ -472,6 +626,8 @@ def main() -> None:
     )
     parser.add_argument("--damping", type=float, default=0.01)
     parser.add_argument("--non-greedy-margin", type=float, default=1.0e-6)
+    parser.add_argument("--future-reference", choices=FUTURE_REFERENCES, default="same_bank_greedy",
+                        help="Require a model-side future gain over same-bank greedy; use zero_prefix only to reproduce the legacy contract.")
     parser.add_argument(
         "--max-relative-reachability-improvement", type=float, default=None,
         help="Optional model-only upper guard on relative V_reach improvement.",
@@ -497,17 +653,43 @@ def main() -> None:
         raise ValueError("maximum relative reachability improvement must lie in (0, 1]")
     if args.min_second_to_first_singular_ratio is not None and not 0.0 < args.min_second_to_first_singular_ratio <= 1.0:
         raise ValueError("minimum second-to-first singular ratio must lie in (0, 1]")
-    upstream = _validate_upstream_p0(args.p0_evidence)
+    readout_binding = qpos_readout_binding(
+        args.qpos_readout, args.predicted_qpos_readout,
+        policy_weights_sha256=_sha256_file(args.policy / "weights.pt"),
+        adapter_sha256=_sha256_file(args.adapter_artifact),
+    )
+    expected_context_support, expected_warmup_policy = _p0_context_contract(args.proposal_distribution)
+    upstream = _validate_upstream_p0(
+        args.p0_evidence, expected_context_support=expected_context_support,
+        expected_warmup_policy=expected_warmup_policy,
+        expected_qpos_binding=readout_binding,
+    )
 
     install_missing_field_compat()
     device = torch.device("cuda")
     validate_training_semantic_receipt(args.adapter_artifact)
     mean, std = _load_action_stats(args.adapter_artifact, "swm/ReacherDMControl-v0")
+    source_pool = source_histories = source_support = source_history_support = None
+    if args.proposal_distribution == SOURCE_SUPPORTED_PROPOSAL_DISTRIBUTION:
+        source_pool, source_histories, source_support, source_history_support = load_runtime_support(
+            args.adapter_artifact, history_len=args.history_len, action_block=args.action_block,
+        )
     model = load_compatible_pretrained(args.policy, device="cuda").eval()
-    model.requires_grad_(False)
     model.interpolate_pos_encoding = True
+    model = with_qpos_readout(model, readout_binding).to(device).eval()
+    model.requires_grad_(False)
     hash_before = _parameter_hash(model)
     preprocessor = _Preprocessor(ActionNormalizer(mean, std))
+    state_conditioned_support = None
+    if is_state_conditioned(args.proposal_distribution):
+        state_conditioned_support = build_state_conditioned_support(
+            adapter=args.adapter_artifact, model=model, preprocessor=preprocessor, device=device,
+            history_len=args.history_len, action_block=args.action_block, index_size=args.source_index_size,
+            index_seed=args.source_index_seed, batch_size=args.source_index_batch_size,
+        )
+        source_histories = state_conditioned_support["histories"]
+        source_history_support = state_conditioned_support["receipt"]["history_support"]
+        source_support = state_conditioned_support["receipt"]
     env = ReacherGoalImageWrapper(gym.make("swm/ReacherDMControl-v0", render_mode="rgb_array"), target_delta=args.target_delta)
     action_dim = int(np.prod(env.action_space.shape))
     checkpoint_block = p0._validate_reacher_action_protocol(model, mean, std, action_dim=action_dim, action_block=args.action_block)
@@ -518,8 +700,28 @@ def main() -> None:
     try:
         for offset in range(args.roots):
             seed = int(args.seed + offset)
-            context = collect_executed_context(env, seed=seed, history_len=args.history_len, action_block=args.action_block)
+            proposal_bank = proposal_support = None
+            if not is_source_supported(args.proposal_distribution):
+                context = collect_executed_context(env, seed=seed, history_len=args.history_len, action_block=args.action_block)
+            else:
+                packets, history_index = sample_history_packets(source_histories, seed=seed)
+                context = collect_executed_context(
+                    env, seed=seed, history_len=args.history_len, action_block=args.action_block,
+                    warmup_packets=packets, warmup_policy=SOURCE_WARMUP_POLICY + ".contiguous_history",
+                )
+                if source_pool is not None:
+                    proposal_bank, proposal_support = proposal_parameters(
+                        source_pool, proposals=args.proposals, horizon=args.reconfiguration_horizon, seed=seed,
+                        mean=mean, std=std, lower=lower, upper=upper,
+                    )
+                    proposal_support["contiguous_warmup_sequence_index"] = int(history_index)
             pixels, goal, history = p0._prepare(preprocessor, context["frames"], context["root_frame"], context["goal"], np.asarray(context["history_action_blocks"], dtype=np.float32), device)
+            if state_conditioned_support is not None:
+                proposal_bank, proposal_support = state_conditioned_proposal_bank(
+                    support=state_conditioned_support, pixels=pixels, history=history, model=model,
+                    proposals=args.proposals, mean=mean, std=std, lower=lower, upper=upper,
+                )
+                proposal_support["contiguous_warmup_sequence_index"] = int(history_index)
             params, compilation = _compile_reconfiguration(
                 model, pixels, goal, history, reconfiguration_horizon=args.reconfiguration_horizon,
                 future_horizon=args.future_horizon, action_lower=lower, action_upper=upper,
@@ -529,10 +731,18 @@ def main() -> None:
                 min_second_to_first_singular_ratio=args.min_second_to_first_singular_ratio,
                 proposal_distribution=args.proposal_distribution,
                 selection_metric=args.selection_metric,
+                future_reference=args.future_reference,
+                proposal_bank=proposal_bank,
             )
+            if proposal_support is not None:
+                compilation["source_proposal_support"] = proposal_support
             row: dict[str, Any] = {
                 "seed": seed,
-                "initial_context": {key: context[key] for key in ("context_mode", "warmup_policy", "root_rgb_sha256", "goal_rgb_sha256", "warmup_actions_sha256")},
+                "initial_context": {
+                    **{key: context[key] for key in ("context_mode", "warmup_policy", "root_rgb_sha256", "goal_rgb_sha256", "warmup_actions_sha256")},
+                    "context_support": expected_context_support,
+                    "contiguous_warmup_sequence_index": None if proposal_support is None else proposal_support["contiguous_warmup_sequence_index"],
+                },
                 "reconfiguration": compilation,
             }
             if params is not None:
@@ -620,17 +830,28 @@ def main() -> None:
             "action_block": args.action_block,
             "checkpoint_action_block": checkpoint_block,
             "context_mode": "executed_warmup then observed_successor_recompile",
-            "warmup_policy": WARMUP_POLICY,
+            "context_support": expected_context_support,
+            "warmup_policy": (
+                SOURCE_WARMUP_POLICY + ".contiguous_history"
+                if is_source_supported(args.proposal_distribution) else WARMUP_POLICY
+            ),
             "target_delta": list(args.target_delta),
             "damping": args.damping,
             "proposals": args.proposals,
             "proposal_distribution": args.proposal_distribution,
             "selection_metric": args.selection_metric,
+            "future_reference": args.future_reference,
+            "source_index_size": args.source_index_size if is_state_conditioned(args.proposal_distribution) else None,
+            "source_index_seed": args.source_index_seed if is_state_conditioned(args.proposal_distribution) else None,
+            "source_index_batch_size": args.source_index_batch_size if is_state_conditioned(args.proposal_distribution) else None,
+            "qpos_readout_binding": readout_binding,
+            "source_packet_support": source_support,
+            "contiguous_warmup_support": source_history_support,
             "max_relative_reachability_improvement": args.max_relative_reachability_improvement,
             "min_second_to_first_singular_ratio": args.min_second_to_first_singular_ratio,
-            "recompiled_suffix_solver": "bounded_single_step_dls; identical solver family to the bounded selector score",
+            "recompiled_suffix_solver": SUFFIX_SOLVER,
         },
-        "inputs": {"checkpoint": str(args.policy.resolve()), "weights_sha256": _sha256_file(args.policy / "weights.pt"), "adapter_artifact": str(args.adapter_artifact.resolve()), "adapter_sha256": _sha256_file(args.adapter_artifact), "runner_sha256": _sha256_file(Path(__file__))},
+        "inputs": {"checkpoint": str(args.policy.resolve()), "weights_sha256": _sha256_file(args.policy / "weights.pt"), "adapter_artifact": str(args.adapter_artifact.resolve()), "adapter_sha256": _sha256_file(args.adapter_artifact), "qpos_readout_binding": readout_binding, "runner_sha256": _sha256_file(Path(__file__)), "context_module_sha256": _sha256_file(Path(context_runtime.__file__))},
         "parameter_hash_before": hash_before,
         "parameter_hash_after": hash_after,
         "gates": gates,

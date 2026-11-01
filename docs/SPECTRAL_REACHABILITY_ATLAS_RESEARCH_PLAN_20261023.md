@@ -1,5 +1,315 @@
 # Spectral Reachability Atlas：冻结视觉世界模型的动态可达几何
 
+## 阅读入口：最新审计优先于历史流水（2026-10-26）
+
+候选度量进一步验证已完成：保持原五goal差分投影固定，对物体x/y±16与角度
+±0.15、未见推杆对角位置做44次主机CUDA编码；9门及44个独立最小二乘复算
+通过。物体编码变化能量保留中位86.8%（最差72.7%），未见推杆中位0.28%。
+这是目标表示层面的正面前提，不是物体控制信息/预测排序/物理收益保证，
+尚未打开P1；正式方法还需明确goal集合输入、全链一致和独立物理验证。
+见[目标推杆干预后续敏感性验证](D2P_PUSHT_GOAL_AGENT_INTERVENTION_20261026.md)。
+
+最新主机CUDA目标干预已完成：20次目标编码、9门及960个成本独立复算通过。
+物体目标/动作固定，只平移目标RGB的推杆，full192 one-shot/GN4固定库
+terminal argmin在16干预中改变4/2次，确认物理物体任务之外的目标约束会
+影响评分。它不是原selector改变或控制修复证据。有限goal集合的nuisance
+投影候选已实现，但尚缺物体敏感性、全链一致编译与新根物理效能验证。
+见[目标推杆干预](D2P_PUSHT_GOAL_AGENT_INTERVENTION_20261026.md)。
+
+PushT最新保存数组审计：全2336736动作的sample std比公开常数高约3.3%，
+尚无权重训练版本绑定，未更换部署归一化。全部192真实分支中，三种求解器
+分别51/47/40条仅推杆运动而物体终点姿态精确未变，且29/33/28条仍有真实
+编码RGB改善。物体目标与RGB代理的差异已有具体执行证据，但尚不构成因果
+根因或理论否定；既有4个封存selected后缀均未改变物体，原P1继续关闭。
+见[PushT动作统计与物体响应](D2P_PUSHT_ACTION_STATS_AND_OBJECT_RESPONSE_20261026.md)。
+
+最新完成：完整Q一致编译器及真实能力探针之后，已补696个同度量/残差合同
+独立拟合，并完成32根纯模型条件主机CUDA状态准入与全量独立复算。
+149184预测样本、15完整性门通过，但单执行器平台且采样逃逸合格根仅1个，
+不足冻结的8根，最终准入列表为空；不补根、不改阈值、不开P1后续阶段。
+PushT当前可见资产尚不能认证官方checkpoint训练normalizer，不能以公开示例
+常数冒充确切溯源。相关回归1591项通过，研究未闭环且不宣告理论失败。
+详见[机制合同与模型条件队列](D2P_MECHANISM_CONTRACT_AND_MODEL_COHORT_20261026.md)。
+
+最新追加：新独立八根57单元真实能力测量与8目标/32轨迹精确重放已完成；
+目标编码器输入co-metric已实际完成1536主机CUDA VJP和408证书QP，独立
+复算及原固定基线配对对照见[前缀能力审计最新节](D2P_PREFIX_CAPABILITY_AUDIT_20261026.md)。
+仅肩/仅腕已知库重评出现控制收益，但完整能力合取与正式P1仍未通过，不能
+以诊断完成替代原研究闭环；也不将代理不一致外推为理论失败。
+
+**C2缺失环节已进一步分解**：新增52个真实前缀后继单元的2864条未来、5988个
+主机CUDA预测、11门全部通过和624份独立有界拟合。当前四角色的终态获益不自动
+对应关节任务的控制能力提高，且RGB/关节共同可达增益可方向不同。
+24根全部17程序事后覆盖检查发现，后缀搜索改善后，18/19/19根各有真实非贪心且
+双终态指标更好的候选，但旧common仅选中1/0/1根。未将事后候选用于部署或修改
+P1。全17前缀首轮在第七根出现零未来重放非逐位一致而严格停止；第七根51单元
+独立分层CUDA复查204条未来、408次编码全部一致，尚未复现该长运行问题。
+审计器已补保存失败现场，不放宽规则，并从头启动全新v2完整CUDA重跑。
+部分完整库预览出现被旧共同增益条件遗漏的物理能力诊断候选，同时存在RGB与
+真实关节代理度量错位；不能把selector未选出见证等同理论失败。原52单元仍必须
+逐位复现，v2未完成前不记全库通过。
+见[前缀能力与选择缺口](D2P_PREFIX_CAPABILITY_AUDIT_20261026.md)。
+
+**新定位到代理评分造成的具体误选**：官方冻结模型、16已知根三任务816个程序，
+240条真实分支/35088个主机CUDA预测/15门完整通过，1632个新QP独立复算。
+已知全驱动坏根202650004只把零切点线性代价替换为已有非线性可行动作代价，
+不增加搜索，即从真实终距1.654116降至0.024495；固定重线性化进一步至0.018549。
+这证明一处实现代理失败，不是理论负结果。但收益由单个已知根主导，三任务仍
+没有合格的相对zero非贪心被选根，不开放P1。新8根来源隔离确认现已完成：
+另240分支/35088预测/15门通过，1632个QP独立复算，旧八根五种执行逐位复现。
+新仅肩只换评分均距0.697934→0.560880，2胜/0负/6平；同优化native对greedy
+3胜/0负/5平，但仍非相对zero非贪心，不能开放P1。全驱动/腕无稳定新增优势。
+24根stage代价下界检查仅2根全面排除非贪心，不能把该问题泛化为全部根因。
+见[零切点代理因果审计](D2P_RECENTERED_REACH_AUDIT_20261026.md)。
+
+**上一包误差补偿已做完整因果对照**：同16根三任务三固定程序四执行方式，
+576条真实分支/29376个主机CUDA样本/12门全通过；原三方式432分支1296包的
+动作、192维预测、真实观测及求解receipt逐位复现。补偿纠正了同动作诊断004
+的预测margin，却改错另一根，实际执行004仍劣于同反馈greedy；三任务相对
+同预算目标重规划的距离/RGB区间均跨零。不将该办法设默认，不开放P1，也不
+将剩余失配归为理论失败。相关1150项回归通过，见
+[因果残差对照](D2P_CAUSAL_RESIDUAL_AUDIT_20261026.md)。
+
+**逐包定位与反馈执行修正完成**：全16已知根、三任务144条固定程序的432个包与
+原真实执行/官方rollout精确一致，1728个CUDA预测样本；关键004在真实历史单步
+预测下仍反转。另完成全部432条因果反馈分支、19728个CUDA样本和1296组执行
+回执独立核验，原前缀不动。全驱动路标跟踪均距0.127644→0.113647，12胜/4负；
+关键004对同反馈greedy转为真实终态更优，但非原同动作排序修复，肩/腕无稳定
+收益，不开放P1或据此否定理论。新增指标拓扑错误已修，432实测端点不受影响；
+相关广覆盖1131项通过。见[逐包反馈修正](D2P_MASKED_PACKET_FEEDBACK_REPAIR_20261026.md)。
+
+**固定前缀后缀搜索已确认数值不足**：全八根×三任务×17前缀的主机CUDA干预
+1224条真实分支、349320个predict样本、16门全通过，原408分支精确重放，816个
+QP独立复算。仅改善后缀为保留原解的CEM后GN4，全驱动/仅肩/仅腕全前缀均距
+0.779198/0.897793/0.861826→0.147112/0.650112/0.711909，不能将旧搜索失败
+归为理论结论；但旧选择器整体未改善，两个新增模型候选仍有一个真实RGB反转。
+原提案own-state reach cost与旧common-residual gain不是同一合同，已实现独立
+且结果前封存的 `prefix_MSE + own_V/192` 选择器，不回填P1。新八根确认还复现
+官方真实源状态被硬限位起点检查错误拒绝；显式v2保留软限位源状态而不放宽目标，
+16根源状态/渲染审计全部通过，15个原有效上下文逐位不变。同八新根CUDA基线与
+后缀确认现已全部完成，456+1224条物理分支、59568+349320个predict样本、14/16门
+全通过，408基线分支逐位重放，另816个QP复核。新任务全前缀均距全驱动/仅肩/
+仅腕0.699495/0.842140/0.839171→0.073673/0.589849/0.762679，前两任务八根均
+改善；own-state选择并未产生非贪心见证，旧判据新增全驱动候选有真实终点反转。
+独立审计另修复flat-CEM singleton兜底与后缀初始NaN/形状fail-open漏洞，全部
+16根三任务97392个CUDA样本、10门差分回归保持原动作/预测逐位不变，不能冒称
+本批反转根因。三张全根图/9项SHA均复核；P1仍关闭，最新1072项回归通过。详见
+[后缀求解与残差合同审计](D2P_MASKED_SUFFIX_SEARCH_AUDIT_20261026.md)。
+
+**严格单执行器新任务预检完成**：旧5%力矩不能等同关闭执行器。新增reduced raw
+chart，未启用关节为字面原始零，过去历史不屏蔽、未来归一化一次。八个独立新根、
+两时域两幅度，976条真实未来与2272个主机CUDA predict样本、12门全通过，384个
+有界线性拟合独立复算。幅度0.25两包物理最小响应奇异值全驱动/仅肩/仅腕均值
+0.489252/0.032425/0.024709；这是短时条件变差，不是不可控性或重配置成功。
+另一批与全部200个旧episode隔离的新八根的完整动作见证审计亦已完成：456条
+真实分支、59568个predict样本、14门全通过；408个程序分段/整段预测逐位相同。
+三任务均0/8合格重配置，native回退greedy；全驱动flat GN/CEM+GN incumbent均距
+0.865052/0.028534，不能由搜索失败推断模型无能力。首版新writer身份错误已修复，
+完整重跑与独立归因确认全部456分支/1368包、预测及动作不变，仅身份写入修正，
+失败版保留，不冒充旧P1根因。两组全根双图及SHA复核通过；最新989项合同回归
+通过，不调P1门或宣布理论失败。详见
+[严格执行器任务与程序审计](D2P_EXACT_ACTUATOR_TASK_AUDIT_20261026.md)。
+
+**C2真实后继响应已直接测量**：同八根全部64个真实prefix后继，双尺度二十维
+command正负探针共5184条真实未来、10496个主机CUDA predict样本，12项完整性
+门通过；448增益独立复核、双图/产物SHA核验，最新906项合同回归通过。模型内部
+AD/FD接近不等于真实RGB响应准确；相对greedy未建立稳定qpos控制增益，普通全
+驱动任务尚不能当合格controllability-gap family。反馈终态改善仍有效，但不等于
+独有能力改变机制；不开放P1，也不宣布理论失败。首版审计的一次严格重放失配
+未在512边界隔离与修订版复现，根因仍待定，未放宽阈值或删失败证据。详见
+[真实动作响应与重放审计](D2P_FEEDBACK_PHYSICAL_RESPONSE_AUDIT_20261026.md)。
+
+**剩余反转已做固定动作误差定位及真实反馈干预**：官方原生与手写rollout全64个
+192维边界逐位相同，未发现这条路径的索引差异；真实已执行历史单包预测消除
+003的诊断反转，不能当部署oracle。先封存全部原计划/waypoint、再只用本分支
+已观察RGB固定4次GN跟踪的64条真实分支已完成，5536个CUDA predict样本、
+全部门通过。native均距0.044392→0.024082（7胜/1负），但原非贪心条件仍未
+恢复，不开放P1。新八根202648000..007与历史184个episode隔离，确认协议在
+结果产生前封存，四阶段现已全部完成：192条完整分支、401878个CUDA predict样本，
+完整性门全通过。native初始计划均距0.063315→0.027490，8胜/0负；七个模型
+witness经反馈后相对固定neutral均保留真实非贪心条件，新根001恢复。但动作已改，
+不能当同动作排序fidelity；原方案仍有001反转，旧批003仍未修复，对同反馈强对照
+CI跨零，P1仍不开放。四张新图及产物SHA均已核验，最新874项合同回归通过。见
+[因果反馈修正与证据边界](D2P_WAYPOINT_TRACKING_REPAIR_20261026.md)。
+
+**合法任务合同新根确认已跑完**：官方原始冻结权重、来源隔离的8根202647000..007，
+显式goal admission、136词/128条真实分支、398540个CUDA predict样本，14项完整性
+门全部通过。native dispatch/同库greedy/CEM均距0.032802/0.032761/0.024858，
+对greedy为2胜/4负/2平，描述性CI跨零；6个模型witness中5个真实RGB非贪心，
+合法目标根202647003仍反转。本批没有目标反射，也没有joint-repair模型，不能
+冒称限位干预效能或BN修复泛化。所有根保留、独立后处理和两张图/manifest均已
+核验，P1仍不开放，不能上升为理论否定。见
+[合法目标新根确认](D2P_GOAL_JOINT_LIMIT_REPAIR_20261026.md)。
+
+**原六根margin反转已有代码级因果定位**：原回执使用joint-repair而非官方原始
+权重。固定全部六根、目标、动作、真实RGB与完整192维视觉坐标，官方原始排序
+为6/6，joint-repair为4/6。保留joint-repair全部学习参数、仅恢复预测头的三个
+BatchNorm运行buffer，同样恢复6/6；反向统计交换令官方变为5/6。FP64动力学
+不改变排序。因此此前对这六根“代码问题已排除、冻结模型边界”的归因过宽。
+三条repair trainer已默认固定base BN运行统计，并在主机CUDA真实训练样本的
+实际训练循环中逐条验证：两种模式共6个optimizer step，新模式统计不漂移、
+参数仍更新、梯度有限。全六根图与严格向量后处理已复核，相关广覆盖757项通过。
+原两动作被正确判为贪心，纠正错误见证
+不等于P1成功；training-free主线仍用官方原始权重，不借此打开P2/P3/P5。
+见[预测头归一化根因与修复](D2P_PREDICTION_NORMALIZATION_REPAIR_20261026.md)。
+
+**最新发现的代码根因**：目标事务将有限位wrist当成周期关节环绕，两个最严重根
+202644006/202646001的目标分别+3.030815/+3.132241 rad，超出实际±160°范围。
+这不是checkpoint可靠性结论，更不是理论失败。新增明确版本的限位合法目标
+wrapper，全部16原始根/32条CUDA分支已完成，73728个predict样本、全部门通过。
+两个坏根同样CEM设置的距离分别0.831375→0.075630、0.753711→0.086552，
+其余14根图像/轨迹/动作/终态精确不变。保持完整偏移幅度、不删根，这是显式
+新任务合同，不回填旧P1。最新广覆盖684项通过；其他合法目标排序反转仍待解决。
+用户引用的原6根margin校准已另做精确上下文/目标元数据重放，全部目标合法；
+原反转20274802/20274804不受此修复影响，不能将两个后续坏根修复冒称原问题全解。
+见[目标关节拓扑修复](D2P_GOAL_JOINT_LIMIT_REPAIR_20261026.md)。
+
+**独立确认及逐包反馈均已完成**：来源隔离8新根的136词/128条分支全门通过，
+413302个predict样本；新dispatch/greedy均距0.176866/0.176877，描述性CI跨零，
+4个witness中3个首段真实RGB非贪心。另8已知根逐包反馈共40次30步执行，
+129480个predict样本，全部重放门通过；开环/冷反馈/carry反馈均距
+0.152007/0.117004/0.135600，增加反馈未修复上述越界目标。最新广覆盖658项
+通过，图和复现见[逐包反馈审计](D2P_PACKET_FEEDBACK_AUDIT_20261026.md)。
+
+**新增全词评分/执行合同审计**：8根136词、128条主机CUDA真实分支全部完成；
+旧优化器成本/轨迹/动作和历史完整终态精确复现，所有完整性门通过，实际predict
+样本353414。统一后缀评分改变6/8个决定，但新dispatch均距0.128201，旧runtime
+为0.124054；对同样runtime的greedy为3胜/3负/2平且CI跨零，6个新witness仅
+2个真实RGB首段非贪心。此候选干预不充分解释失败，不接入默认部署，不宣称
+P1或理论负结果。排除168个旧episode的新8根独立确认已在主机CUDA完成，
+结果见上方最新条目。此原审计当时相关回归596项通过，见
+[统一数值后缀合同](D2P_STATE_NATIVE_SUFFIX_CONTRACT_20261026.md)。
+
+**同轮选择目标消融已完成**：取消非贪心优先，按全17词模型终点取最小，8根
+32条主机CUDA分支全通过原基线/重复决定精确回放。3胜/1负/4平，但最难根
+0.800530→0.919481、真实终态RGB也恶化，整体均距0.128201→0.136998。
+不把它部署成修复或用于绕过P1；相关广覆盖617项通过，详细全根结果仍见上述页。
+
+**同轮搜索覆盖审计已完成**：8根32条主机CUDA分支、804992个predict样本，
+原完整CEM轨迹和native终态精确重放，全部门通过。固定128微批，将128×3/16elite
+扩为1024×12/64elite，完整六包开环计划均距0.152007→0.123128（7胜/1负）；
+同native前缀后缀搜索反而0.128201→0.142566（3胜/5负）。最难根仍未解决，
+不能把模型目标下降等同物理修复。此为已知根联合搜索干预、非等资源、非逐包
+CEM-MPC，不修改P1。最新广覆盖632项通过，证据及两张全根图仍见上述页。
+
+**新增后缀盆地审计**：全部8根、相同prefix/相同初始动作的48条主机CUDA分支
+已完成；原动作、模型预测、真实终态精确复现，command前向、Jacobian链式法则
+与FD通过。根202643006局部距离1.476133，同模型CEM后缀为0.028642，说明该根
+严重失败是可被搜索修复的数值盆地限制。单换box或多迭代未解决该根，模型成本
+选多起点的全根均距为0.035700（原0.215253），但描述性CI跨零。8个新episode、
+四类prefix、192条主机CUDA分支的独立确认亦完成，107432个predict样本、全部
+完整性门通过。dispatch均距0.361358→0.124054（6胜/2负）；但修复greedy/CEM
+分别为0.121340/0.123306，dispatch对二者区间均跨零。七个witness仍有一个首段
+RGB反转。回归535项通过；部分数值问题修复不等于P1或研究闭环完成。
+见[动作坐标与多起点修复](D2P_SUFFIX_ACTION_CHART_AND_MULTISTART_20261026.md)。
+
+**最新代码因果修复**：已确认选前缀时的imagined suffix被丢弃、执行后从零重编译
+会破坏部分完整计划。8旧根全136词的408条主机CUDA后缀干预全部完成且精确复现
+原cold；cold/warm模型成本incumbent将均距0.458002降至0.124733。排除此前152个
+episode的8新根/80条物理分支确认亦完成，均距0.467475→0.215253，对cold为3胜/
+2负/3平，对同样修复greedy为5胜/0负/3平。完整CEM incumbent仍为0.039051，
+五个witness仍有一个真实RGB首段反转。回归482项通过；不把部分代码修复写成正式
+P1或C1--C3闭环。小样本CI敏感性与所有失败分支见
+[计划连续性修复](D2P_SUFFIX_CONTINUITY_REPAIR_20261026.md)。
+
+**此前两项主机CUDA检验**：24个既有任务/根单元的自身残差/Jacobian交换对照已
+完成，旧残差、113个响应、决定及物理对照均精确复现；新诊断未带来修复，未接入
+部署。另落地冻结Jacobian生成有限动作词，在8个新episode上测完17词和两类平坦
+对照，共152条30步真实分支，四包前缀逐包更新RGB/动作历史。6个模型witness仅
+3个保持真实RGB非贪心；dispatch均距0.458002，仍弱于完整CEM的0.120545。
+全部词/顺序对保留，不调阈值、不选择性删根，旧反转、正式P1和研究闭环仍未解决。
+详见[残差锚点与动作顺序实验](D2P_RESIDUAL_ANCHOR_AND_ACTION_WORDS_20261026.md)。
+
+**本轮新增代码溯源**：32根四分支五档raw动作插值的640次主机CUDA执行全部
+通过接口与精确回放检查，021/027首段反转仍保留。固定4096-episode、排除此前
+144个episode的三帧RGB历史检索，与同库随机包的2048个候选单元对照已全部完成；
+排序一致率95.51%→95.65%，配对区间跨零，不能宣称修复。旧近零动作与字面零
+的微小残差仅改变其他两根，不解释原反转。另找到并修复P1 consumer信任旧true
+标志/空gate的准入漏洞，以及P1→P2触零CI误放行；四份历史P0正例仍通过严格复核。
+神经/编译/执行函数AST不变，最新相关回归403项通过。原P1和整套研究仍未闭环，
+不把代码/协议修复、审计结束或checkpoint局部误差写成理论否定。
+
+**最新选择器与物理机制审计**：40 根固定候选一致求解对照、完整128候选新8根
+（与前120个episode隔离）及后继物理控制探针均已完成。新8根选出6个witness，
+真实RGB首段非贪心6/6、qpos仅3/6；全根对同库greedy为3胜/3负/2平，均差
+-0.011168、描述性CI跨零。逐候选一致求解并未确立稳定重配置优势，计算亦不匹配。
+物理探针进一步发现：同一greedy目标残差下，仅2/6个witness在两个固定尺度均
+改善有界后续响应；不能把更好的优化后终点直接命名为控制能力改变。24条完整
+动作见证均精确回放。新模型侧共同目标响应资格的另一组新8根已完成（与此前128个
+episode隔离）：0个witness、全部精确回退greedy，不能冒充P1修好。同根固定决定
+因果重放已完成：对仅看终点的策略3胜/1负/4平，CI跨零，仍会拒绝一个真实好分支。
+进一步发现新1000步box-QP在真实latent上未收敛（投影残差约1e-3），已实现带
+误差证书的active-set QP，完成相同22个模型矩阵的主机CUDA复核：最大目标误差上界
+4.285461e-13，但8根选择完全不变。因此该数值缺口不解释本批零放行，亦不解释历史P1。
+新的certified三任务矩阵24单元及三组物理几何已全部完成：全驱动/弱肩/弱肘，
+同一8个新来源episode、与此前136个隔离，逐任务FD/动作限制/完整CEM-MPC。
+全驱动0 witness、
+后者1 witness且实际RGB/qpos首段非贪心、同根终态优于greedy/CEM；弱肩对greedy
+全根均差-0.003254，对CEM为4胜/4负，单根受益不是整体优势。弱肘0 witness、
+全部greedy。唯一弱肩病例双尺度物理响应相对greedy更好，但不如zero，仅有部分
+机制支持。三任务合并审计通过，不计作P1通过。另修复P0→P1触零CI误放行门：
+严格负区间并绑定完整性gate；神经/执行函数AST未变。此漏洞不解释历史负结果。
+最新相关逻辑回归358项通过。
+40根审计中剔除的4个旧witness实际均不如greedy，旧两个首段RGB反转仍保留。
+
+**新增因果证据，覆盖下文旧 CEM 判断**：固定 32 个根和相同首段，仅恢复 CEM
+搜索中保存的尾段、无需更多搜索，两种 CEM 输出均 32/32 优于旧公共 DLS 后缀；
+完整 CEM tail 对旧 dispatcher 为 30 胜 / 2 负。旧 CEM 对照其实搜索三段、只执行
+首段再换 controller，不能当作完整 CEM-MPC 强基线。Dispatcher 同首段的实际 RGB
+CEM 后缀也将均距从 0.257405 降到 0.033826（31 胜 / 1 负），但增加了计算。
+这确认了一项执行协议问题；首段 RGB 排序、P1 和完整研究闭环仍待解决。
+证据：`reacher_d2p_cem_execution_contract32_20261025_cuda.json`；详见下述审计页。
+谱后缀修复的固定 1/2/4/8 次 SVD 对照也已完成：dispatcher 均距分别为
+0.257405/0.183632/0.133556/0.101150，8 次对单次 29 胜 / 1 负 / 2 平，但尚不及
+observed-CEM。所有首次迭代动作/终态精确重放，模型未训练，首段保持不变。
+这是已验证的后缀求解不足，不是 P1 非贪心排序已解决；合并代码逻辑回归 283 项通过。
+进一步将 coarse-stop 的最小非零步长从 1/16 扩展为下探到 1/65536（仅停步时尝试），
+5/5 个 dispatcher 停步分支都找到了模型下降且真实终态改善，其他27根动作不变；
+均距降到 0.083214，仍非 P1 pass。8 个新 episode 的三版本确认及真正 CEM-MPC
+现已全部完成；与前 112 个 episode 隔离、完整 93 GB source SHA 重新通过。
+Dispatcher single/coarse-8/fine-8 均距为 0.226112/0.118124/0.057419，fine-8 对
+原单次 8 胜 / 0 负；真正 CEM-MPC 为 0.032064。唯一重配置根在 greedy 后缀充分
+优化后失去原优势，因此这是后缀实现修复的新根支持，不是 P1 pass 或完整研究闭环。
+该阶段 289 项代码逻辑回归通过；后续新增作业状态以本页开头为准。
+另已完成官方/runtime RGB 交叉审计，不支持渲染迁移是官方动作预测误差的主要来源；
+CEM 历史最优保留单独改善 20 根模型目标，却没有改善整体物理终态。以上均为主机
+CUDA、原始冻结 checkpoint、已知根诊断，不是新效益或理论否定。
+
+后文保留大量旧协议、旧 checkpoint 与中断记录，用于溯源，不代表这些判断仍是当前全局结论。
+原提案 C1--C3、三组实验和 P0--P5 的完整缺口表见
+[研究闭环审计](D2P_RESEARCH_CLOSURE_AUDIT_20261025.md)；该清单不降低原有研究范围。
+Reacher 当前证据见 [原始 RGB 与代码修复审计](REACHER_D2P_SOURCE_NATIVE_RGB_AUDIT_20261025.md)：
+原始冻结模型的 32-root RGB 排序复核已完成；继续发现并修复了 DLS 过冲接受、预算低报和
+`mj_forward` 改写 snapshot warm-start 的问题。因此“所有代码解释已排除”不是已成立结论。
+小阻尼下已观察到一个真实非贪心两段收益案例，但其整体 8-root 中性回退策略仍差于贪心。
+独立来源 episode 的 32-root 完整确认已在精确状态修复后完成：6 根有 witness，5 根两段
+终态优于两个对照，但 qpos 对 zero 的首段非贪心仅 1/6，全根 neutral fallback 仍劣于 greedy。
+正式 P1、等预算强基线与完整
+Planning Compiler 闭环仍未完成。不得把诊断成功或完成运行当作阶段通过。
+
+最新继续审计：32/32 evaluator-target RGB 与绑定目标精确一致，self-goal encoder 代价均为零；
+但实际观测的 RGB/qpos 局部几何仍有反转，不能混写两坐标。另把“无重配置 witness”与
+“执行 neutral prefix”拆开，新增纯模型 progress fallback；旧 32-root 分支重放相对 greedy
+均差由 +0.465292 变为 -0.033304，但这是开发后重放，不是新 efficacy。固定 32 个新根、
+与此前 72 个 source episode 隔离的主机 CUDA 全根执行与 CEM 对照已完整完成，所有完整性
+gate 通过。新 dispatcher 对 greedy 为 4 胜 / 3 负 / 25 平，均差 -0.013170，95% 描述性
+CI [-0.048198,+0.020525] 跨零；对 zero 为 32 胜，对这份探索性 CEM 为 29 胜 / 3 负。
+回退修复得到新根证据，但重配置的增量收益和计算效率均未确立；dispatcher 的 VJP 工作
+与耗时明显高于两个对照，不能声称完整等预算优势。eligible 首段相对 zero 的真实 RGB/qpos
+非贪心为 5/7，原 P1 仍不自动解锁。最新代码回归 125 项通过，完整细节见上述审计页。
+
+进一步完成 128 个固定首段的主机 CUDA 同根回放：RGB/action/observed costs 精确复现，
+仅有最大 4.77e-7 的 singleton/batch 模型分数差，不解释两个排序反转。只用过去已观测
+transition 的 unit innovation 将 mean latent L2 降至 1.094625，但 eligible 排序仍为 5/7，
+不采用其作为开门规则。审计函数单根 batch 校验漏洞已修复，但原实验未触发它。
+另已完成 8 个新根的三种未来动作限制任务（与前 104 个 episode 隔离）：24 单元的动作、
+FD 和重放完整性均通过，full/weak-shoulder/weak-elbow 的 witness 为 0/2/2，仍非正式 P1。
+后缀置零消融的 72 条完整轨迹精确重现原分段终态；两例需要后缀控制才能反超 greedy，
+另有受益例主要来自被动运动，不能算成控制能力改善。新排序误差分解表明，两个反转根
+即便有 0.996 的响应余弦，目标投影误差仍可反转排序，future-zero oracle anchor 也修不好。
+全 10 维、双尺度的 1,280 次真实动作干预已完成，未发现新增梯度实现错误证据；有限尺度
+曲率、渲染量化和预测响应差异不混写成理论失败。最新相关逻辑回归 244 项通过。
+
 ## 研究对象与边界
 
 本计划将 LeWorldModel 的后续研究从“对规划是否可信的诊断或拒绝”转为一个
@@ -183,7 +493,7 @@ CUDA-gated 审计固定 20 个 roots、9 个帧、`+5/+10` horizons，共 360 �
 
 ### 当前阶段结论（以 provenance-bound 回执为准）
 
-#### 当前 P 阶段分支账本（2026-10-24）
+#### 当前 P 阶段分支账本（Reacher 更新至 2026-10-25，其余按既有回执）
 
 本项目中存在名称相同、但不能互相替代的 P 阶段序列。后续命令必须先选择正确分支；不得把一个
 分支的成功、失败或现成 runner 迁移为另一个分支的证据。
@@ -191,12 +501,57 @@ CUDA-gated 审计固定 20 个 roots、9 个帧、`+5/+10` horizons，共 360 �
 | 分支 | 已验证到的边界 | 当前未完成阶段 | 为什么不能直接继续 |
 |---|---|---|---|
 | PointMaze-SRA | P0--P3 的输入/物理标签审计通过；P4 的 fresh RGB-only closed-loop panel 已封存 | P5 跨 checkpoint/任务复制 | P4 只覆盖一个冻结 PointMaze checkpoint、生成但合同已审计的新 root distribution、固定五臂 bank 与四个 model blocks；它不自动构成 Reacher、PushT 或跨架构结果。 |
-| Reacher-D2P | 官方 HDF5 训练语义、future-target detach、packet statistics 与 fresh P0 均已复验；P1 的 RGB 与 qpos 校准均在 root-disjoint bound panel fail-closed | P2--P5；另有官方 HDF5 dynamics-repair 诊断在运行 | 当前冻结 checkpoint 的 model-side non-greedy margin 不能稳定外推为真实 successor/physical non-greediness。该边界已排除 normalization、warmup、snapshot、time-window、GPU 与 fidelity-replay 代码解释；训练修复只诊断 checkpoint 训练合同，不能冒充原始 frozen-D2P 成功。 |
+| Reacher-D2P | 历史 48-root P0 与 model-only preflight 保留；原始冻结模型 source-native 32-root RGB 排序复核完整完成；DLS 接受规则、完整状态 warm-start 与预算记录已修复，另完成新 dispatcher 的 32-root CUDA 诊断 | 新合同的正式 P1 preflight / calibration / outcome、等资源强基线、P2--P5 | 不能再声称所有代码解释已排除。新 dispatcher 7 个 witness 的真实 RGB/qpos 对 zero 非贪心为 5/7；对 greedy 的全根均差 -0.013170、CI 跨零，且计算成本明显更高。回退拖累已得到同根分支证据，重配置增量和 controllability-gap 任务前提仍未确立。历史 P0/preflight 不可跨新 solver/context SHA 复用；诊断成功不自动解锁 P2。 |
+| TwoRoom-D2P | source-supported P0、root-anchored P1 与同可行域 comparator 的 CUDA/replay 合同均通过 | P1 mechanism calibration，以及 P2/P5 | 旧 raw-zero 机制门曾把 source-supported prefix 与 OOD control 作正式比较，现已由 sealed same-bank greedy 修复；修复后的 8-root calibration 仍有 3/8 physical order reversals，且 24-branch exact audit 排除了 packet recovery、五步执行、successor RGB、原生 rollout、目标语义和 root context 错误。它是该冻结 checkpoint 的 model-to-physical ranking boundary，不是 D2P 或谱理论的一般反例。 |
 | PointMaze effect-adapter/HTSC | strict RGB closed-loop panels 已完成 | 不是 SRA 的 P4 证据 | 它的 `visual_dynamics` 通过 calibration-only latent-to-position readout 评分，不执行 SRA 的 action-Jacobian/spectral chart。它可作为独立基线/工程证据，不能替代 SRA 的机制检验。 |
 | PushT-D2P / 跨模型 | time-major action packet 与 rollout bootstrap 对齐修复后，PushT P0 通过、P1 24-root outcome fail-closed | PushT P2--P5；全项目 P5 独立冻结模型复制 | PushT 的 23 个模型 witness 有 5 个在真实物理 prefix 上翻转为更贪心；CUDA、same-root zero、successor recompile、independent replay 与 root-disjoint gates 均通过。现有 TwoRoom/Cube adapter/teacher 结果不满足 training-free D2P，不能充作 P5。 |
 
-该账本的作用是区分**尚缺实现/协议**（SRA P4 controller）与**已经测试但不满足机制门**
-（D2P P1-qpos calibration），二者都不是谱理论或世界模型理论的反例。
+该账本的作用是区分**尚缺实现/协议**、**已实现但尚无足够新合同证据**与**已经测试但不满足
+机制门**。PointMaze 的 P4 已有受限分支证据，不能再将其 controller 笼统写作未实现；
+Reacher 的新诊断也不能当作正式 P1 通过。以上均不构成谱理论或世界模型理论的一般反例。
+
+#### Reacher-D2P complete-state/preflight 合同修复与 fresh P0/P1（2026-10-25）
+
+对仍为负的 Reacher receipt 再次做 runtime 审计后，执行 snapshot 补齐了 MuJoCo complete
+state 与 model geometry 的分离保存；在为了重渲染 goal RGB 临时改写状态后，必须重新恢复
+完整 state，而不能只恢复 qpos/qvel。这一修复有 unit-test contract，且不会将 evaluator qpos
+暴露给 planner。P1 preflight 的 witness threshold 也已从旧 runner 的隐式默认值改为显式绑定。
+
+同一审计还发现 P1 preflight 的 witness threshold 可在 preflight CLI 中声明、但旧 P1 runner
+硬编码默认值，导致更强 preflight 不能被其消费。runner 现显式绑定
+`min_model_witness_roots` 于 preflight、calibration 和 outcome receipt；这避免弱化或混淆
+preflight 门槛。
+
+在上述输入与重放合同下，主机 CUDA 的 fresh 48-root P0 outcome
+`results/d2p_reacher_p0_goalmarker_confirmation_n48_20261025_cuda/report.json` 中，
+D2P goal-progress minus CEM 的 final-qpos-distance mean 为 `-0.270831`，paired bootstrap
+95% CI 为 `[-0.437139, -0.124588]`（40/48 D2P wins）。CUDA、冻结 hash、相同 planner/
+execution root RGB、physical action box 和 D2P=local-Gauss--Newton gates 全部通过。因此旧
+Reacher P0 negative receipts 仅保留为发现过期输入/状态合同缺陷的诊断，不能作为当前 P1 的
+上游否定。
+
+P1 使用新的 root-disjoint preflight（4/4 model witness；所有 finite-difference、RGB root
+identity 与 future-score gates 通过）后，在 6 个 calibration roots 上得到 6/6 model-side
+reconfiguration witnesses。然而同根 raw-zero physical control 显示仅 3/6 witness 是真实
+non-greedy。独立 CUDA first-chunk fidelity audit 同时确认 raw/normalized packet inversion、
+warmup 与 successor replay 均精确，却只有 3/6 candidate-vs-zero model goal-cost orders 与
+实际 successor RGB encoder orders 一致。权威 receipts 为
+`results/d2p_reacher_p1_goalmarker_contract_preflight_n4_20261025_cuda/report.json`、
+`results/d2p_reacher_p1_goalmarker_qpos_calibration_n6_20261025_cuda/report.json` 与同目录
+`first_chunk_fidelity.json`。
+
+为避免把 renderer 假设误记作机制解释，新增的 host-CUDA source RGB contract audit
+`results/reacher_d2p_source_rgb_contract_v2_20261025_cuda/report.json` 从官方 HDF5 的 24 个
+`qpos/qvel/target_pos` roots 出发，仅把 target geometry 在 source 位置与当前 fingertip 位置间
+交换。每个样本的两张 runtime RGB 完全相同（最大 mean-absolute pixel error 为 0），说明该
+environment 的 target 默认透明：marker mutation 不会进入冻结模型的像素输入。独立 source
+temporal audit 则确认声明的 packet shift `0` 是严格最优（mean latent MSE `0.0381412`，shift
+`-1/+1` 分别为 `0.751267/0.737448`），故一 packet 时间错位也不是此失败的代码解释。
+
+因此此 checkpoint 的 Reacher P1 outcome 继续 fail-closed：不得通过改变 margin、改用 outcome
+qpos 或重复 calibration roots 绕过。这个结果把当前缺口精确限定为**冻结 checkpoint 对
+action-conditioned one-token successor order 的可靠性**；它既不否定 P0 的 D2P goal-progress
+结果，也不构成“谱/D2P 理论失败”。
 
 #### Reacher-D2P action-normalization contract repair（2026-10-24）
 
@@ -1609,6 +1964,393 @@ warmup/snapshot、root reuse、CUDA 与 fidelity replay 的代码解释，但不
 P2--P5 不得从该 Reacher chain 打开；独立可执行路径是 TwoRoom 的 fresh frozen RGB/action-history
 P5 runtime，且不得复用 adapter、teacher、privileged oracle 或 reactive-controller 结果。
 
+#### TwoRoom-D2P：fresh P0 runtime 已通过输入与微分合同（2026-10-25）
+
+TwoRoom 的旧 live-ranking 路径同时使用了 legacy post-packet action statistics、重复单帧和全零
+history；它不能检验这个 checkpoint 的 D2P。新的
+`preflight_tworoom_d2p_p0.py` 改为只读取训练语义 receipt：每个 token 都是五个**实际执行**的 raw
+`[x,y]` controls，按 time-major 打平并在 packetisation 后保持相同的二维训练 z-score。它在计划根前
+执行三个完整 packet，模型只接收由这些因果 RGB/action pairs 构成的历史和 rendered goal；post-warmup
+RGB root 仅作为 evaluator-side identity anchor，环境 state 从不进入模型。
+
+主机 RTX 5060 Ti / CUDA 13.0 的不可覆盖 receipt
+`le-wm-main/results/tworoom_d2p_p0_preflight_20261025_cuda/report.json` 在 seeds
+`202610250--202610253` 全部通过：Jacobian Frobenius norms 为 `9.08495, 4.52302, 2.37676,
+4.14428`，中心差分中位相对误差为 `0.000384--0.000851`，checkpoint 及所有 frozen parameters
+hash 不变。这个结果只建立新的 TwoRoom D2P 微分 runtime 可用；它既不是闭环收益也不是 P5 成功。
+它解除的是独立 TwoRoom P1 calibration 的**实现前置条件**，而不是绕过 Reacher P1 或改写其
+checkpoint-specific reliability boundary。
+
+#### TwoRoom-D2P P1：训练动作包支持修复与重新校准（2026-10-25）
+
+在把第一轮 TwoRoom P1 的模型—物理失配归类为 checkpoint 边界前，新增了训练源的
+**五步包支持**审计。此前 runtime 虽正确复用了训练期二维 mean/std，但 warmup 和
+prefix proposal 在连续 action box 内独立均匀采样；这不能证明 ten-dimensional
+time-major token 位于训练支持内。训练 HDF5 中约 `40.7%` 的有限 raw actions 精确位于
+离散边界网格，故单步统计匹配不足以排除 action-sequence OOD。
+
+新的 `tworoom_d2p_packet_support.py` 只从同一训练 HDF5 的**同 episode、连续五步**
+raw action window 采样，不读取环境 outcome。它将 source HDF5 SHA、870,809 个有限包的
+pool SHA、warmup source indices 和 prefix proposal source indices 写入 immutable receipt；
+raw-zero 保留为明确的相同根对照。P0 的 source-supported v2 receipt
+`results/tworoom_d2p_p0_preflight_support_v2_20261025_cuda/report.json` 在主机 CUDA 上重新
+通过非零 Jacobian、有限差分、冻结 hash 和 source-supported warmup gates。其 P1 preflight
+在新 roots `202610300--202610303` 上获得 `3/4` 模型侧 non-greedy witnesses，且没有执行
+任何候选。
+
+物理校准
+`results/tworoom_d2p_p1_calibration_support_v2_20261025_cuda/report.json` 保持 same-root
+raw-zero、sealed prefix、observed successor recompile 和独立 replay 的全部合同，但在三个
+model-eligible roots 中仍有一个 selected packet 在真实距离上比 zero 更接近目标，因此
+physical non-greediness gate 仍 fail closed。独立 fidelity receipt
+`results/tworoom_d2p_p1_prefix_fidelity_support_v2_20261025_cuda/report.json` 又确认
+P1 recurrence 与 checkpoint 原生 rollout 精确相等、每包五个低层动作及 packet-boundary
+label 可复放、RGB successor 和 post-prefix causal context 均匹配。故第一轮连续均匀
+packet 的结果降级为 `superseded_protocol`；当前 source-supported 失败不能归因于
+action-sequence support、time axis、replay、CUDA 或 label timing。P2/P5 仍不得从这条
+TwoRoom P1 链打开；它仅建立该 frozen checkpoint 在此训练支持及 RGB/action contract
+下尚未通过 model-to-physical reconfiguration calibration，不是 D2P 或谱理论的一般反例。
+
+为排除“16 个 support packets 覆盖太稀疏”的剩余实现解释，另行预声明了完全独立的
+64-candidate、8-root source-supported calibration；它使用新 roots `202610320--202610327`，
+不读取第一轮 calibration 的物理标签。preflight receipt
+`results/tworoom_d2p_p1_preflight_support_coverage64_20261025_cuda/report.json` 在 8 根中
+生成 7 个 sealed model-side witnesses。物理 calibration receipt
+`results/tworoom_d2p_p1_calibration_support_coverage64_20261025_cuda/report.json` 显示
+这 **7/7** 个 eligible selected packets 都比 raw-zero 更接近真实目标：
+selected-minus-zero distance 为 `-3.23999` 至 `-24.44435`。因此扩大 source-supported
+proposal coverage 不但没有消除翻转，也排除了候选稀疏或连续-uniform OOD 的解释。
+最终 CUDA fidelity receipt
+`results/tworoom_d2p_p1_prefix_fidelity_support_coverage64_20261025_cuda/report.json`
+再次通过 native-rollout equivalence、five-action boundary label、RGB hash、post-prefix
+context、frozen hash 及 exact replay gates。TwoRoom P1 现以该 8-root independent
+calibration 作为权威的 `blocked_model_to_physical_alignment` 边界；它关闭这一个 frozen
+checkpoint 的 P2/P5，而不外推为 D2P、SRA 或世界模型规划的一般理论反例。
+
+#### TwoRoom-D2P P0/P1：observed-root 因果窗口修复与 fresh 重建（2026-10-25）
+
+在继续将 TwoRoom 的 P1 物理排序失配归类为冻结 checkpoint 边界前，审计发布的
+`LeWM.rollout()` 实现发现 P0 的一个因果窗口错误。旧 P0 将三个 warmup 前的 RGB frames
+`[x_{t-3},x_{t-2},x_{t-1}]` 与三个已执行 packets
+`[a_{t-3},a_{t-2},a_{t-1}]` 输入 native rollout；这首先预测的是已经实际观察到的
+`x_t`，并非从 observed root 编译 future。尽管 `root_frame` 被记录为 receipt identity，
+它没有进入模型的 pixel context。因此旧 P0 不能支持其声称的 observed-root action Jacobian，
+属于实现合同错误而不是方法负结果。
+
+`preflight_tworoom_d2p_p0.py` 现以 `[x_{t-2},x_{t-1},x_t]` 为模型 context，并使用
+`[a_{t-2},a_{t-1},a_t]`，其中 `a_t` 是第一个可微 future packet；这与 checkpoint 的
+three-token causal predictor 对齐。回归测试同时检查该左移不切断 future gradient。新的
+source-supported host-CUDA P0 receipt
+`results/tworoom_d2p_p0_preflight_support_v3_rootanchor_20261025_cuda/report.json`
+在 `202610250--202610253` 上通过所有门：Jacobian Frobenius norms 为
+`7.28018, 3.54570, 4.97365, 5.79947`，每根中心差分中位相对误差不超过 `0.000910`。
+
+因此此前 v2/coverage64 P0 不再作为 root-anchored P1 的上游 admission。以 v3 receipt
+为唯一上游、在全新 roots `202610340--202610347`、64 个 source-supported prefix candidates
+上重建的 P1 preflight
+`results/tworoom_d2p_p1_preflight_support_coverage64_rootanchor_20261025_cuda/report.json`
+获得 `8/8` 个模型侧 non-greedy witness。其 root-paired physical calibration
+`results/tworoom_d2p_p1_calibration_support_coverage64_rootanchor_20261025_cuda/report.json`
+没有通过严格的全根物理 non-greediness 门：selected-minus-zero packet-boundary distance 为
+`-7.90187, -7.22272, -6.13089, +3.38226, +4.17706, +6.59291, +9.12689, +25.65547`；
+三根 selected prefix 在真实距离上仍比 raw-zero 更贪心。所有其他门均通过，包括 CUDA、
+冻结 hash、sealed selection、same-root raw-zero、observed-successor recompile 与独立 replay。
+
+独立 fidelity receipt
+`results/tworoom_d2p_p1_prefix_fidelity_support_coverage64_rootanchor_20261025_cuda/report.json`
+对 selected 和 raw-zero 的全部 16 branches 均通过：P1 recurrence 与 native `LeWM.rollout`
+的 L-infinity 差为 `0`，五个低层 action 的 packet-boundary distance、successor RGB hashes
+及 post-prefix three-frame/three-packet context 均精确重现。故新鲜 calibration 的失败不能
+归因于 root-frame omission、action time axis、packet label、successor replay、CUDA 或
+source packet support；当前严格结论仍限于这个冻结 TwoRoom checkpoint 的
+`blocked_model_to_physical_alignment`。P2/P5 继续关闭，且该结论不外推为 D2P 或谱理论的一般否定。
+
+#### TwoRoom-D2P P1：同可行域 greedy comparator 修复与全 comparator CUDA 审计（2026-10-25）
+
+上述 root-anchored calibration 的正式 physical comparator 仍是 raw-zero；但 P1 的 selected
+prefix 来自 training HDF5 的 source-supported packet bank，raw-zero 不属于该 bank。因此它会把
+可行域不对称误写成 P1 的机制失败，和此前 Reacher P1 已修复的问题同构。P1 preflight schema
+升级为 v2：每个 immutable receipt 除了 model-side selected prefix，还明确承诺正式物理对照为
+同一个 sealed bank 内、按冻结 `immediate_goal_cost` 最小且以 `proposal_index` 稳定打破平局的
+packet；raw-zero 仅保留为 OOD diagnostic，不能再关闭 mechanism gate。
+
+全新、与 P0 roots 不重叠的 host-CUDA preflight
+`results/tworoom_d2p_p1_preflight_support_coverage64_samebank_20261025_cuda/report.json` 在
+`202610360--202610367` 以 64 个 source-supported candidates 得到 8/8 model-side witnesses。
+相应 calibration receipt
+`results/tworoom_d2p_p1_calibration_support_coverage64_samebank_20261025_cuda/report.json` 不读取
+任何 physical label 来选 packet，并通过 CUDA、frozen hash、sealed roots、source support、successor
+recompile 与 independent replay；但其 strict same-bank physical non-greediness gate 仍为 false：
+selected-minus-same-bank-greedy 的 packet-boundary distance 在 8 根中为
+`-19.4010, +35.9616, -19.1502, +23.8902, +11.7178, +7.7145, +31.9020, -8.3371`。也就是
+5/8 符合“selected 较不贪心”，另 3/8 方向翻转；这不是通过替换阈值可以解决的问题。
+
+为了排除新 comparator 自身的重建或执行 bug，v2 exact-fidelity audit
+`results/tworoom_d2p_p1_prefix_fidelity_support_coverage64_samebank_20261025_cuda/report.json`
+在 24 个 branches（selected、same-bank greedy、raw-zero 各 8）逐一验证了 source indices 到
+raw packet bytes 的恢复、五个 low-level action 的 packet-boundary label、successor RGB、P1
+recurrence 与 native `LeWM.rollout` 的严格相等、以及 post-prefix 的三帧/三 packet context；所有
+gates 通过。额外代码复核确认 `TwoRoomGoalAliasWrapper` 使用环境 reset 时由同一
+`target_position` 渲染的 `_target_img`，而 evaluator 也是同一环境的
+`||agent_position-target_position||`，故不存在 stale/不同 target 的目标语义分叉。
+
+因此旧 raw-zero 负结果已降级为 comparator/protocol diagnosis；新的同可行域 receipt 才是当前
+冻结 TwoRoom checkpoint 的结论。它仍不授权 P2/P5 outcome roots，也不构成对 D2P、SRA 或世界
+模型规划理论的否定；若要改变这一边界，需要新的 frozen checkpoint/训练合同，而非修改已封存
+calibration 的 selector、阈值或 evaluator。
+
+#### Reacher-D2P P1：预测 latent readout 的因果 action-slot 修复（2026-10-25）
+
+在继续把 source-supported Reacher P1 的 selector 失配归为冻结 checkpoint 边界前，审计发现
+原 qpos chart 只由**真实 RGB encoder latent**拟合，却直接用于 predictor rollout latent，并把
+预测 terminal 与 RGB goal 强行置于同一线性 readout。训练损失只鼓励二者接近，并不保证这一
+坐标复用成立。新实现将 `predicted_coordinate`、`observed_coordinate` 与 `goal_coordinate`
+拆开；world model 保持冻结。旧的单 readout 接口仅作兼容，不能再作为新 P1 证据。
+
+第一次 CUDA rollout-readout calibration 还暴露了脚本自身的 action-slot bug：它把待预测的
+`a_t` 同时放进 history 与 future，实际计算了错位的
+`[a_{t-1}, a_t, a_t]`，而部署的 root-anchored predictor 应使用
+`[a_{t-2}, a_{t-1}, a_t]`。该 v2 artifact 因而降级为 `superseded_protocol`。修复后，
+episode-disjoint 官方 HDF5 calibration
+`results/reacher_d2p_frozen_rollout_qpos_readout_v3_causal_20261025_cuda/report.json`
+在 host CUDA 上达到 held-out mean joint wrapped error `0.02420` rad、qpos-distance
+RMSE `0.04662`，并通过预声明门；它只训练闭式 readout，未更新 encoder、predictor 或 action encoder。
+
+同一 frozen checkpoint、相同的 8 个 root / 128 个 source-supported packet 的 P1 重跑
+`results/reacher_d2p_source_supported_causaldualreadout_p1_v7_20261025_cuda`
+仍有 7 个 model-eligible roots 中 4 个 physical selected-minus-zero qpos direction 反转，
+故 fail closed。独立的 outcome-blind exhaustive successor audit
+`results/reacher_d2p_qpos_successor_fidelity_v3_causaldual_p1matched_20261025_cuda/report.json`
+显示 7/8 roots 的 Spearman 为 `0.992--0.998`，但 seed `2026102520` 为 `-0.2250`，且
+zero-relative sign gate 不通过。这排除了被修复的 readout coordinate/action-slot 漂移作为
+该 panel 负结果的解释；它仍只限制这个 checkpoint 的 selector-critical root，不能外推为
+D2P 或理论的一般反例。P2--P5 不得由这一 Reacher P1 receipt 打开。
+
+#### Reacher-D2P P1：完整 MuJoCo state 与 selector 合同复核（2026-10-25）
+
+为继续排除执行层解释，`reacher_d2p_context.py` 的 evaluator snapshot 不再只恢复
+`qpos/qvel`；若 dm-control 暴露 `physics.get_state()/set_state()`，它会同时保存、恢复并逐元素
+核对完整的 MuJoCo state。这样可防止“RGB 与 qpos 相同、但未记录的 actuator state 不同”被误判为
+world-model 的排序失配。兼容旧 receipt 的 qpos/qvel fallback 保留，但新的完整 state 路径还要求重放
+state 与保存值精确相等。定向 context/readout/fidelity/P0 测试为 `23 passed`。
+
+主机 CUDA 的新鲜、不可覆盖 fidelity receipt
+`le-wm-main/results/reacher_d2p_qpos_successor_fidelity_v4_fullstate_20261025_cuda.json` 对同一
+8-root、128-packet panel 仍给出 mean Spearman `0.843079`：seed `2026102520` 为 `-0.224999`，其余
+七根为 `0.991703--0.998003`。因此完整 simulator-state 恢复是已修复的代码合同，但不是这个反向根的
+充分解释；该结果不得被写成 D2P 或谱理论的反例。
+
+随后检查 repair-to-deployment 合同发现：P1 selected-packet pair pool 的 selector 依赖生成它时的
+predictor、action encoder 和 damping。旧启动链可在未提交 selector-stability receipt 时继续 P1，且有
+历史 audit 在一次 repair 后仅保留 `4/60` source selections。该现象首先是 training/deployment
+protocol defect，不能解释为 reconfiguration 理论失败。新的
+`run_reacher_d2p_selector_matched_repair_cuda.sh` 因而执行：以部署 checkpoint/damping 重新生成独立
+pair pool，低漂移 repair，随后对每一个 source root 要求 selector 完全一致；不满足则 fail closed，
+不进入 P1 calibration。新的 64-root source pool、repair 与 stability audit 均绑定全 MuJoCo state
+路径，且与任何 P0/P1 calibration/outcome root 隔离。
+
+#### Reacher-D2P P1：训练源到部署物理转移合同复核（2026-10-25）
+
+为继续排除“官方 HDF5 与部署 Gymnasium/dm-control 对同一 raw action 的解释不同”这一代码层假设，新增
+`audit_reacher_d2p_source_runtime_transition.py`。该审计在主机 CUDA 上从 official HDF5 恢复 32 个独立的
+`[qpos,qvel]` source root，执行记录的后续五个 raw controls，并逐根与 HDF5 的 `t+5` 状态比较；它不加载、训练或
+选择任何世界模型。v1 用 `1e-8` 绝对阈值会把 HDF5 的 float64 action 与部署 PyTorch/Gymnasium 的 float32
+执行舍入误报为失败，最大误差仅为 qpos `1.1217e-8`、qvel `1.0746e-7`。审计已据此将声明阈值固定为
+`2e-7`，而非掩盖差异；新的不可覆盖 host-CUDA receipt
+`le-wm-main/results/reacher_d2p_source_runtime_transition_v2_20261025_cuda/report.json` 为 `32/32` 通过。
+因此 source action order、物理 step、qpos/qvel state layout 与部署 simulator 在 float32 execution contract 下
+一致，不能解释 selector-critical 反转。
+
+随后以完整 MuJoCo snapshot、因果 dual qpos readout 和同一 8-root/128-packet panel 再运行
+`reacher_d2p_source_supported_p1_qpos_fullstate_v3_20261025_cuda/report.json`。7 个模型 eligible root 中，selected-minus-
+zero 的真实 qpos directions 为 `-,+,-,-,+,+,-`，仍有 4 个不满足首段物理 non-greediness；实际 successor RGB
+qpos-chart directions 也为 `+,+,-,-,+,+,+`，不能形成机制 gate。这个 receipt 只复核当前 selector 的代码/协议路径，
+不是 sealed efficacy outcome，且不授权事后改 margin 或打开 P2--P5。它将剩余问题收窄为该冻结 checkpoint 在
+selector-critical roots 的预测-to-physical 排序可靠性，而不是训练源/部署环境动作转移不一致或 CPU fallback。
+
+继续检查 renderer 后，上述“可见 marker”的解释被 source RGB 反证推翻。官方 HDF5 的
+`target_pos` 确实对应 MuJoCo geometry，但默认 variation 将 target 设为透明。host-CUDA
+`reacher_d2p_source_rgb_contract_v2_20261025_cuda/report.json` 在 24 个 HDF5 roots 上将 geometry
+在 source target 与 fingertip 间互换，所有 runtime RGB 的差均为零。因此
+`reacher_d2p_goal_marker_contract_v1_20261025_cuda/report.json` 只验证 model-geometry/snapshot
+的一致性，**不**验证一个会改变冻结模型输入的视觉修复；旧 P0/P1 receipts 不应因 marker 而被
+废弃，也不能被叙述为 marker 修复后的因果收益。
+
+名称含 `goalmarker` 的五个 damping calibration 和后续 P0 panels 仍是有效的 CUDA、冻结、RGB
+identity、raw action-box 与 outcome receipts，但它们仅可支持其明确记录的 complete-state/root-anchor
+合同与 P0 比较，不能作为 target-marker 像素修复的证据。独立 48-root confirmation
+`d2p_reacher_p0_goalmarker_confirmation_n48_20261025_cuda/report.json` 的 P0 结果由其自身配对
+receipt 支持；P1 仍必须由 root-disjoint fidelity/calibration 门独立通过，不能以 marker 解释绕过。
+
+#### Reacher-D2P P1：同可行域贪心对照与 runtime-support 审计修复（2026-10-25）
+
+P1 的 reconfiguration prefix 已改为从 state-conditioned、official-source packet bank 中选取；
+此前的 continuous D2P/CEM baseline 则可在连续动作空间搜索。两者的 feasible set 不相同，
+所以新增 `source_matched_greedy_two_stage_d2p`：它逐 root 复用**同一个**128-packet bank、
+冻结 RGB/action context、动作 chart、一个 prefix token 与 observed-successor suffix compiler，
+仅把首段规则改为该 bank 上 frozen immediate-goal cost 的 argmin。它是可行域公平性诊断，
+不取代连续 D2P/CEM 这两个更强 baseline。
+
+新鲜 host-CUDA calibration
+`results/d2p_reacher_state_conditioned_matched_greedy_20261025_cuda/p1_calibration/report.json`
+在 roots `2026104600--2026104605` 仍有 6/6 model witness，但实际 RGB qpos-chart 的首段
+non-greedy gate 只过 4/6；因此没有 outcome 或 P2 结论。逐 receipt CUDA fidelity audit
+`.../p1_calibration_exact_fidelity_audit` 对 6/6 roots 的 warmup、raw/normalized action、candidate/zero
+successor RGB、recorded model cost 及 observed cost 全部重现，并确认模型-观测 order 仅 4/6 一致。
+这份 receipt 排除了重放和记录路径的错误，但不应被表述为理论反例。
+
+在追查该失配时发现 `audit_reacher_d2p_runtime_support.py` 自身存在诊断代码错误：它把
+`p0._prepare()` 的第二返回值（goal tensor）当作实际 successor，故旧数值并非 model-to-successor
+fidelity。修复为先用 `advance_executed_context()` 执行同一 raw-zero packet，再以 shifted RGB/action
+history encode rendered successor；相应回归测试已加入。修复后的 8-root CUDA receipt
+`.../runtime_support_fidelity_fixed_8.json` 给出 source-supported mean latent L2 `1.01874`，
+uniform 为 `1.03527`，且并非每根更好。这是 source action-only warmup 对任意 live reset state 的
+有限改善，而不是模型修复。
+
+三个独立 source-contract 审计进一步缩小剩余实现空间：64 个 official clips 的 time-axis audit
+`.../source_temporal_alignment_64.json` 中声明 shift=0 严格最好（MSE `0.00593`，相邻 shifts
+`0.61959/0.74484`）；32-root source-to-runtime transition audit
+`.../source_runtime_transition_32.json` 在 float32 contract 下全部匹配（max qpos
+`1.59e-8`，qvel `1.15e-7`）；32-root RGB renderer audit
+`.../source_rgb_contract_32.json` 的 marker swap 对 runtime RGB 始终为零，且 static source render
+mean absolute pixel error 约 `0.102`。因此下一项可检验的系统修复不应是改阈值，而是把
+“source action packet”支持提升为**source-state / source-history**支持，并在新 preflight、
+calibration 与 root-disjoint outcome 中重新验证；旧 action-only P1 outcome 不能挪用为该新协议结论。
+
+进一步的 deployed-root source temporal audit
+`.../source_root_anchored_temporal_alignment_64.json` 也确认 root-anchored action slots 没有错位：
+`[x_{t+5},x_{t+10},x_{t+15}]` 与 `[a_{t+5},a_{t+10},a_{t+15}]` 预测 `x_{t+20}` 时，shift=0
+MSE `0.00608`，相邻 shifts `0.59996/0.75419`。相反，source-state/history root 在 raw-zero
+future packet 上仍有约 `1.017` latent L2；这表明 zero action 是 source-packet support 之外的 control，
+不能再作为 source-supported P1 的唯一机制 comparator。
+
+于是 P1 保留 zero-prefix 为显式 OOD 诊断和同 token-budget control，但将正式机制 comparator
+改为同一个 state-conditioned 128-packet bank 内 immediate-goal greedy packet。新的 root-disjoint
+calibration `.../p1_source_matched_calibration/report.json` 在 roots `2026104800--2026104805` 通过全部
+门；这不是阈值放宽，而是让 future reconfiguration 与 immediate greedy 使用相同动作可行域。
+新的 12-root outcome `.../p1_source_matched_outcome/report.json` 也通过 CUDA、frozen hash、root identity、
+three-token budget、source-matched mechanism 与模型 future-score gates，且 reconfiguration 对 zero-prefix
+为 `-0.12165`（95% CI `[-0.17356,-0.07430]`）。但相对于同 bank greedy，效应只有 `-0.00405`
+（95% CI `[-0.07911,0.05302]`），并且相对 continuous D2P/CEM 均显著较差。因此该协议修复后，
+P1 的机制合同已重新打开并可复现，但 efficacy 仍不成立，P2 不得打开。最终 CUDA exact-fidelity receipt
+`.../p1_source_matched_outcome_exact_fidelity_audit` 对全部 12 个 eligible roots 的 warmup、actions、
+successor RGB、model/observed costs 全部通过；它记录 model-to-observation order 11/12 一致，
+所以这个“无同-bank 优势”的结论不是 receipt replay 或 comparator wiring 错误。
+审计随后扩展到正式 comparator 本身：
+`.../p1_source_matched_outcome_all_comparators_exact_fidelity_audit` 对 reconfiguration、raw-zero 与
+same-bank greedy 三种首段的 action inversion、successor RGB、recorded model/observed costs 均通过，
+避免将只审计了 method 而未审计新 baseline 的结果误写为完整比较。
+
+#### Reacher-D2P P1：source-state root 与 goal 绑定缺陷修复（2026-10-25）
+
+为落实上述“source-state / source-history 支持”而进行的诊断又发现一个实际的任务合同错误：
+`audit_reacher_d2p_runtime_support.py` 曾在从 official HDF5 恢复 source qpos/qvel/history 后，保留
+`env.reset()` 时另一个随机 root 所生成的 goal RGB。于是模型输入是 source-state RGB/history，目标却是
+reset-state 加 `target_delta` 的图像；这不是同一个 qpos-match 任务，不能据此判定 source-state 支持无效。
+`ReacherGoalImageWrapper.set_goal_from_state()` 现以恢复的 source root 原子地重建 evaluator
+`target_qpos`、可见目标几何和 goal RGB，再捕获执行 snapshot；回归测试明确拒绝回退到 reset goal。
+
+修复后的不可覆盖 host-CUDA receipt
+`results/reacher_d2p_runtime_support_source_root_goal_v2_20261025_cuda/report.json` 使用 8 个 roots
+确认该路径实际按 `official_source_state_history_v2_source_root_goal` 运行。更关键的根配对候选审计
+`results/reacher_d2p_qpos_successor_fidelity_v5_source_native_goal_20261025_cuda/report.json` 在同一冻结
+checkpoint、因果 dual readout、128 个 source packet 下得到 8/8 正 Spearman（mean `0.976131`，6/8 physical
+argmin 一致）；旧 action-only/reset-root panel 的 seed `2026102520` 曾为负相关。故“该 checkpoint 连真实
+successor 排序都不能做”的旧表述过强，至少部分来自 root/goal 实例错配，必须撤回。
+
+source-native P1 仅是 debugging diagnostic，不能替代 root-disjoint efficacy：同一 8 根中 6 根得到
+reconfiguration witness，且相对 raw-zero 的真实首段 qpos 均非贪心。raw-zero 本身是 OOD 被动控制，因而又在
+同一 128-packet bank 上加入 frozen immediate-greedy comparator。receipt
+`results/reacher_d2p_source_native_p1_samebank_v5_20261025_cuda/report.json` 显示这 6 根的模型与物理首段
+direction 全部一致、且均为非贪心；selected-minus-greedy qpos 为
+`+0.49736,+0.37967,+0.39847,+0.67460,+0.38362,+0.58191`。然而其两段 final-qpos 仍全面劣于直接 greedy，说明
+这些 source-native roots 不具有 P1 所需的“贪心局部停滞、重构后才能获益”的可控性缺口。后续 P1 必须在**预先声明**、
+episode-disjoint 的 controllability-gap root family 上做新的 calibration/outcome；不得把这份 source-derived
+diagnostic 当作 efficacy，也不得用它的 qpos 反调 selector、margin 或 damping。
+
+#### Cube-D2P P0：从 action-only warmup 改为 official source-native RGB/goal 合同（2026-10-25）
+
+Cube 的 P0 在启动前发现与 Reacher 修复前同构的协议错误：旧实现虽从官方 HDF5 抽取连续五步 action
+packets，却把它们执行在一个新的 live reset root，再把该 reset 的 RGB history 和 goal image 输入冻结模型。它只
+匹配 action marginal，既不保证 RGB prefix 来自训练 episode，也不保证 goal obeys 训练期间的 same-episode
+future-image 分布；因此任何由该路径得到的 P0/P1 阴性都不能归因于模型或理论。
+
+新的 `cube_d2p_training_source.py::sample_source_native_contexts` 只接受 SHA 绑定、完整物理 extent 的官方
+HDF5。每个 context 严格取同一 episode 的 `[x_t,x_{t+5},x_{t+10}]`、连续的三枚 time-major 五步 actions、
+observed root `x_{t+15}`，以及严格未来的 `x_{t+20}` 作为 goal RGB；`qpos/qvel` 和 target block/pose/task
+仅写入 evaluator provenance，绝不进入模型。若 target 在 context 内变化、任何字段缺失、episode 边界不足或
+source SHA 不匹配，代码立即拒绝。相应 P0 schema 升级为 v2，旧的 action-only output 名称不再被启动器使用。
+
+下载完成后的 host-CUDA waiter 已改为 `lewm-cube-source-native-p0-waiter.service`，它先验证 full-extent
+HDF5，再生成 source receipt，最后执行新的 CUDA-only P0。定向 source-contract、P0 与 Reacher 回归测试
+为 `49 passed`；在该 P0 receipt 真实写入前，这一项是**已修复的代码合同**，不是 Cube efficacy 或 P5 结果。
+
+### Reacher 原始冻结权重：原始 RGB successor 排序复核（2026-10-25）
+
+新增同根、同 packet、无 qpos readout 的主机 CUDA 审计，在修正的 source-native
+root/history/goal 合同下，原始发布权重的实际 RGB argmin 一致为 8/8，mean Spearman
+为 0.971824，min 为 0.858863。因而旧的无条件 checkpoint 排序能力负结论应撤回。
+这仍是 source-episode diagnostic，不能当作 episode-held-out P1 efficacy，也不能自动
+打开 P2。完整合同、原始与 repair 权重的配对结果及仍缺证据，见
+[Reacher 原始 RGB 审计](REACHER_D2P_SOURCE_NATIVE_RGB_AUDIT_20261025.md)。
+
+2026-10-25 后续：固定的新 32 根、每根 128 个实际 successors 的主机 CUDA 复核已完整完成，
+原始权重 argmin 一致 28/32，mean rho=0.972377，min rho=0.882811，模型最优相对 zero 的方向
+一致 32/32。先前多次中断来自将“同一物理根”误要求为“反复 rasterization 必须逐字节相等”：
+现场只有单个颜色分量差 1，完整 integration/scene 状态相同，随后 4 次 render 又恢复完全相同。
+新诊断显式采用 sealed root observation + exact integration/scene proof，所有 successor 仍为真实
+新鲜 RGB；与旧严格运行已完成的 8 根逐 root 比较，所有动作、图像 hashes、predicted/observed
+costs 均精确相同。旧中断不追认为成功；该 diagnostic 不等同于正式 P1。
+
+另修复 selector 的 weak-reference 缺口：旧 selected prefix 的模型 future cost 已比同库 immediate
+greedy 差，却能因只胜 zero-prefix 被称为 witness。正式新 preflight/P1 默认使用显式绑定的
+`same_bank_greedy` future reference；同一初始 8 根修复后正确 abstain（0/8 witness），不是 P1 收益通过。
+不得为开启后续阶段而放宽门槛、复用旧 comparator 回执或使用本次 RGB diagnostic 替代 P1 outcome。
+
+### Reacher-D2P 后缀求解器与预算审计（2026-10-25）
+
+继续审计发现两项真实实现错误，故此前“尚存代码错误已排除”的全局措辞不再有效。
+旧后缀生成器无条件接受一次 full-step DLS，即使非线性模型目标上升；预算回执又将
+20 个奇异值误记作 192 维输出 Jacobian 的 VJP 行数，并遗漏多个前向预测。
+
+默认求解器已改为 `bounded_single_step_dls_backtracking_v2`：固定比较
+`{1,1/2,1/4,1/8,1/16,0}`，返回并执行真实模型目标最小的缩步；零更新回退保证不升高。
+同 8 根、128 候选、原始冻结模型、四个预声明 damping 的新主机 CUDA 复跑表明：
+
+| 检查 | 实际结果 | 允许的结论 |
+|---|---|---|
+| full-step 因果复现 | 与旧网格逐根、逐候选、逐 damping 成本精确一致 | 不是换根/换分数导致差异 |
+| 旧更新目标上升 | damping `.01/.1/1/10` 分别 `412/301/5/0` 次，每格 1024 候选 | 已确认优化器逻辑错误；不能据此解释 damping=10 的历史排序反转 |
+| 新接受更新 | 全部 4096 格无目标上升，181 格回退零 | 接受规则修复通过，不等于物理模型预测正确 |
+| 强模型 witness | `.01` 从 2/8 变 1/8，其它仍为 0/8 | 不能凭模型候选打开 P1 |
+| 主机 CUDA 实际调用插桩 | 128 候选编译 2048 预测样本；单个两步后缀 14 样本，均与回执精确相等 | 计数已校正，不等于已与强基线匹配资源 |
+
+preflight、proposal-training、margin selection、calibration/outcome 均绑定新 solver；
+正式 outcome 额外校验 selector SHA，拒绝旧 full-step 校准回执。新结果与旧失败现场分开
+保存，不追认或覆盖旧实验。120 项集中逻辑回归通过；与真实 CUDA 证据分开记账。
+
+核心回执为 `le-wm-main/results/reacher_d2p_suffix_optimizer_repair_comparison8_20261025.json`
+及 `reacher_d2p_compute_accounting_full128_20261025_cuda.json`。完整实验路径、数字与边界见
+[Reacher 原始 RGB 审计](REACHER_D2P_SOURCE_NATIVE_RGB_AUDIT_20261025.md)。
+另修复 `mj_forward` 在 snapshot 恢复后改写 warm-start 的执行错误；同一失败根恢复前后
+的主机 CUDA 审计已证明从 4/4 不一致变为 4/4 完全一致。全 32-root 物理确认现已完成：
+6 根 model witness，5/6 终态优于两对照；但真实 qpos 对 zero 的首段非贪心只有 1/6，
+全根原 neutral-fallback 策略对 greedy 为 5 胜 27 负、平均差 `+0.465292`。这明确把
+执行代码中断、局部机制正例、目标度量失配和回退策略负后果分开，而不是一概否定理论。
+173 项集中逻辑回归通过；正式链还新增 context-module SHA 绑定，旧校准不得挪用。
+
+正式 P1 仍缺 controllability-gap 任务前提、独立 calibration/outcome 和强基线等预算收益；
+不把这些缺项称为 D2P 理论失败，也不通过调 margin 或换训练权重绕过。
+
+### Cube-D2P live-runtime 修复：2026-10-25 最新审计入口
+
+后续 v4/v5/v6/v7 的诊断、seed-overlap 纠正、同根 snapshot 修复、CUDA singleton 数值对齐
+以及完整闭环剩余门槛，见 [Cube runtime-repair 审计](CUBE_D2P_RUNTIME_REPAIR_AUDIT_20261025.md)。
+特别注意：v5 原始 P1 seeds 与训练池种子重叠，不能作为新根结论；其真正 disjoint 重测
+与 v6 仍未通过 top-1 校准。v7 的首个 8-root panel 通过（top-1 7/8，mean rho=0.765），
+但相同权重的独立 32-root 确认失败（22/32，mean rho=0.709，min rho=-0.118），不能算作解决。
+所有这些 predictor 修复属于非冻结诊断分支，不能替代本方案的 training-free D2P 主张。
+
 ## 论文主张的可证伪形式
 
 若后续 P1--P5 全部通过，主张应被限定为：冻结视觉世界模型的有限时域 action
@@ -1616,3 +2358,38 @@ geometry 可以构造任务条件的局部搜索坐标、解析短时域 value �
 并在匹配资源的 RGB 闭环中改善长时域任务。若 P0 通过而 P1/P2/P4 失败，正确结论
 是“已验证动作微分路径不足以带来该方法收益”，而不是“谱理论被推翻”或“模型没有
 动作响应”。
+
+### 2026-10-26：完整前缀能力地图及度量合同定位
+
+Reacher-D2P已用固定双渲染、保留第二次的显式观察策略，在主机CUDA完成
+八根/三任务/17程序共408单元、22576条真实未来、47192预测样本，13项完整性
+门全部通过；原52单元逐位一致，原始模型参数/buffer不变。137184次真实draw
+及完整物理状态检查单独核账，旧v1/v2失败不追认，P1未因此开放。
+
+独立全库4896拟合与1632个响应—残差组合拟合，定位到不能由简单后继/残差
+纠正解释的度量失配：全驱动/仅肩/仅腕分别有3/20/7个物理诊断候选，全部
+被旧common-gain拒绝，且真实RGB增益也不支持这些关节能力见证。不能把
+“库中没有候选”或“都只是梯度算错”作为当前解释，也不能把它写成理论失败。
+下一步必须显式处理模型可用RGB能力代理与物理任务度量的关系，之后重新作
+独立校准/outcome及完整强基线，而非使用oracle程序、放宽阈值或筛选有利根。
+完整证据见[D2P前缀能力审计](D2P_PREFIX_CAPABILITY_AUDIT_20261026.md)与
+[研究闭环缺项](D2P_RESEARCH_CLOSURE_AUDIT_20261025.md)；C1--C3、实验1--3
+及P0--P5的原范围不变。
+
+### 2026-10-26：独立目标度量评分与完整编译器分开记账
+
+独立八根202654000–007评分验证已经完成403920个主机CUDA预测样本、456
+物理分支及23项完整性检查，独立复算全部QP和选择。两种固定模式都保留，
+不因仅肩改善而忽略仅腕损害；原动作与后缀未重新优化，不能称完整编译器。
+另一批202655000–007现已用统一目标Q生成谱动作、优化后缀并计算own-state
+reach代价，现已完成805536主机CUDA预测样本、912物理分支、18项门及
+1632独立QP/完整动作见证审计。模型重配置见证三任务均0/8，选择23/24次
+等同自身greedy；对原固定greedy关节终距均差均为正，未修复P1。
+全部408程序的覆盖归因仍找到16/29/21个物理首段/双终态合取候选，不能
+简单归为库中没有动作，也不能越过未测真实能力的缺口。原模型封存四角色
+能力探针现已完成58单元、3116真实未来、6522主机CUDA预测样本、12门与
+1044独立拟合，不按事后候选挑程序。common规则的部分RGB能力收益没有
+形成同根完整关节机制见证；不能称完整Q一致化已修复P1。真实能力改变、P1独立校准、
+强基线等预算与反馈重新编译仍须补齐。源码绑定与CEM返回值接线错误在
+物理执行前被捕获并修复，保留失败归档，不归为理论负结果。
+详见[目标度量新根验证](D2P_GOAL_METRIC_PROSPECTIVE_CONFIRMATION_20261026.md)。

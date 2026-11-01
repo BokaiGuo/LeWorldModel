@@ -18,7 +18,16 @@ from hydra.utils import instantiate
 
 
 def _resolve_local(name: str, cache_dir: str | None = None) -> tuple[Path, Path]:
-    root = Path(swm.data.utils.get_cache_dir(cache_dir)) / "checkpoints"
+    # stable-worldmodel <=0.0.6 exposed a zero-argument cache resolver.  The
+    # checkpoint itself can still be an explicit absolute path, so legacy
+    # physics audits must not fail before loading it merely because the newer
+    # optional cache-dir argument is unavailable.
+    cache_root = (
+        swm.data.utils.get_cache_dir()
+        if cache_dir is None
+        else swm.data.utils.get_cache_dir(cache_dir)
+    )
+    root = Path(cache_root) / "checkpoints"
     path = Path(name)
     if not path.is_absolute():
         path = root / path

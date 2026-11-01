@@ -40,6 +40,7 @@ from experiments.checkpoint_compat import load_compatible_pretrained
 from experiments.gpu_preflight import require_cuda_allocation
 from experiments.online_planning_protocol import validate_action_protocol
 from experiments.pusht_protocol_contracts import root_fingerprint
+from experiments.spectral_reachability import pusht_d2p_packet_contract as packets
 from experiments.run_pusht_counterfactual import (
     PUBLIC_ACTION_MEAN,
     PUBLIC_ACTION_STD,
@@ -47,7 +48,7 @@ from experiments.run_pusht_counterfactual import (
 )
 
 
-SCHEMA = "pusht_d2p_p0_preflight.v1"
+SCHEMA = "pusht_d2p_p0_preflight.v2"
 
 
 def _sha256_file(path: Path) -> str:
@@ -78,24 +79,21 @@ def _bounded_live_actions(params: torch.Tensor) -> torch.Tensor:
 def _model_action_tokens(live_actions: torch.Tensor, *, action_block: int) -> torch.Tensor:
     """Differentiate through the released PushT action-normalization contract.
 
-    A live PushT action is a relative displacement in ``[-1, 1]``.  Released
-    LeWM data first divides it by 100 and then applies the public two-channel
-    z-score; each model token contains ``action_block`` repeated time-major
-    actions.  Keeping this transform in torch is essential: a numpy conversion
-    here would make a zero Jacobian look like a model limitation.
+    A live relative command already equals pixel displacement divided by100;
+    applying that divisor again was a coordinate bug. Public mean/std remain
+    an explicit convention, NOT certified checkpoint training statistics.
     """
 
-    if live_actions.ndim != 2 or live_actions.shape[1] != 2 or action_block < 1:
+    if live_actions.ndim != 2 or live_actions.shape[1] != 2 or action_block != 5:
         raise ValueError("invalid live action or action-block layout")
     mean = torch.as_tensor(PUBLIC_ACTION_MEAN, dtype=live_actions.dtype, device=live_actions.device)
     std = torch.as_tensor(PUBLIC_ACTION_STD, dtype=live_actions.dtype, device=live_actions.device)
-    normalized = (live_actions / 100.0 - mean) / std
     # One model packet is five consecutive two-coordinate actions, flattened
     # in ordinary row-major order: [ax, ay, ax, ay, ...].  Repeating each
     # coordinate instead would construct [ax, ax, ..., ay, ay, ...], which
     # has the same width and gradients but a different frozen action-encoder
     # input.  Keep the physical time axis intact while tiling whole pairs.
-    return normalized.repeat(1, int(action_block))
+    return packets.normalize_live_packet(live_actions[:, None].expand(-1, 5, -1), mean=mean, std=std)
 
 
 def _collect_causal_rgb_context(
@@ -103,36 +101,32 @@ def _collect_causal_rgb_context(
 ) -> tuple[list[np.ndarray], np.ndarray, np.ndarray]:
     """Collect a causal zero-action RGB/action history and a goal image.
 
-    The goal image is rendered by resetting a private evaluator copy to the
-    declared goal pose.  Only the resulting RGB array crosses into the model
-    path; no state vector, geometry feature, or oracle successor is retained.
+    Use official reset goal metadata; never leave the live env reset to goal.
+    Each warmup token executes five distinct relative env.step calls.
     """
 
     if history_len < 1:
         raise ValueError("history_len must be positive")
     state = np.asarray(root["state"], dtype=np.float64).copy()
     goal = np.asarray(root["goal"], dtype=np.float64).copy()
-    env.reset(seed=0, options={"state": state, "goal_state": goal})
+    _, info = env.reset(seed=0, options={"state": state, "goal_state": goal})
+    goal_rgb = np.array(info["goal"], dtype=np.uint8, copy=True)
     # A zero live action is a causal, legal action token.  It is not padding:
     # each of the H source frames is rendered before a real simulator step.
     # Its only job here is to expose the frozen rollout API's required
     # observed action prefix before any future action is differentiated.
     history_actions = np.zeros((int(history_len), 2), dtype=np.float32)
-    frames: list[np.ndarray] = []
+    recorder = packets.BoundaryHistory(env, root_state=state, goal=goal)
     for action in history_actions:
-        frames.append(np.asarray(env.render(), dtype=np.uint8).copy())
-        _observation, _reward, terminated, truncated, _info = env.step(action)
-        if terminated or truncated:
-            raise RuntimeError("causal PushT warmup reached a terminal state")
-    env.reset(seed=0, options={"state": goal, "goal_state": goal})
-    goal_rgb = np.asarray(env.render(), dtype=np.uint8).copy()
+        recorder.execute(packets.repeat_command(action))
+    frames = [np.array(f, copy=True) for f in recorder.frames[:-1]]
     if len(frames) != history_len or any(frame.ndim != 3 for frame in frames) or goal_rgb.shape != frames[0].shape or frames[0].shape[-1] != 3:
         raise RuntimeError("PushT evaluator did not produce paired RGB source/goal frames")
     return frames, history_actions, goal_rgb
 
 
 def _image_tensor(image: np.ndarray, *, transform: Any, device: torch.device) -> torch.Tensor:
-    image = np.asarray(image, dtype=np.uint8)
+    image = np.array(image, dtype=np.uint8, copy=True)
     if image.ndim != 3 or image.shape[-1] != 3:
         raise ValueError("expected uint8 HWC RGB image")
     # ``LeWM.encode`` consumes [batch, time, channel, height, width].  The
@@ -140,6 +134,17 @@ def _image_tensor(image: np.ndarray, *, transform: Any, device: torch.device) ->
     # here would turn a one-frame goal into six dimensions and make the ViT
     # error before any action derivative is evaluated.
     return transform(torch.from_numpy(image).permute(2, 0, 1)).to(device)[None, None]
+
+
+def _collect_root_anchored_rgb_context(env, root, *, history_len):
+    """Actual current boundary, not the outgoing-history bootstrap convention.
+
+    Past packets A0,A1,A2 reached boundaries F1,F2,F3. Use images F1,F2,F3;
+    a proposed A3 uses outgoing tokens A1,A2,A3 after dropping history[0].
+    """
+    frames, actions, goal = _collect_causal_rgb_context(env, root, history_len=history_len)
+    current = np.array(env.render(), dtype=np.uint8, copy=True)
+    return frames[1:]+[current], actions, goal
 
 
 def _frames_tensor(frames: list[np.ndarray], *, transform: Any, device: torch.device) -> torch.Tensor:
@@ -284,11 +289,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--policy", default="pusht/lewm")
+    parser.add_argument("--packet-contract-evidence", type=Path, required=True)
     parser.add_argument("--device", choices=("cuda",), default="cuda")
     parser.add_argument("--calibration-roots", type=int, default=4)
-    parser.add_argument("--calibration-seed", type=int, default=202610241)
+    parser.add_argument("--calibration-seed", type=int, default=202753000)
     parser.add_argument("--reserved-outcome-roots", type=int, default=24)
-    parser.add_argument("--reserved-outcome-seed", type=int, default=202610281)
+    parser.add_argument("--reserved-outcome-seed", type=int, default=202753100)
     parser.add_argument("--horizon", type=int, default=2)
     parser.add_argument("--history-len", type=int, default=3)
     parser.add_argument("--action-block", type=int, default=5)
@@ -309,6 +315,12 @@ def main() -> None:
         raise FileExistsError(f"refusing to overwrite immutable D2P P0 output: {args.output}")
     if args.device != "cuda":  # argparse is intentionally redundant with this receipt-level invariant.
         raise RuntimeError("PushT D2P-P0 is CUDA-only; CPU fallback is forbidden")
+    packet_receipt = packets.validate_receipt(json.loads(args.packet_contract_evidence.read_text()))
+    if packet_receipt.get("simulator") != "official":
+        raise ValueError("P0 requires an actual official physical packet audit")
+    for name, field in (("protocol.json", "protocol_sha256"), ("implementation.json", "implementation_sha256")):
+        if _sha256_file(args.packet_contract_evidence.parent/name) != packet_receipt[field]:
+            raise ValueError("physical packet audit seal changed")
     runtime = require_cuda_allocation(args.device)
     device = torch.device(args.device)
     model = load_compatible_pretrained(str(args.policy), device=device).eval()
@@ -372,13 +384,16 @@ def main() -> None:
             "checkpoint_remapped_keys": int(compat.get("remapped_keys", -1)),
             "action_normalization": {
                 "live_action_box": [-1.0, 1.0],
-                "raw_action_divisor": 100.0,
+                "raw_action_divisor": 1.0,
+                "checkpoint_training_statistics_certified": False,
                 "mean": PUBLIC_ACTION_MEAN.tolist(),
                 "std": PUBLIC_ACTION_STD.tolist(),
                 "model_token_layout": "time-major repeated [normalized_ax, normalized_ay]",
             },
         },
         "protocol": {
+            "packet_contract": packets.contract_spec(),
+            "packet_contract_evidence": {"path": str(args.packet_contract_evidence.resolve()), "sha256": _sha256_file(args.packet_contract_evidence)},
             "environment": "swm/PushT-v1",
             "runtime_input": "rendered current RGB, rendered goal RGB, and bounded live action parameters only",
             "evaluator_only_state_use": "deterministic root reconstruction and RGB rendering only",

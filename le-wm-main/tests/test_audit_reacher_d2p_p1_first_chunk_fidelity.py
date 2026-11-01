@@ -1,10 +1,15 @@
 import hashlib
+import copy
 
+import numpy as np
 import pytest
 import torch
 
 from experiments.spectral_reachability.audit_reacher_d2p_p1_first_chunk_fidelity import (
     _first_successor_prediction,
+    _recorded_model_immediate_costs,
+    _receipt_qpos_binding,
+    _source_contiguous_warmup,
     _strict_order_agrees,
     _target_delta_from_report,
     _validate_report,
@@ -64,6 +69,13 @@ def test_first_chunk_fidelity_rejects_a_second_tanh_style_shape_error():
         _first_successor_prediction(_Model(), pixels, history, torch.zeros((1, 1)))
 
 
+@pytest.mark.parametrize("pixel_batch,history_batch", [(2, 2), (1, 2), (2, 1)])
+def test_first_chunk_fidelity_requires_exactly_one_observed_root(pixel_batch, history_batch):
+    with pytest.raises(ValueError, match="root anchored"):
+        _first_successor_prediction(_Model(), torch.zeros((pixel_batch, 3, 1, 1, 1)),
+            torch.zeros((history_batch, 3, 1)), torch.zeros((1, 1)))
+
+
 def test_first_chunk_fidelity_prediction_uses_the_recorded_token_without_a_preprocessor_private_field():
     pixels = torch.zeros((1, 3, 1, 1, 1))
     history = torch.zeros((1, 3, 1))
@@ -102,3 +114,58 @@ def test_first_chunk_fidelity_rejects_a_checkpoint_or_adapter_not_sealed_by_the_
     report["inputs"]["adapter_sha256"] = "wrong"
     with pytest.raises(ValueError, match="adapter"):
         _validate_runtime_inputs(report, policy=policy, adapter=adapter)
+
+
+def test_first_chunk_fidelity_source_receipt_replays_its_exact_contiguous_history():
+    histories = np.arange(3 * 3 * 5 * 2, dtype=np.float32).reshape(3, 3, 5, 2)
+    protocol = {"context_support": "source_contiguous"}
+    context = {
+        "context_support": "source_contiguous",
+        "warmup_policy": "seeded_training_packet_support_v1.contiguous_history",
+        "contiguous_warmup_sequence_index": 2,
+    }
+
+    actual, binding = _source_contiguous_warmup(
+        receipt_context=context, protocol=protocol, history_pool=histories,
+    )
+
+    assert np.array_equal(actual, histories[2])
+    assert binding == {"context_support": "source_contiguous", "contiguous_warmup_sequence_index": 2}
+
+
+def test_first_chunk_fidelity_rejects_uniform_reconstruction_of_source_receipt():
+    with pytest.raises(ValueError, match="valid exact history index"):
+        _source_contiguous_warmup(
+            receipt_context={
+                "context_support": "source_contiguous",
+                "warmup_policy": "seeded_training_packet_support_v1.contiguous_history",
+                "contiguous_warmup_sequence_index": 0,
+            },
+            protocol={"context_support": "source_contiguous"}, history_pool=None,
+        )
+
+
+def test_first_chunk_fidelity_rejects_paired_readout_binding_drift():
+    binding = {
+        "enabled": True,
+        "encoder_artifact": "/tmp/encoder.npz",
+        "encoder_artifact_sha256": "e" * 64,
+        "prediction_artifact": "/tmp/prediction.npz",
+        "prediction_artifact_sha256": "p" * 64,
+    }
+    report = {"protocol": {"qpos_readout_binding": binding}, "inputs": {"qpos_readout_binding": copy.deepcopy(binding)}}
+    assert _receipt_qpos_binding(report) == binding
+    report["inputs"]["qpos_readout_binding"]["prediction_artifact_sha256"] = "x" * 64
+    with pytest.raises(ValueError, match="inconsistent"):
+        _receipt_qpos_binding(report)
+
+
+def test_first_chunk_fidelity_recovers_the_selected_and_zero_model_costs():
+    method = {"first_receipt": {"selected_proposal_index": 7, "proposal_rows": [
+        {"proposal_index": 0, "immediate_goal_cost": 0.25},
+        {"proposal_index": 7, "immediate_goal_cost": 0.30},
+    ]}}
+    assert _recorded_model_immediate_costs(method) == (0.30, 0.25)
+    method["first_receipt"]["proposal_rows"] = [{"proposal_index": 0, "immediate_goal_cost": 0.25}]
+    with pytest.raises(ValueError, match="selected or zero"):
+        _recorded_model_immediate_costs(method)

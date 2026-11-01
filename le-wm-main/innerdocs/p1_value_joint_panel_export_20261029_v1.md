@@ -1,0 +1,5 @@
+# Joint panel same-candidate value export
+
+The exporter reconstructs the existing full saved consumer, matches it byte-for-byte to the externally SHA-anchored receipt, rebuilds its prepared authority, and feeds each authenticated journal through the existing single-arm value exporter and its saved replay audit. All 160 rows retain slot, root, condition, arm, start and iteration; they bind task, model, normalization, projection, goal, root and parent contexts and both packets' exact float32 bytes. Exported model-stage Q, terminal Q and conditional Vreach belong to that same candidate; Vreach is not an observed or suffix-conditioned physical value.
+
+Physical and observed terminal fields remain missing. Relative packet offsets are 0/5/10; absolute physical steps are intentionally unknown here. The result inherits the saved consumer's source and model trust boundaries and is not hardware attestation or evidence of physical execution, fresh roots or P1 admission. Output is exclusively created; an interrupted write is not a completed verified export. No GPU, physics, training or gate change is involved.

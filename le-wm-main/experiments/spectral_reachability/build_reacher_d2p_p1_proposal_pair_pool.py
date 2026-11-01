@@ -150,7 +150,7 @@ def build(
         "cuda_host": {"name": torch.cuda.get_device_name(device), "torch": torch.__version__, "cuda": torch.version.cuda},
         "seed_range": [seeds[0], seeds[-1]], "roots_requested": roots, "selected_pairs": selected,
         "ineligible_source_seeds": skipped, "p0_p1_calibration_or_outcome_roots_used": False,
-        "proposal_contract": {"policy": str(policy), "weights_sha256": _sha256_file(policy / "weights.pt"), "adapter_sha256": _sha256_file(adapter_artifact), "history_len": HISTORY_LEN, "action_block": ACTION_BLOCK, "damping": damping, "proposals": proposals, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "selection": "same P1 bounded-DLS non-greedy selector against raw-zero packet"},
+        "proposal_contract": {"policy": str(policy), "weights_sha256": _sha256_file(policy / "weights.pt"), "adapter_sha256": _sha256_file(adapter_artifact), "history_len": HISTORY_LEN, "action_block": ACTION_BLOCK, "damping": damping, "proposals": proposals, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "recompiled_suffix_solver": p1.SUFFIX_SOLVER, "selection": "same P1 bounded-DLS non-greedy selector against raw-zero packet"},
         "claim_boundary": "Independent P1 proposal-distribution training source only; fresh disjoint CUDA P0/P1 gates remain mandatory.",
     }
     (output / "manifest.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")

@@ -64,6 +64,50 @@ from experiments.spectral_reachability.reacher_d2p_context import (
     require_new_output,
     restore_execution_snapshot,
 )
+from experiments.spectral_reachability.reacher_d2p_packet_support import (
+    WARMUP_POLICY as SOURCE_WARMUP_POLICY,
+    load_history_packet_pool,
+    receipt_source,
+    sample_history_packets,
+)
+from experiments.spectral_reachability.reacher_d2p_qpos_readout import (
+    qpos_readout_binding,
+    with_qpos_readout,
+)
+from experiments.spectral_reachability import d2p_stage_admission as stage_admission
+from experiments.spectral_reachability.d2p_prerun_source_seal import create_seal, verify_seal
+
+
+def _seal_p0_sources(args):
+    """Bind explicit local runner dependencies before model loading/inference.
+
+    This is a source-byte receipt, not an exhaustive environment or execution
+    attestation. Keep failed output directories for diagnosis; never reuse them.
+    """
+    experiment_root = Path(__file__).resolve().parents[1]
+    relative_sources = (
+        "spectral_reachability/run_reacher_d2p_p0_goal_progress.py",
+        "spectral_reachability/d2p_stage_admission.py",
+        "spectral_reachability/d2p_model_call_instrumentation.py",
+        "spectral_reachability/d2p_prerun_source_seal.py",
+        "spectral_reachability/preflight_reacher_d2p_p0.py",
+        "spectral_reachability/reacher_d2p_context.py",
+        "spectral_reachability/reacher_d2p_packet_support.py",
+        "spectral_reachability/reacher_d2p_qpos_readout.py",
+        "spectral_reachability/build_reacher_d2p_training_action_stats.py",
+        "audit_live_reacher_shared_candidate_ranking.py",
+        "checkpoint_compat.py",
+        "online_planning_protocol.py",
+        "run_live_cube_action_adapter_planning.py",
+        "run_live_reacher_planning.py",
+        "run_live_reacher_sequence_candidate_planning.py",
+    )
+    args.output.mkdir(parents=True, exist_ok=False)
+    return create_seal(
+        files=[experiment_root / name for name in relative_sources],
+        args_json=json.dumps(vars(args), default=str, allow_nan=False),
+        output_dir=args.output / "prerun_source_seal",
+    )
 
 
 # Four accepted local updates are the last validated P0 configuration.  The
@@ -127,6 +171,23 @@ def _goal_latent(model: torch.nn.Module, goal: torch.Tensor) -> torch.Tensor:
         return model.encode({"pixels": goal})["emb"][0, -1].detach()
 
 
+def _planning_coordinate(model: torch.nn.Module, value: torch.Tensor, *, role: str) -> torch.Tensor:
+    """Map a latent into its declared planning chart without conflating roles.
+
+    A rollout prediction, rendered successor, and RGB goal need not occupy an
+    identical empirical readout chart.  New wrappers may expose role-specific
+    methods; old wrappers retain their historical ``reachability_coordinate``
+    behaviour.
+    """
+
+    if role not in {"predicted", "observed", "goal"}:
+        raise ValueError(f"unknown planning-coordinate role: {role}")
+    coordinate = getattr(model, f"{role}_coordinate", None)
+    if coordinate is None:
+        coordinate = getattr(model, "reachability_coordinate", None)
+    return value if coordinate is None else coordinate(value)
+
+
 def _terminal_batch(
     model: torch.nn.Module,
     pixels: torch.Tensor,
@@ -184,6 +245,14 @@ def _cost_fn(
 ) -> torch.Tensor:
     terminal = _terminal_batch(model, pixels, goal, history, params, action_lower=action_lower, action_upper=action_upper)
     goal_latent = _goal_latent(model, goal).unsqueeze(0)
+    # P1 can supply a frozen task readout that changes the declared planning
+    # coordinate.  The former direct latent-L2 bypass here silently made the
+    # immediate non-greedy gate use a different objective from the qpos-space
+    # successor and reachability calculations.  Preserve the historical latent
+    # objective by default, but use the model's explicitly exported coordinate
+    # whenever one is present.
+    terminal = _planning_coordinate(model, terminal, role="predicted")
+    goal_latent = _planning_coordinate(model, goal_latent, role="goal")
     return (terminal - goal_latent).square().mean(dim=1)
 
 
@@ -207,7 +276,7 @@ def _d2p_goal_progress(
     if int(relinearization_steps) < 1:
         raise ValueError("D2P relinearization steps must be positive")
     action_dim = int(history.shape[-1])
-    goal_latent = _goal_latent(model, goal)
+    goal_latent = _planning_coordinate(model, _goal_latent(model, goal), role="goal")
     expected_shape = (1, int(future_horizon), action_dim)
     if initial_params is None:
         params = torch.zeros(expected_shape, device=history.device)
@@ -229,10 +298,11 @@ def _d2p_goal_progress(
         flat_current = params.reshape(-1).detach().requires_grad_(True)
 
         def terminal(flat: torch.Tensor) -> torch.Tensor:
-            return _terminal_batch(
+            terminal_latent = _terminal_batch(
                 model, pixels, goal, history, flat.reshape(1, future_horizon, action_dim),
                 action_lower=action_lower, action_upper=action_upper,
             )[0]
+            return _planning_coordinate(model, terminal_latent, role="predicted")
 
         predicted_current = terminal(flat_current)
         if initial_predicted is None:
@@ -268,7 +338,14 @@ def _d2p_goal_progress(
         "initialization": initialization,
         "predicted_successor_l2_to_goal_before": float(torch.linalg.vector_norm(initial_predicted - goal_latent).detach()),
         "predicted_successor_l2_to_goal_after": float(torch.linalg.vector_norm(
-            _terminal_batch(model, pixels, goal, history, params, action_lower=action_lower, action_upper=action_upper)[0] - goal_latent
+            _planning_coordinate(
+                model,
+                _terminal_batch(
+                    model, pixels, goal, history, params,
+                    action_lower=action_lower, action_upper=action_upper,
+                )[0],
+                role="predicted",
+            ) - goal_latent
         ).detach()),
         "predicted_cost_before": iterations[0]["predicted_cost_before"],
         "predicted_cost_after": final_cost,
@@ -600,7 +677,8 @@ def _rgb_digest(value: np.ndarray) -> str:
 def _validate_outcome_calibration(
     evidence: tuple[Path, ...], *, damping: float, relinearization_steps: int, d2p_restarts: int,
     d2p_initialization: str, d2p_proposal_samples: int, d2p_proposal_elites: int,
-    outcome_seeds: set[int],
+    outcome_seeds: set[int], context_support: str, expected_warmup_policy: str,
+    expected_qpos_binding: dict[str, Any],
 ) -> dict[str, Any]:
     """Bind an outcome panel to exactly one compatible, disjoint selection receipt."""
 
@@ -637,8 +715,12 @@ def _validate_outcome_calibration(
         raise ValueError("outcome calibration receipt does not bind the observed planning root")
     if contract.get("execution_root_reconstruction") != "evaluator_only_observed_root_snapshot_restore":
         raise ValueError("outcome calibration receipt does not bind the observed-root execution snapshot")
-    if contract.get("warmup_policy") != WARMUP_POLICY:
+    if contract.get("context_support") != context_support:
+        raise ValueError("outcome calibration receipt has an incompatible context-support distribution")
+    if contract.get("warmup_policy") != expected_warmup_policy:
         raise ValueError("outcome calibration receipt has an incompatible warmup policy")
+    if contract.get("qpos_readout_binding") != expected_qpos_binding:
+        raise ValueError("outcome calibration receipt has an incompatible planning-coordinate binding")
     return {
         "path": str(path.resolve()),
         "sha256": _sha256_file(path),
@@ -651,7 +733,9 @@ def _validate_outcome_calibration(
         "context_mode": "executed_warmup",
         "rollout_root_conditioning": "observed_post_warmup_rgb_anchor",
         "execution_root_reconstruction": "evaluator_only_observed_root_snapshot_restore",
-        "warmup_policy": WARMUP_POLICY,
+        "context_support": context_support,
+        "warmup_policy": expected_warmup_policy,
+        "qpos_readout_binding": expected_qpos_binding,
         "calibration_root_seeds": sorted(calibration_seeds),
     }
 
@@ -715,10 +799,12 @@ def _execute(
 
 def _root_context(
     env: gym.Env, seed: int, history_len: int, action_block: int,
+    *, warmup_packets: np.ndarray | None = None, warmup_policy: str = WARMUP_POLICY,
 ) -> dict[str, Any]:
     """Collect a real causal history; reset padding is intentionally forbidden."""
     return collect_executed_context(
         env, seed=int(seed), history_len=int(history_len), action_block=int(action_block),
+        warmup_packets=warmup_packets, warmup_policy=warmup_policy,
     )
 
 
@@ -740,6 +826,7 @@ def _paired_summary(rows: list[dict[str, Any]], method: str, reference: str, see
 
 def _p1_admission(
     cem_comparison: dict[str, Any] | None, *, calibration_only: bool,
+    implementation_gates: dict[str, bool] | None = None,
 ) -> tuple[bool, str]:
     """Require affirmative P0 evidence before opening a later mechanism stage.
 
@@ -748,19 +835,34 @@ def _p1_admission(
     outcome panel to show a paired interval that favors D2P over the matched
     CEM comparator; an inconclusive or adverse P0 stays closed.
     """
-    if calibration_only:
-        return False, "calibration-only receipt; it cannot provide a P1 admission conclusion"
-    if cem_comparison is None:
-        return False, "missing independent D2P-versus-CEM outcome comparison"
-    if float(cem_comparison["ci95"][1]) <= 0.0:
-        return True, "independent paired 95% interval favors D2P over CEM"
-    return False, "P0 does not establish a paired outcome interval favoring D2P over CEM"
+    return stage_admission.p1_admission(cem_comparison, calibration_only=calibration_only,
+        implementation_gates=implementation_gates)
+
+
+def _instrumented_planner(method, planner, model, *args, **kwargs):
+    """Observe actual planning predict work, without changing optimizer output.
+
+    Legacy forward_rollout_evaluations is retained for archive compatibility,
+    not interpreted as a common resource unit. Encoder/backward work and the
+    separate post-execution diagnostic cost remain outside this receipt.
+    """
+    from experiments.spectral_reachability.d2p_model_call_instrumentation import PredictInstrumentation
+
+    with PredictInstrumentation(model) as counter:
+        with counter.phase("planning", method=method, horizon_tokens=kwargs["future_horizon"]):
+            params, receipt = planner(model, *args, **kwargs)
+    receipt = dict(receipt)
+    receipt["actual_planning_predict"] = counter.records[0]
+    receipt["predict_accounting_scope"] = "planner_only_excludes_post_execution_diagnostic_encoder_and_backward"
+    return params, receipt
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", type=Path, default=Path("/home/gbk/.stable_worldmodel/checkpoints/reacher/lewm"))
     parser.add_argument("--adapter-artifact", type=Path, default=Path("results/live_cross_environment_prediction_20261015/reacher_cuda/cross_environment_prediction.json"))
+    parser.add_argument("--qpos-readout", type=Path, default=None)
+    parser.add_argument("--predicted-qpos-readout", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=20261040)
@@ -771,6 +873,10 @@ def main() -> None:
     parser.add_argument("--history-len", type=int, default=3)
     parser.add_argument("--future-horizon", type=int, default=2)
     parser.add_argument("--action-block", type=int, default=5)
+    parser.add_argument(
+        "--context-support", choices=("uniform", "source_contiguous"), default="uniform",
+        help="Causal warmup-history law. source_contiguous samples one contiguous trajectory window from the adapter-bound training source.",
+    )
     parser.add_argument("--damping", type=float, default=1.0)
     parser.add_argument("--relinearization-steps", type=int, default=DEFAULT_RELINEARIZATION_STEPS)
     parser.add_argument("--d2p-restarts", type=int, default=1, help="Number of seeded DLS initializations; restart zero is the zero-action baseline.")
@@ -816,9 +922,18 @@ def main() -> None:
         raise ValueError("D2P proposal elites must not exceed proposal samples")
     if args.d2p_initialization == "screened_gaussian_proposals" and args.d2p_restarts != 1:
         raise ValueError("screened Gaussian D2P has no restart budget; use --d2p-restarts 1")
+    expected_warmup_policy = (
+        SOURCE_WARMUP_POLICY + ".contiguous_history"
+        if args.context_support == "source_contiguous" else WARMUP_POLICY
+    )
     for evidence in args.calibration_evidence:
         if not evidence.is_file():
             raise FileNotFoundError(f"calibration evidence does not exist: {evidence}")
+    qpos_binding = qpos_readout_binding(
+        args.qpos_readout, args.predicted_qpos_readout,
+        policy_weights_sha256=_sha256_file(args.policy / "weights.pt"),
+        adapter_sha256=_sha256_file(args.adapter_artifact),
+    )
     outcome_seed_set = {int(args.seed + index) for index in range(args.roots)}
     calibration_binding = (
         _validate_outcome_calibration(
@@ -828,17 +943,29 @@ def main() -> None:
             d2p_proposal_samples=args.d2p_proposal_samples,
             d2p_proposal_elites=args.d2p_proposal_elites,
             outcome_seeds=outcome_seed_set,
+            context_support=args.context_support,
+            expected_warmup_policy=expected_warmup_policy,
+            expected_qpos_binding=qpos_binding,
         )
         if args.outcome_only else None
     )
 
+    source_seal = _seal_p0_sources(args)
     install_missing_field_compat()
     device = torch.device("cuda")
     validate_training_semantic_receipt(args.adapter_artifact)
     mean, std = _load_action_stats(args.adapter_artifact, "swm/ReacherDMControl-v0")
+    source_histories = source_history_support = None
+    if args.context_support == "source_contiguous":
+        source_dataset, source_digest = receipt_source(args.adapter_artifact)
+        source_histories, source_history_support = load_history_packet_pool(
+            source_dataset, expected_sha256=source_digest, history_len=args.history_len,
+            action_block=args.action_block,
+        )
     model = load_compatible_pretrained(args.policy, device=args.device).eval()
-    model.requires_grad_(False)
     model.interpolate_pos_encoding = True
+    model = with_qpos_readout(model, qpos_binding).to(device).eval()
+    model.requires_grad_(False)
     hash_before = _parameter_hash(model)
     preprocessor = _Preprocessor(ActionNormalizer(mean, std))
     env = ReacherGoalImageWrapper(gym.make("swm/ReacherDMControl-v0", render_mode="rgb_array"), target_delta=args.target_delta)
@@ -857,14 +984,25 @@ def main() -> None:
     try:
         for root_index in range(args.roots):
             seed = int(args.seed + root_index)
-            context = _root_context(env, seed, args.history_len, args.action_block)
+            history_index = None
+            if source_histories is None:
+                context = _root_context(env, seed, args.history_len, args.action_block)
+            else:
+                packets, history_index = sample_history_packets(source_histories, seed=seed)
+                context = _root_context(
+                    env, seed, args.history_len, args.action_block, warmup_packets=packets,
+                    warmup_policy=expected_warmup_policy,
+                )
+            context["context_support"] = args.context_support
+            if history_index is not None:
+                context["contiguous_warmup_sequence_index"] = int(history_index)
             goal = context["goal"]
             pixels, goal_tensor, history = _prepare(
                 preprocessor, context["frames"], context["root_frame"], goal,
                 np.asarray(context["history_action_blocks"], dtype=np.float32), device,
             )
             method_started = time.perf_counter()
-            d2p_params, d2p_receipt = _d2p_program(
+            d2p_params, d2p_receipt = _instrumented_planner("d2p_goal_progress", _d2p_program,
                 model, pixels, goal_tensor, history, future_horizon=args.future_horizon,
                 action_lower=action_lower, action_upper=action_upper, damping=args.damping,
                 relinearization_steps=args.relinearization_steps, restarts=args.d2p_restarts,
@@ -875,7 +1013,7 @@ def main() -> None:
             # The control is intentionally recomputed from identical objects,
             # rather than calling a different solver that can mask a mismatch.
             method_started = time.perf_counter()
-            gn_params, gn_receipt = _d2p_program(
+            gn_params, gn_receipt = _instrumented_planner("local_gauss_newton", _d2p_program,
                 model, pixels, goal_tensor, history, future_horizon=args.future_horizon,
                 action_lower=action_lower, action_upper=action_upper, damping=args.damping,
                 relinearization_steps=args.relinearization_steps, restarts=args.d2p_restarts,
@@ -884,20 +1022,20 @@ def main() -> None:
             )
             gn_receipt["planner_wall_seconds"] = time.perf_counter() - method_started
             method_started = time.perf_counter()
-            gd_params, gd_receipt = _action_gd(
+            gd_params, gd_receipt = _instrumented_planner("action_gd", _action_gd,
                 model, pixels, goal_tensor, history, future_horizon=args.future_horizon,
                 action_lower=action_lower, action_upper=action_upper, steps=args.gd_steps, lr=args.gd_lr, seed=seed,
             )
             gd_receipt["planner_wall_seconds"] = time.perf_counter() - method_started
             method_started = time.perf_counter()
-            grasp_params, grasp_receipt = _restart_gd(
+            grasp_params, grasp_receipt = _instrumented_planner("grasp_style_restart_gd", _restart_gd,
                 model, pixels, goal_tensor, history, future_horizon=args.future_horizon,
                 action_lower=action_lower, action_upper=action_upper, restarts=args.grasp_restarts, steps=args.grasp_steps,
                 lr=args.gd_lr, seed=seed + 1000,
             )
             grasp_receipt["planner_wall_seconds"] = time.perf_counter() - method_started
             method_started = time.perf_counter()
-            cem_params, cem_receipt = _cem(
+            cem_params, cem_receipt = _instrumented_planner("cem", _cem,
                 model, pixels, goal_tensor, history, future_horizon=args.future_horizon,
                 action_lower=action_lower, action_upper=action_upper, samples=args.cem_samples, steps=args.cem_steps,
                 elite=args.cem_elite, seed=seed + 2000,
@@ -908,6 +1046,11 @@ def main() -> None:
                 future_horizon=args.future_horizon, action_dim=history.shape[-1], device=device, seed=seed + 3000,
             )
             random_receipt["planner_wall_seconds"] = time.perf_counter() - method_started
+            random_receipt["actual_planning_predict"] = {
+                "phase": "planning", "method": "random", "horizon_tokens": args.future_horizon,
+                "predict_calls": 0, "predict_samples": 0, "context_lengths": {},
+                "failed_predict_calls": 0, "completed": True,
+            }
             methods: dict[str, tuple[torch.Tensor, dict[str, Any]]] = {
                 "d2p_goal_progress": (d2p_params, d2p_receipt),
                 "local_gauss_newton": (gn_params, gn_receipt),
@@ -945,12 +1088,13 @@ def main() -> None:
                 "split": "calibration" if root_index < calibration_count else "outcome",
                 "executed_context": {
                     key: context[key] for key in (
-                        "context_mode", "warmup_policy", "warmup_steps",
+                        "context_mode", "context_support", "warmup_policy", "warmup_steps",
                         "history_rgb_sha256", "root_rgb_sha256", "goal_rgb_sha256",
                         "warmup_actions_sha256",
                     )
                 },
                 "execution_snapshot": context["execution_snapshot"],
+                "contiguous_warmup_sequence_index": context.get("contiguous_warmup_sequence_index"),
                 "d2p_gn_max_abs_parameter_difference": equivalence,
                 "methods": method_rows,
             })
@@ -970,9 +1114,6 @@ def main() -> None:
         for index, method in enumerate(("local_gauss_newton", "action_gd", "grasp_style_restart_gd", "cem", "random"), start=1)
     }
     cem_comparison = comparisons.get("cem")
-    p1_unlocked, p1_reason = _p1_admission(
-        cem_comparison, calibration_only=bool(args.calibration_only),
-    )
     cem_wall_time_noninferior = True if args.calibration_only else bool(all(
         row["methods"]["cem"]["receipt"]["planner_wall_seconds"]
         <= row["methods"]["d2p_goal_progress"]["receipt"]["planner_wall_seconds"]
@@ -989,6 +1130,17 @@ def main() -> None:
         for row in rows
         for method in row["methods"].values()
     ))
+    implementation_gates = {
+        "cuda_only": True,
+        "frozen_parameter_hash_unchanged": hash_before == hash_after,
+        "d2p_equals_gauss_newton_each_root": equivalence_pass,
+        "all_physical_outcomes_finite": bool(all(np.isfinite(value) for row in rows for method in row["methods"].values() for value in method["physical"].values())),
+        "planner_and_execution_root_rgb_identity_verified": execution_identity_verified,
+        "all_executed_raw_actions_within_environment_box": raw_action_box_verified,
+        "actual_planning_predict_samples_matched_to_cem": stage_admission.p0_predict_samples_matched(rows),
+    }
+    p1_unlocked, p1_reason = _p1_admission(cem_comparison, calibration_only=bool(args.calibration_only),
+        implementation_gates=implementation_gates)
     p0_status = (
         "calibration_only"
         if args.calibration_only
@@ -997,6 +1149,7 @@ def main() -> None:
             cem_comparison is not None and cem_comparison["ci95"][0] > 0.0
             and cem_comparison["reference_only_wins"] == cem_comparison["n"]
             and cem_wall_time_noninferior
+            and all(implementation_gates.values())
         )
         else "completed_without_efficacy_verdict"
     )
@@ -1014,7 +1167,8 @@ def main() -> None:
             "outcome_only": bool(args.outcome_only),
             "action_history_prefix_bound": True,
             "context_mode": "executed_warmup",
-            "warmup_policy": WARMUP_POLICY,
+            "context_support": args.context_support,
+            "warmup_policy": expected_warmup_policy,
             "warmup_steps": int(args.history_len * args.action_block),
             "history_and_execution_root_causally_aligned": True,
             "rollout_root_conditioning": "observed_post_warmup_rgb_anchor",
@@ -1037,28 +1191,27 @@ def main() -> None:
             "model_action_box_normalized": [normalized_low_np.tolist(), normalized_high_np.tolist()],
             "budget_accounting": "forward rollout evaluations, backward VJP rows, and measured planner wall time are reported per method. VJP rows and forward evaluations are not asserted to be equal compute; the no-go gate also requires CEM to be no slower in measured planner wall time on every outcome root.",
             "damping_calibration_evidence": calibration_binding if calibration_binding is not None else [str(path.resolve()) for path in args.calibration_evidence],
+            "contiguous_warmup_support": source_history_support,
+            "qpos_readout_binding": qpos_binding,
         },
         "inputs": {
             "checkpoint": str(args.policy.resolve()),
             "weights_sha256": _sha256_file(args.policy / "weights.pt"),
             "adapter_artifact": str(args.adapter_artifact.resolve()),
             "adapter_sha256": _sha256_file(args.adapter_artifact),
+            "qpos_readout_binding": qpos_binding,
             "runner_sha256": _sha256_file(Path(__file__)),
+            "stage_admission_sha256": _sha256_file(Path(stage_admission.__file__)),
         },
         "gates": {
-            "cuda_only": True,
-            "frozen_parameter_hash_unchanged": hash_before == hash_after,
-            "d2p_equals_gauss_newton_each_root": equivalence_pass,
-            "all_physical_outcomes_finite": bool(all(np.isfinite(value) for row in rows for method in row["methods"].values() for value in method["physical"].values())),
-            "planner_and_execution_root_rgb_identity_verified": execution_identity_verified,
-            "all_executed_raw_actions_within_environment_box": raw_action_box_verified,
+            **implementation_gates,
             "cem_wall_time_noninferior_each_outcome_root": cem_wall_time_noninferior,
         },
         "parameter_hash_before": hash_before,
         "parameter_hash_after": hash_after,
         "comparisons_outcome_only": comparisons,
         "stage_gate": {
-            "criterion": "P1 requires a fresh root-disjoint P0 paired 95% interval that favors D2P over matched CEM; avoiding the stricter all-root no-go alone cannot unlock a later mechanism claim",
+            "criterion": "P1 requires all P0 implementation integrity gates and a fresh root-disjoint paired 95% interval strictly below zero versus matched CEM; zero ties and zero-touching intervals cannot unlock a later mechanism claim",
             "p1_unlocked": p1_unlocked,
             "reason": p1_reason,
         },
@@ -1066,7 +1219,13 @@ def main() -> None:
         "elapsed_seconds": time.time() - started,
         "claim_boundary": "P0 establishes or rejects an explicitly history-bound local goal-progress implementation on fresh physical roots. It does not test reconfiguration, composition, adaptive horizon, or a general planning-runtime claim.",
     }
-    args.output.mkdir(parents=True, exist_ok=False)
+    report["prerun_source_seal"] = {
+        "receipt": source_seal,
+        "verification": verify_seal(
+            output_dir=source_seal["output_dir"],
+            expected_manifest_sha256=source_seal["manifest_sha256"],
+        ),
+    }
     (args.output / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"status": report["status"], "gates": report["gates"], "comparisons_outcome_only": comparisons, "output": str(args.output)}, indent=2, sort_keys=True))
 

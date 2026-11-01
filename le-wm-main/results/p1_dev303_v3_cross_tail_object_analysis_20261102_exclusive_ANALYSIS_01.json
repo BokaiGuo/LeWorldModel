@@ -1,0 +1,945 @@
+{
+  "P1_admission": false,
+  "analysis_source_sha256": "8ff5501e4809a4f4078cda4a4eec27c00ec67485ac139c04f6df0936b443da03",
+  "classification": "posthoc_development_only",
+  "definitions": {
+    "angle": "absolute atan2(sin(state[4]-goal[4]),cos(state[4]-goal[4])) in radians, 2pi periodic",
+    "censoring": "step10 return and matching frame required; no padding, last observed separate",
+    "native_success": "observed tail terminated flag; native eval_state includes pusher and object position",
+    "position": "Euclidean distance of state[2:4] from goal[2:4]",
+    "relative_to_zero": "branch step10 error minus zero-tail step10 error for same prefix; negative means smaller",
+    "reward": "not used; native reward is whole-state distance"
+  },
+  "goal_object_xy_angle": [
+    317.1206399143904,
+    216.03781749510907,
+    -1.843800432973195
+  ],
+  "independent_confirmation": false,
+  "prepare_sha256": "b93d5490192830c9f31abde30d7eb2b7577d89006da056e3b48f4755a1ebe88a",
+  "rows": [
+    {
+      "arm": "selected__geometry_0",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.0173338335942006,
+        "goal_angle_error_rad": 2.8611342665673956,
+        "goal_signed_angle_error_rad": 2.8611342665673956,
+        "goal_xy_error": 239.29122555082165,
+        "xy": [
+          129.05633704195236,
+          363.9976384287602
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "selected",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.18829629587482755,
+        "goal_xy_error_difference": 2.649521780141697
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.0173338335942006,
+        "goal_angle_error_rad": 2.8611342665673956,
+        "goal_signed_angle_error_rad": 2.8611342665673956,
+        "goal_xy_error": 239.29122555082165,
+        "xy": [
+          129.05633704195236,
+          363.9976384287602
+        ]
+      },
+      "tail_role": "geometry_0",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "selected__geometry_1",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.0352073727835434,
+        "goal_angle_error_rad": 2.8790078057567383,
+        "goal_signed_angle_error_rad": 2.8790078057567383,
+        "goal_xy_error": 238.92604093255625,
+        "xy": [
+          128.91533998610208,
+          363.22619378416454
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "selected",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.1704227566854848,
+        "goal_xy_error_difference": 2.2843371618762944
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.0352073727835434,
+        "goal_angle_error_rad": 2.8790078057567383,
+        "goal_signed_angle_error_rad": 2.8790078057567383,
+        "goal_xy_error": 238.92604093255625,
+        "xy": [
+          128.91533998610208,
+          363.22619378416454
+        ]
+      },
+      "tail_role": "geometry_1",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "selected__geometry_2",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.0185316694734263,
+        "goal_angle_error_rad": 2.8623321024466213,
+        "goal_signed_angle_error_rad": 2.8623321024466213,
+        "goal_xy_error": 239.12939733667682,
+        "xy": [
+          129.16922190842183,
+          363.87939872362523
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "selected",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.18709845999560182,
+        "goal_xy_error_difference": 2.4876935659968638
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.0185316694734263,
+        "goal_angle_error_rad": 2.8623321024466213,
+        "goal_signed_angle_error_rad": 2.8623321024466213,
+        "goal_xy_error": 239.12939733667682,
+        "xy": [
+          129.16922190842183,
+          363.87939872362523
+        ]
+      },
+      "tail_role": "geometry_2",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "selected__geometry_3",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 0.983670285502054,
+        "goal_angle_error_rad": 2.827470718475249,
+        "goal_signed_angle_error_rad": 2.827470718475249,
+        "goal_xy_error": 239.7546591890406,
+        "xy": [
+          129.7511210590662,
+          365.6204368289653
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "selected",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.2219598439669741,
+        "goal_xy_error_difference": 3.112955418360656
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 0.983670285502054,
+        "goal_angle_error_rad": 2.827470718475249,
+        "goal_signed_angle_error_rad": 2.827470718475249,
+        "goal_xy_error": 239.7546591890406,
+        "xy": [
+          129.7511210590662,
+          365.6204368289653
+        ]
+      },
+      "tail_role": "geometry_3",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "selected__zero",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.3899543117641686,
+        "goal_angle_error_rad": 3.049430562442223,
+        "goal_signed_angle_error_rad": -3.049430562442223,
+        "goal_xy_error": 236.64170377067995,
+        "xy": [
+          127.69987874228917,
+          357.8795292743739
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "selected",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": 0.0,
+        "goal_xy_error_difference": 0.0
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.3899543117641686,
+        "goal_angle_error_rad": 3.049430562442223,
+        "goal_signed_angle_error_rad": -3.049430562442223,
+        "goal_xy_error": 236.64170377067995,
+        "xy": [
+          127.69987874228917,
+          357.8795292743739
+        ]
+      },
+      "tail_role": "zero",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "zero__geometry_0",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.0585060053225606,
+        "goal_angle_error_rad": 2.9023064382957555,
+        "goal_signed_angle_error_rad": 2.9023064382957555,
+        "goal_xy_error": 237.97276635592354,
+        "xy": [
+          128.40628800189043,
+          361.0134392711032
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "zero",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.14835902020156455,
+        "goal_xy_error_difference": 1.3345937943082902
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.0585060053225606,
+        "goal_angle_error_rad": 2.9023064382957555,
+        "goal_signed_angle_error_rad": 2.9023064382957555,
+        "goal_xy_error": 237.97276635592354,
+        "xy": [
+          128.40628800189043,
+          361.0134392711032
+        ]
+      },
+      "tail_role": "geometry_0",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "zero__geometry_1",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.1015682825404385,
+        "goal_angle_error_rad": 2.9453687155136334,
+        "goal_signed_angle_error_rad": 2.9453687155136334,
+        "goal_xy_error": 237.44608316840655,
+        "xy": [
+          127.89916847133895,
+          359.4807579172306
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "zero",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.10529674298368663,
+        "goal_xy_error_difference": 0.807910606791296
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.1015682825404385,
+        "goal_angle_error_rad": 2.9453687155136334,
+        "goal_signed_angle_error_rad": 2.9453687155136334,
+        "goal_xy_error": 237.44608316840655,
+        "xy": [
+          127.89916847133895,
+          359.4807579172306
+        ]
+      },
+      "tail_role": "geometry_1",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "zero__geometry_2",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.0709310335384883,
+        "goal_angle_error_rad": 2.9147314665116832,
+        "goal_signed_angle_error_rad": 2.9147314665116832,
+        "goal_xy_error": 237.8228835715837,
+        "xy": [
+          128.39784603696174,
+          360.75627181728817
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "zero",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.13593399198563683,
+        "goal_xy_error_difference": 1.1847110099684528
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.0709310335384883,
+        "goal_angle_error_rad": 2.9147314665116832,
+        "goal_signed_angle_error_rad": 2.9147314665116832,
+        "goal_xy_error": 237.8228835715837,
+        "xy": [
+          128.39784603696174,
+          360.75627181728817
+        ]
+      },
+      "tail_role": "geometry_2",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "zero__geometry_3",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 0.9836703679826204,
+        "goal_angle_error_rad": 2.8274708009558154,
+        "goal_signed_angle_error_rad": 2.8274708009558154,
+        "goal_xy_error": 239.75463450808644,
+        "xy": [
+          129.75114106397393,
+          365.62042232819084
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "zero",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.2231946575415047,
+        "goal_xy_error_difference": 3.1164619464711905
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 0.9836703679826204,
+        "goal_angle_error_rad": 2.8274708009558154,
+        "goal_signed_angle_error_rad": 2.8274708009558154,
+        "goal_xy_error": 239.75463450808644,
+        "xy": [
+          129.75114106397393,
+          365.62042232819084
+        ]
+      },
+      "tail_role": "geometry_3",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "zero__zero",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.3887194157090716,
+        "goal_angle_error_rad": 3.05066545849732,
+        "goal_signed_angle_error_rad": -3.05066545849732,
+        "goal_xy_error": 236.63817256161525,
+        "xy": [
+          127.63245717836784,
+          357.7835522341146
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "zero",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": 0.0,
+        "goal_xy_error_difference": 0.0
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.3887194157090716,
+        "goal_angle_error_rad": 3.05066545849732,
+        "goal_signed_angle_error_rad": -3.05066545849732,
+        "goal_xy_error": 236.63817256161525,
+        "xy": [
+          127.63245717836784,
+          357.7835522341146
+        ]
+      },
+      "tail_role": "zero",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "task_greedy_direct__geometry_0",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.125538866469391,
+        "goal_angle_error_rad": 2.969339299442586,
+        "goal_signed_angle_error_rad": 2.969339299442586,
+        "goal_xy_error": 237.00200241646408,
+        "xy": [
+          127.89750527834946,
+          358.7422479376303
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "task_greedy_direct",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.08508018558529207,
+        "goal_xy_error_difference": 0.34017985679776075
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.125538866469391,
+        "goal_angle_error_rad": 2.969339299442586,
+        "goal_signed_angle_error_rad": 2.969339299442586,
+        "goal_xy_error": 237.00200241646408,
+        "xy": [
+          127.89750527834946,
+          358.7422479376303
+        ]
+      },
+      "tail_role": "geometry_0",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "task_greedy_direct__geometry_1",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.13037858815267,
+        "goal_angle_error_rad": 2.974179021125865,
+        "goal_signed_angle_error_rad": 2.974179021125865,
+        "goal_xy_error": 236.9686410439674,
+        "xy": [
+          127.87982332330168,
+          358.66337682499426
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "task_greedy_direct",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.08024046390201311,
+        "goal_xy_error_difference": 0.3068184843010897
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.13037858815267,
+        "goal_angle_error_rad": 2.974179021125865,
+        "goal_signed_angle_error_rad": 2.974179021125865,
+        "goal_xy_error": 236.9686410439674,
+        "xy": [
+          127.87982332330168,
+          358.66337682499426
+        ]
+      },
+      "tail_role": "geometry_1",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "task_greedy_direct__geometry_2",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.1215217447825037,
+        "goal_angle_error_rad": 2.9653221777556986,
+        "goal_signed_angle_error_rad": 2.9653221777556986,
+        "goal_xy_error": 236.9497029604896,
+        "xy": [
+          127.89405640248012,
+          358.6507966571555
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "task_greedy_direct",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.08909730727217946,
+        "goal_xy_error_difference": 0.28788040082326916
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.1215217447825037,
+        "goal_angle_error_rad": 2.9653221777556986,
+        "goal_signed_angle_error_rad": 2.9653221777556986,
+        "goal_xy_error": 236.9497029604896,
+        "xy": [
+          127.89405640248012,
+          358.6507966571555
+        ]
+      },
+      "tail_role": "geometry_2",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "task_greedy_direct__geometry_3",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.09925915285916,
+        "goal_angle_error_rad": 2.943059585832355,
+        "goal_signed_angle_error_rad": 2.943059585832355,
+        "goal_xy_error": 236.97879137012103,
+        "xy": [
+          127.92273677577978,
+          358.737155290336
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "task_greedy_direct",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.11135989919552314,
+        "goal_xy_error_difference": 0.3169688104547106
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.09925915285916,
+        "goal_angle_error_rad": 2.943059585832355,
+        "goal_signed_angle_error_rad": 2.943059585832355,
+        "goal_xy_error": 236.97879137012103,
+        "xy": [
+          127.92273677577978,
+          358.737155290336
+        ]
+      },
+      "tail_role": "geometry_3",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "task_greedy_direct__zero",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.3849653891785136,
+        "goal_angle_error_rad": 3.054419485027878,
+        "goal_signed_angle_error_rad": -3.054419485027878,
+        "goal_xy_error": 236.66182255966632,
+        "xy": [
+          127.64164390126614,
+          357.8353080480855
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "task_greedy_direct",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": 0.0,
+        "goal_xy_error_difference": 0.0
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.3849653891785136,
+        "goal_angle_error_rad": 3.054419485027878,
+        "goal_signed_angle_error_rad": -3.054419485027878,
+        "goal_xy_error": 236.66182255966632,
+        "xy": [
+          127.64164390126614,
+          357.8353080480855
+        ]
+      },
+      "tail_role": "zero",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "random__geometry_0",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.0098305698623191,
+        "goal_angle_error_rad": 2.853631002835514,
+        "goal_signed_angle_error_rad": 2.853631002835514,
+        "goal_xy_error": 243.22696752987594,
+        "xy": [
+          131.53096964653164,
+          373.25051425859186
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "random",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.197034455661806,
+        "goal_xy_error_difference": 6.588794968260686
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.0098305698623191,
+        "goal_angle_error_rad": 2.853631002835514,
+        "goal_signed_angle_error_rad": 2.853631002835514,
+        "goal_xy_error": 243.22696752987594,
+        "xy": [
+          131.53096964653164,
+          373.25051425859186
+        ]
+      },
+      "tail_role": "geometry_0",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "random__geometry_1",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.0287461896524883,
+        "goal_angle_error_rad": 2.8725466226256833,
+        "goal_signed_angle_error_rad": 2.8725466226256833,
+        "goal_xy_error": 240.61614897315306,
+        "xy": [
+          130.47047966674157,
+          367.8859285343894
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "random",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.1781188358716368,
+        "goal_xy_error_difference": 3.97797641153781
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.0287461896524883,
+        "goal_angle_error_rad": 2.8725466226256833,
+        "goal_signed_angle_error_rad": 2.8725466226256833,
+        "goal_xy_error": 240.61614897315306,
+        "xy": [
+          130.47047966674157,
+          367.8859285343894
+        ]
+      },
+      "tail_role": "geometry_1",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "random__geometry_2",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.0266008851111392,
+        "goal_angle_error_rad": 2.870401318084334,
+        "goal_signed_angle_error_rad": 2.870401318084334,
+        "goal_xy_error": 243.03994563154708,
+        "xy": [
+          131.52922980093575,
+          372.9589558566595
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "random",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.18026414041298588,
+        "goal_xy_error_difference": 6.401773069931835
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.0266008851111392,
+        "goal_angle_error_rad": 2.870401318084334,
+        "goal_signed_angle_error_rad": 2.870401318084334,
+        "goal_xy_error": 243.03994563154708,
+        "xy": [
+          131.52922980093575,
+          372.9589558566595
+        ]
+      },
+      "tail_role": "geometry_2",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "random__geometry_3",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 0.9851130619756399,
+        "goal_angle_error_rad": 2.828913494948835,
+        "goal_signed_angle_error_rad": 2.828913494948835,
+        "goal_xy_error": 251.65371968544318,
+        "xy": [
+          133.38664826651404,
+          388.0012291403126
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "random",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": -0.22175196354848525,
+        "goal_xy_error_difference": 15.015547123827929
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 0.9851130619756399,
+        "goal_angle_error_rad": 2.828913494948835,
+        "goal_signed_angle_error_rad": 2.828913494948835,
+        "goal_xy_error": 251.65371968544318,
+        "xy": [
+          133.38664826651404,
+          388.0012291403126
+        ]
+      },
+      "tail_role": "geometry_3",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "arm": "random__zero",
+      "censored_horizon10": false,
+      "cp5_object": {
+        "angle_rad": 1.3887194027819154,
+        "goal_angle_error_rad": 3.0506654714244763,
+        "goal_signed_angle_error_rad": -3.0506654714244763,
+        "goal_xy_error": 236.63819880904157,
+        "xy": [
+          127.63242397188344,
+          357.78355166200856
+        ]
+      },
+      "horizon10_observed": true,
+      "last_observed_object": {
+        "angle_rad": 1.3887194157090716,
+        "goal_angle_error_rad": 3.05066545849732,
+        "goal_signed_angle_error_rad": -3.05066545849732,
+        "goal_xy_error": 236.63817256161525,
+        "xy": [
+          127.63245717836784,
+          357.7835522341146
+        ]
+      },
+      "native_success_observed": false,
+      "prefix_role": "random",
+      "relative_to_zero": {
+        "goal_angle_error_rad_difference": 0.0,
+        "goal_xy_error_difference": 0.0
+      },
+      "status": "fixed_horizon_completed",
+      "step10_object": {
+        "angle_rad": 1.3887194157090716,
+        "goal_angle_error_rad": 3.05066545849732,
+        "goal_signed_angle_error_rad": -3.05066545849732,
+        "goal_xy_error": 236.63817256161525,
+        "xy": [
+          127.63245717836784,
+          357.7835522341146
+        ]
+      },
+      "tail_role": "zero",
+      "tail_steps_returned": 10,
+      "terminated": false,
+      "truncated": false
+    }
+  ],
+  "saved_verifier_status": "saved_chain_verified_development_only",
+  "schema": "p1_dev303_v3_cross_tail_object_analysis_20261102_exclusive.v1",
+  "source_report_sha256": "51f783344256f5edad4523602621f759c0fac1839c971dedd86abcdceb67471a"
+}
