@@ -1,0 +1,29 @@
+{
+  "root_seeds": [202761010, 202761011],
+  "reset_seed_start": 202781010,
+  "proposal_limit_per_seed": 2,
+  "reset_attempts_per_proposal": 2,
+  "placement_reset_seed": 0,
+  "recipe": {
+    "position_jitter": 16.0,
+    "angle_offset_range": [-3.141592653589793, 3.141592653589793],
+    "edge_fraction_range": [0.15, 0.85],
+    "pusher_surface_offset": 15.0
+  },
+  "domain": {
+    "canvas_xy": [0.0, 512.0],
+    "contact_gap_range": [-0.5, 3.0],
+    "nonterminal_position_tolerance": 20.0,
+    "nonterminal_angle_tolerance": 0.3490658503988659
+  },
+  "rgb_shape": [224, 224, 3],
+  "artifact_byte_limit": 8388608,
+  "environment_source_path": "/home/gbk/code/LeWorldModel/le-wm-main/.venv/lib/python3.12/site-packages/stable_worldmodel/envs/pusht/env.py",
+  "source_closure_paths": [
+    "/home/gbk/code/LeWorldModel/le-wm-main/.venv/lib/python3.12/site-packages/stable_worldmodel/__init__.py",
+    "/home/gbk/code/LeWorldModel/le-wm-main/.venv/lib/python3.12/site-packages/stable_worldmodel/envs/__init__.py",
+    "/home/gbk/code/LeWorldModel/le-wm-main/.venv/lib/python3.12/site-packages/stable_worldmodel/envs/pusht/__init__.py",
+    "/home/gbk/code/LeWorldModel/le-wm-main/.venv/lib/python3.12/site-packages/stable_worldmodel/spaces.py",
+    "/home/gbk/code/LeWorldModel/le-wm-main/.venv/lib/python3.12/site-packages/stable_worldmodel/envs/utils.py"
+  ]
+}

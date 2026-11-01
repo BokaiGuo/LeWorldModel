@@ -1,0 +1,14 @@
+MAIN actual host CUDA completed, not science admission.
+Prepared SHA: 1c4ee801b9e67b2529e23c51fae94ce0c7dd421290c8fd3edc2de6786f2ab0b3
+Report SHA: cfd13ca478603c90c56b81c70f0ed161ef56d6a8de87da4c0e317388bd138e4e
+Run: results/p1_matched_sampling_cuda_20261027_v1_cuda_main01
+504 predictor and action_encoder entries each, 240 full H2 candidates,
+four paid independent nominal/whole/segmented winner checks, zero AD/image/physics.
+Errors empty; source revalidated; frozen tensor hash unchanged.
+Root0 CEM=1.1711415691973757, IID=1.1821036195087629.
+Root1 CEM=1.901435500371429, IID=1.861800730789411.
+Only predictor/action_encoder count matched to two-stage witness; NOT total compute.
+The two-stage model-Q advantage exists on root1, not root0; no physical benefit claim.
+Independent MAIN saved tests: test_p1_matched_sampling_saved_main_20261027_v1.py,
+4 passed; no neural execution in tests, all candidate arithmetic/history/elite checked.
+No new roots, no formal direct stall evidence, no independent confirmation.

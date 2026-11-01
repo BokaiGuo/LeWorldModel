@@ -1,0 +1,8 @@
+# Version lock only. Downloaded artifacts must be hashed by bootstrap before use.
+# No dependency resolution, extras, neural libraries or source patches.
+wheel==0.45.1
+gym==0.23.1
+pymunk==6.8.0
+scikit-image==0.25.2
+lazy-loader==0.4
+tifffile==2025.6.11

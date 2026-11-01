@@ -1,0 +1,39 @@
+{
+  "schema": "d2p_baseline_reported_values_20261027_v1.delivery",
+  "date": "2026-10-27",
+  "workspace_root": "/home/gbk/code/LeWorldModel",
+  "new_files_bytes_excluding_this_manifest": 45374,
+  "files": [
+    {"path": "/home/gbk/code/LeWorldModel/docs/p2_sage_primary_source_resolution_20261027_v2.md", "sha256": "487a664380c7abdf8e92c53bab1cd72de7546844cfdbc4031e163898670e4edc"},
+    {"path": "/home/gbk/code/LeWorldModel/docs/p2_sage_primary_source_resolution_20261027_v2.sources.json", "sha256": "e6650894efa7b066dc7f20424b7beca63b3db8525b34fe070a3fe95bcde9c76c"},
+    {"path": "/home/gbk/code/LeWorldModel/docs/d2p_baseline_reported_values_20261027_v1.md", "sha256": "fcac67795f3dc295805049530748defe73a1f72817b3941a62d6f56cf55f170f"},
+    {"path": "/home/gbk/code/LeWorldModel/docs/d2p_baseline_reported_values_20261027_v1.report.json", "sha256": "fbc89f58707d2de09a45e27fcc92bce630278ec6ac06f29bde9ede2832d6c065"},
+    {"path": "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/d2p_baseline_reported_values_20261027_v1.py", "sha256": "30b1694e6537f15364ec1cc1da5b038fe749f8783800c60d20e6d5ab8a7461fb"},
+    {"path": "/home/gbk/code/LeWorldModel/le-wm-main/tests/test_d2p_baseline_reported_values_20261027_v1.py", "sha256": "b5407913ce42fe0a6847c7b97bc1f63ad93dc1ece72e3dad9817e9398ad1a9ba"}
+  ],
+  "commands": {
+    "cwd": "/home/gbk/code/LeWorldModel/le-wm-main",
+    "tests": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m pytest -q -p no:cacheprovider tests/test_d2p_baseline_reported_values_20261027_v1.py",
+    "offline_audit": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B -m experiments.spectral_reachability.d2p_baseline_reported_values_20261027_v1"
+  },
+  "verification": {
+    "tests_passed": 20,
+    "actual_offline_source_cells_reconstructed": 238,
+    "numeric_cells": 236,
+    "missing_cells": 2,
+    "mock_is_efficacy": false,
+    "local_model_reproduction": false,
+    "scientific_admission": false,
+    "paper_or_weight_downloads": 0,
+    "neural_or_physics_jobs": 0,
+    "disk_available_at_final_check_mib_approx": 362,
+    "required_disk_reserve_mib": 200
+  },
+  "remaining_prerequisites": [
+    "SAGE: resolve arXiv/README author discrepancy; authenticate actual pretrained component inventory, immutable revision, checkpoint/config/normalizer hashes and licenses.",
+    "SAGE: original table/statistical protocols remain unverified; abstract values are contextual reported claims only.",
+    "All baselines: exact checkpoint/root/episode and observation/action/feedback/resource contracts before local paired evaluation; keep GRASP learned-model outcomes and driving scores distinct from physical manipulation SR.",
+    "No new P1/P2/P3/P4/P5 scientific admission follows from this source archive or its mock tests."
+  ],
+  "preservation": "Previous source-resolution versions and all sealed source/results preserved; no shared progress edits, deletion, submission or commit."
+}

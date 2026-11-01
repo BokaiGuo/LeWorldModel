@@ -1,0 +1,33 @@
+{
+  "schema": "chat_freshroots_20261027.preregistration.v1",
+  "scope": "saved metadata closure only; not P1, not source generation",
+  "protocol_sha256": "42f1bcbf517dfd46b8ba05525663d82efac32dbb5fb24f87a8ca572bef507a2f",
+  "candidate_order": [
+    {"slot": 0, "root_seed": 203027101, "reset_seed": 203027201, "witness_sign": 1},
+    {"slot": 1, "root_seed": 203027102, "reset_seed": 203027202, "witness_sign": -1},
+    {"slot": 2, "root_seed": 203027103, "reset_seed": 203027203, "witness_sign": 1},
+    {"slot": 3, "root_seed": 203027104, "reset_seed": 203027204, "witness_sign": -1}
+  ],
+  "sampling_denominator": 4,
+  "proposal_per_slot": 1,
+  "attempt_per_slot": 1,
+  "replacement_or_retry": false,
+  "selection": "protocol slot order only; no outcome, cost, difficulty or success ranking",
+  "sampling": "inherit exact protocol recipe SeedSequence([root_seed,0,0]); no new sampling in this chat",
+  "failures": "retain duplicate, guard, degenerate, partial, not_started and all unsuccessful slots in denominator 4",
+  "exclude": [
+    "root and reset seed cross-namespace matches, including reserved half-open spans",
+    "conditional historical closed spans checked conservatively but never called certified",
+    "root-goal, state7, wrapped pose, snapshot or RGB3 identity matches",
+    "XY tolerance 1e-9 pixel and wrapped-angle tolerance 1e-12 rad; no velocity/goal/renderer escape",
+    "batch-internal duplicates; raw history alone is not physical identity",
+    "missing source identity or historical scope/bound evidence blocks admission"
+  ],
+  "seed0_exception": "explicit-state placement reset only; not a new random root and not proof all seed0 states coincide",
+  "approval": "external MAIN coverage scope/SHA required; no self-approval",
+  "freshness": "requires actual future state/pose/snapshot/history exclusion before witness dispatch; new directory or seed is insufficient",
+  "cutoff": "exact sealed 618-path inventory snapshot, not all history through current wall time; subsequent MAIN activity requires explicit delta inventory",
+  "new_outcomes_opened": false,
+  "neural_calls": 0,
+  "physics_calls": 0
+}

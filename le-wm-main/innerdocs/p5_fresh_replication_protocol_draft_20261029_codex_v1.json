@@ -1,0 +1,17 @@
+{
+  "sections": {
+    "cohort_order_seed_distribution": "Historical saved physical panel has two known roots and 164 branches; the pinned P5 preconditions snapshot has zero certified fresh roots and null P5 denominator. Proposed N, seed distribution and order are not approved.",
+    "source_episode_split_exclusion": "The existing freshness authority and MAIN must review actual source, episode split, current coverage approval and candidate identity; no new evidence or exclusion is asserted here.",
+    "model_task_observation_action_history_labels": "Candidate JEPA-WM uses RGB plus agent position and velocity in the saved native contract; the related LeWM comparison uses RGB-only. Checkpoint choice, task, history, action and label ABI remain unapproved.",
+    "arms_resource_caps": "Existing H1/H2 receipts are saved diagnostics and not matched cross-model performance. Arm selection, feedback permissions and per-axis caps remain unapproved.",
+    "failure_denominator_stopping": "The future P5 denominator, failures, missingness and stopping rules remain unapproved; historical branch count is not the independent root count.",
+    "training_cost": "Actual pretraining costs and normalizer statistical lineage remain unknown in the saved architecture contract; configuration and zero counters are not measured cost.",
+    "statistical_commitments": null
+  },
+  "separation_claims": {
+    "event_new": {"declaration": "unknown", "citations": []},
+    "state_set_disjoint": {"declaration": "unknown", "citations": []},
+    "sampling_independence": {"declaration": "unknown", "citations": []},
+    "training_lineage": {"declaration": "unknown", "citations": []}
+  }
+}

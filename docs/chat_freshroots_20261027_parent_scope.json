@@ -1,0 +1,14 @@
+{
+  "schema": "chat_freshroots_20261027.parent_scope.v1",
+  "reports": [
+    {"path": "/home/gbk/code/LeWorldModel/le-wm-main/results/pusht_observed_suffix_neural_fd4_v1_20261026_cuda/report.json", "sha256": "e46d1ecebcb5700576c703247ea53408c6cb5dbb6a8e9bbf4397e540470b0613", "adapter": "branch_prefix"},
+    {"path": "/home/gbk/code/LeWorldModel/le-wm-main/results/pusht_observed_suffix_physical_fd4_v1_20261026_cuda/report.json", "sha256": "b97dc3f081f43d0cc85c21fa97b9d66bc15d48ae18e71a0328a5304372fb70ea", "adapter": "probe_prefix"}
+  ],
+  "selection": "all report prefix records; match all supplemental records by exact state7-byte SHA plus single prefix RGB SHA, not filename or outcome",
+  "allowlist": "rows root_sha256; branches candidate_id; branch_prefix prefix_state/RGB; probe_prefix probes prefix_state/RGB only",
+  "relation": "parent report declares this exact prefix under ancestor root-goal and branch; NOT prefix==ancestor physical root",
+  "missing_or_ambiguous_match": "retain every target and original record; ambiguous ancestor mapping stays unresolved",
+  "outcome_fields": "opaque: final/state/official/status/comparisons/cost/vector/probes predictions/actions",
+  "candidate_order": "unchanged original four slots and denominator4; no sampling or replacement",
+  "coverage_or_freshness_approval": false
+}

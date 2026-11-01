@@ -1,0 +1,16 @@
+{
+  "schema": "chat_freshroots_20261027.prefix_scope.v1",
+  "capture_path": "/home/gbk/code/LeWorldModel/le-wm-main/results/root_exclusion_authority_resolution_20261027_v1_inventory618_MAIN01.json",
+  "capture_sha256": "e2afed12a1d8f788ad16d0223482377b5f54d281e67739766475228b53ac2591",
+  "selection": "all capture rows whose recorded top_level_keys contains prefix_state; no filename or result selection",
+  "expected_file_denominator": 80,
+  "decoded_fields": ["/prefix_state/*", "/prefix_rgb_sha256"],
+  "opaque_fields": "all others including final_state/state/status/official/cost/probes/selected/actions",
+  "identity_meaning": "report-declared historical prefix state, not certified original sampled root",
+  "missing_seed_reset_snapshot_raw_history": "keep explicitly unknown; never infer from root_N filename or parent directory",
+  "alias_rule": "existing protocol XY 1e-9 pixel and wrapped angle 1e-12 rad; group only pose, retain all original rows",
+  "candidate_order_and_denominator": "unchanged original four slots, denominator 4; no outcome selection or replacement",
+  "old_unknown_discharge": false,
+  "freshness_certification": false,
+  "neural_or_physics_calls": 0
+}

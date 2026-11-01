@@ -1,0 +1,157 @@
+{
+  "schema": "p2_sage_primary_source_resolution_20261027_v1",
+  "date": "2026-10-27",
+  "status": "unresolved_access_blocked",
+  "identity_gap_resolved": false,
+  "identity_authenticated": false,
+  "classification": {
+    "authenticated": false,
+    "multiple_primary_candidates_found": false,
+    "acronym_to_paper_mapping": "unresolved",
+    "checked_local_primary_materials": "not_found_in_bounded_search",
+    "external_search": "rate_limited_not_zero_results",
+    "global_nonexistence_claim": false
+  },
+  "proposal_profile": {
+    "acronym": "SAGE",
+    "candidate_title_from_internal_transcription_only": "SAGE: Subgoal-Conditioned Action Generation for Latent World Model Planning",
+    "claimed_role": "Frozen LeWM with multihorizon subgoal or conditioned action proposals",
+    "profile_primary_verified": false,
+    "clue_source": "docs/D2P_REPORTED_BASELINES_PRISM_IMWM_20261026.md:15"
+  },
+  "authenticated_identity": {
+    "title": null,
+    "authors": null,
+    "arxiv_id": null,
+    "doi": null,
+    "version": null,
+    "publication_status": null,
+    "paper_url": null,
+    "official_project_url": null,
+    "official_code_url": null,
+    "official_code_revision": null,
+    "code_license": null,
+    "official_weights_url": null,
+    "weights_release_status": "unknown_not_confirmed_absent",
+    "weights_license": null,
+    "checkpoint_identity": null
+  },
+  "search_receipts": [
+    {
+      "sequence": 1,
+      "tool": "mcp__arxiv__search_papers",
+      "arguments": {
+        "query": "ti:\"Subgoal-Conditioned Action Generation\" OR (ti:SAGE AND (abs:\"world model\" OR abs:subgoal))",
+        "max_results": 15,
+        "sort_by": "relevance"
+      },
+      "isError": true,
+      "returned_text": "Error: arXiv is rate limiting this IP. Please wait 60 seconds before retrying.",
+      "returned_paper_count": null,
+      "interpretation": "access_failure_not_negative_search_evidence"
+    },
+    {
+      "sequence": 2,
+      "tool": "mcp__arxiv__list_papers",
+      "arguments": {},
+      "isError": false,
+      "total_cached_paper_ids": 153,
+      "metadata_in_response": "IDs only; no titles/authors",
+      "interpretation": "not_a_title_search_and_not_evidence_SAGE_is_absent_from_cache"
+    },
+    {
+      "sequence": 3,
+      "tool": "mcp__arxiv__search_papers",
+      "arguments": {
+        "query": "ti:SAGE AND (all:\"world model\" OR all:LeWM OR all:subgoal)",
+        "max_results": 20,
+        "sort_by": "relevance"
+      },
+      "isError": true,
+      "returned_text": "Error: arXiv is rate limiting this IP. Please wait 60 seconds before retrying.",
+      "returned_paper_count": null,
+      "interpretation": "retry_after_local_review_still_blocked_no_metadata_received"
+    }
+  ],
+  "bounded_local_search": {
+    "scope": [
+      "Repository docs, innerdocs and non-result source references to SAGE",
+      "le-wm-main/results/p2_reported_baseline_table_20261027_v3/sources/*.txt",
+      "le-wm-main/results/p2_reported_baseline_table_20261027_v3/sources/*.html",
+      "LeWorldModel_Overleaf_Package_20260831/overleaf/references.bib"
+    ],
+    "primary_cache_query": "rg -n -i '\\bsage\\b|subgoal.conditioned' le-wm-main/results/p2_reported_baseline_table_20261027_v3/sources -g '*.txt' -g '*.html' --stats",
+    "primary_cache_files_searched": 12,
+    "primary_cache_bytes_searched": 2719390,
+    "primary_cache_matching_lines": 0,
+    "bibliography_matching_lines": 0,
+    "limitation": "No exhaustive full-machine, anonymous-PDF, archive or all-153-cached-paper-content search; zero text matches do not establish global absence."
+  },
+  "local_sources": [
+    {
+      "path": "docs/D2P_REPORTED_BASELINES_PRISM_IMWM_20261026.md",
+      "sha256": "c8b8598f7c6f33354bbda1dfa2fe4445dd8d48750612c4655a6fecbd4fc380dd",
+      "role": "internal transcription clue, not primary SAGE paper"
+    },
+    {
+      "path": "docs/D2P_REPORTED_BASELINES_SAGE_SUPERMIMIC_20261026.md",
+      "sha256": "b33bc9e768c933d44910626d0ea8a9a7d775cf41de23b61b4883847968873d01",
+      "role": "prior unresolved identity ledger, not independent confirmation"
+    },
+    {
+      "path": "docs/p2_remaining_baseline_contracts_20261027_v1.md",
+      "sha256": "dad0dd289563d956633992575e0214c48c9656f875576e655fc3f4d18007017f",
+      "role": "prior bounded local asset inventory, not primary evidence"
+    },
+    {
+      "path": "le-wm-main/results/p2_reported_baseline_table_20261027_v3/retrieval.json",
+      "sha256": "770f2f6a58978cc818bbc4817fe5dc20eba9497c5df3ba491c682949a3a7621e",
+      "role": "existing primary-cache retrieval manifest"
+    },
+    {
+      "path": "le-wm-main/results/p2_reported_baseline_table_20261027_v3/sources/hilewm_abs.html",
+      "sha256": "dcb7f3eab157bff53a224825b106e4791e25a34762cac81ef46f057ee20bbaf9",
+      "role": "primary metadata for distinct Hi-LeWM, not SAGE identity"
+    },
+    {
+      "path": "le-wm-main/results/p2_reported_baseline_table_20261027_v3/sources/hilewm_pdf.txt",
+      "sha256": "602131e9ec0f42b51276d3e38a758ba229acf61fa70d49fbc7feda2ec5224faa",
+      "role": "primary-text extraction for distinct Hi-LeWM; title and abstract checked"
+    },
+    {
+      "path": "LeWorldModel_Overleaf_Package_20260831/overleaf/references.bib",
+      "sha256": "04b4f7df23925192fa79db8f5053c95f4cb0a5530bec7a6d61a601fd47c73ac2",
+      "role": "bounded bibliography search, no SAGE identity match"
+    }
+  ],
+  "nearby_distinct_primary_work": {
+    "title": "Mind the Gap: Promises and Pitfalls of Hierarchical Planning in LeWorldModel",
+    "method_name": "Hi-LeWM",
+    "arxiv_id": "2607.12547",
+    "cached_pdf_version": "v2",
+    "paper_url": "https://arxiv.org/abs/2607.12547",
+    "relationship_to_SAGE": "no_primary_evidence_of_alias_or_identity_equivalence",
+    "use_as_SAGE_substitute": false
+  },
+  "reported_results": [],
+  "local_paired_results": [],
+  "comparability": "insufficient_primary_metadata",
+  "unverified_protocol_clues": [
+    "Table 1 state-assisted versus Table 18 visual-only",
+    "H as goal offset versus world-model rollout horizon",
+    "Manifest SD versus pooled query success and training-seed uncertainty",
+    "Additional learned modules despite a frozen world-model backbone"
+  ],
+  "unblock_requirements": [
+    "Obtain a readable primary paper or author-linked stable paper URL/ID that matches the proposed method; authenticate title, authors and version.",
+    "Resolve author-linked official code, revision and license independently of similarly named repositories.",
+    "Resolve released pretrained subgoal/proposal module weights, config, normalizers and license; frozen LeWM alone is insufficient.",
+    "Extract any reported result with original environment, model/checkpoint, observations, goal offset, rollout/execution horizon, feedback, search budget, training cost and statistical unit; never promote it to local paired evidence."
+  ],
+  "training_authorized": false,
+  "large_asset_downloads": 0,
+  "neural_calls": 0,
+  "physics_calls": 0,
+  "external_search_other_connectors_available": false,
+  "limitations": "Two arXiv tool calls failed with rate-limit errors. No successful external metadata or full-text retrieval. No guessed authors, IDs, repository URLs, weights URLs, result values or rankings. This report does not resolve the identity gap."
+}

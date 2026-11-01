@@ -1,0 +1,22 @@
+Actual MAIN host CUDA diagnostic completed2026-10-27.
+Run: results/p1_orientation_cuda_main_20261027_v1_cuda_main01
+prepare SHA7436fbe1bb31ec5452275ee79ea1a8cd8e8357e76e895b4042b691245e9d02a6
+report SHAad5649a5168123611b3bbec743b4886b7ef98854f19df82a7db5d8bcc5456234
+analysis SHAc094f1fdcc9d78f86b5978e24857ee8c2889e4d40d17e8da859d68821fb43f14
+104encoder+104projector actual module entries complete;0predict/AD/physics/training.
+Model hash before/after4b12c01f5859f4b46bea478f3a8d5e2d3f516df456a622a3feec31bde7e33546.
+Elapsed5.897s including load/final hashes; peak allocated109262336bytes.
+27unique images,77repeat comparisons all exactly equal latent arrays.
+The clean rotated scenes are identical across the four original agent placements:
+not4independent scenes. All nonzero-angle images differ in latent representation
+from clean: nearest MSE1.288684--2.326376, bilinear1.304623--2.311891.
+Same-angle sampler MSE0--0.0384581; original-to-clean agent removal MSE
+0.224001/0.948157/0.246254/0.474703. These are descriptive native192 distances,
+not angular error calibration or significance tests. Distances are NOT monotone
+in absolute angle: e.g.120deg nearer than30deg. No implication that a new Q would
+improve physical control. Raster interpolation/centroid/agent-removal confounds
+remain. This rules out only the absolute claim that this checkpoint emits an
+identical vector for every catalog rotation. It does not rule out local physical
+orientation blindness or explain prior planning failures causally. No newQ,
+no threshold fitted and P1 remainsfalse. Independent saved-array audit recomputes
+all numerical distances and frame/resource bindings without importing runner.

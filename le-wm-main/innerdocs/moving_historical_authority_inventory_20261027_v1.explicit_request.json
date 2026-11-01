@@ -1,0 +1,92 @@
+{
+  "schema": "moving_root_exclusion_manifest_20261027_v1.request",
+  "cutoff_utc": "2026-10-27T11:11:41.650764+00:00",
+  "project_root": "/home/gbk/code/LeWorldModel/le-wm-main",
+  "protocol": {
+    "path": "/home/gbk/code/LeWorldModel/docs/D2P_MOVING_FRESH_ROOT_PROTOCOL_20261027.md",
+    "sha256": "42f1bcbf517dfd46b8ba05525663d82efac32dbb5fb24f87a8ca572bef507a2f"
+  },
+  "evidence_files": [
+    {
+      "source_id": "authority_1257484a49e778db",
+      "family": "reserved_prepares",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/results/p1_constructive_reachable_source_20261027_v1_prepare01.json",
+      "sha256": "98ffb806018a270f5ef27ffa76be929393a74355c213bc274bf158c72d80b086",
+      "format": "prepare_envelope",
+      "adapter": "prepare"
+    },
+    {
+      "source_id": "authority_fe8f13b3fd772c67",
+      "family": "reserved_prepares",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/results/p1_constructive_moving_history_source_20261027_v1_prepare01.json",
+      "sha256": "c1292f0ebfb1827e5da92b32ab13d2e4a12c025c4741277ab4c4f478d6ee8cb9",
+      "format": "prepare_envelope",
+      "adapter": "prepare"
+    },
+    {
+      "source_id": "authority_951466f82857783e",
+      "family": "constructive_zero",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/results/p1_constructive_reachable_source_20261027_v1_main01/sourcepack.json",
+      "sha256": "9ad3a414fd2148258524d4a7e9d4f070f59532ec2e5943cfa61f9145b3a41bd9",
+      "format": "json",
+      "adapter": "sourcepack"
+    },
+    {
+      "source_id": "authority_d8d5aee857d6708c",
+      "family": "moving",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/results/p1_constructive_moving_history_source_20261027_v1_main01/sourcepack.json",
+      "sha256": "c2d8d573f94884ffc081163f25f2bfa269f98ffe8155887704109219910ffec6",
+      "format": "json",
+      "adapter": "sourcepack"
+    },
+    {
+      "source_id": "authority_c7da6545e91eee53",
+      "family": "legacy_zero",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/results/p1_conditional_calibration2_main_20261027_v1/sourcepack.json",
+      "sha256": "728f14cb83c4fcd0ea4f5348bad2bff5b5dd372ab0185b6e6b3a26dbfda58057",
+      "format": "json",
+      "adapter": "sourcepack"
+    },
+    {
+      "source_id": "authority_780368c13c8ca5a8",
+      "family": "observed_history_calibration",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/results/p1_observed_history_source_20261027_v1_main01/sourcepack.json",
+      "sha256": "0b89d77494acc6cf03bb0110e87231c1c240a253e844326acc668b7e4f93d546",
+      "format": "json",
+      "adapter": "sourcepack"
+    },
+    {
+      "source_id": "moving_task_0",
+      "family": "moving",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/results/p1_constructive_moving_history_encode_cuda_20261027_v1_cuda_main01/task_00.json.gz",
+      "sha256": "a42bfbb1ea692782355e2572a5df2cd048b72cf3e6c41fee40eb12503674959b",
+      "format": "gzip_json",
+      "adapter": "task"
+    },
+    {
+      "source_id": "moving_task_1",
+      "family": "moving",
+      "path": "/home/gbk/code/LeWorldModel/le-wm-main/results/p1_constructive_moving_history_encode_cuda_20261027_v1_cuda_main01/task_01.json.gz",
+      "sha256": "101add21a7a40591167a6ab8e8b22c3c62cb1fd700c741fd36cd2073e2d5df74",
+      "format": "gzip_json",
+      "adapter": "task"
+    }
+  ],
+  "expected_source_families": [
+    "legacy_zero",
+    "original_four",
+    "constructive_zero",
+    "moving",
+    "overlay",
+    "feedback",
+    "reserved_prepares",
+    "observed_history_calibration"
+  ],
+  "declared_unresolved_sources": [
+    "Scoped8-file request only; full618-file authority catalog SHA c425052a9a43e362eff77befc21e37c6a72fdc3fa455a6f5ac7c53b1c0487341 is not parsed by this request.",
+    "Original_four/overlay/feedback physical identity bridges and complete historical reset attempts remain unapproved.",
+    "All960 inherited unknown occurrences remain; no approved disposition override in v1.",
+    "Conditional sourcepack uses slots and observed_history uses metadata/random_reset_seed/checkpoints; supplemental inventory candidates are not approved maps_to bridges."
+  ],
+  "approval_file": null
+}
