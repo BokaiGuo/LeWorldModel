@@ -1,0 +1,61 @@
+{
+  "audit_sha256": "13039ee32ccc3a4ded9157e10f0820f125fc37a8cf7b1097d7ce2eb7ca2e7b52",
+  "manifest_sha256": "d289e1457b3ef8429c9e8da4ee0e75d02ac92e5c03c099a45e53f6469ee0f1af",
+  "rows": [
+    {
+      "arm": "smooth_cem",
+      "execution_sha256": "030ed565fb60f44401e1fc95295a5ef9317498c1a13060da349a36d0d51e4bec",
+      "max_qpos_abs_error": 0.0,
+      "max_target_abs_error": 0.0,
+      "outcomes": [
+        {
+          "distance": 1.0035004008304682,
+          "qpos": [
+            -1.8981484880226203,
+            -2.283870388321867
+          ],
+          "target_qpos": [
+            -1.2836792805299435,
+            -3.0772433444466847
+          ]
+        },
+        {
+          "distance": 1.0913270992988284,
+          "qpos": [
+            -1.8395792822209824,
+            -2.138110752219209
+          ],
+          "target_qpos": [
+            -1.2836792805299435,
+            -3.0772433444466847
+          ]
+        },
+        {
+          "distance": 0.9929840546842997,
+          "qpos": [
+            -1.7326655130247461,
+            -2.191563551356995
+          ],
+          "target_qpos": [
+            -1.2836792805299435,
+            -3.0772433444466847
+          ]
+        },
+        {
+          "distance": 0.5556745728358504,
+          "qpos": [
+            -1.4882083759991953,
+            -2.560578965954385
+          ],
+          "target_qpos": [
+            -1.2836792805299435,
+            -3.0772433444466847
+          ]
+        }
+      ],
+      "root_rgb_equal": true
+    }
+  ],
+  "scope": "same-backend replay; qvel and all intermediate states not checked",
+  "script_sha256": "463a243e70ddfaf0459d80d6eaf2505ddcc445adc5800eb65784ee3b833000f9"
+}

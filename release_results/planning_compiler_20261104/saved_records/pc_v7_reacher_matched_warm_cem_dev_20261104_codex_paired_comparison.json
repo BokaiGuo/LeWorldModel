@@ -1,0 +1,38 @@
+{
+  "cem_distances": [
+    1.0035004008304682,
+    1.0913270992988284,
+    0.9929840546842997,
+    0.5556745728358504
+  ],
+  "context_sha256": {
+    "cem": "d0d71f209089126fd13a32de065dbb814389630f30d23fedfe19679cc3169a46",
+    "v7": "d0d71f209089126fd13a32de065dbb814389630f30d23fedfe19679cc3169a46"
+  },
+  "dependencies": {
+    "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_v7_reacher_matched_warm_cem_dev_20261104_codex_audit.json": "13039ee32ccc3a4ded9157e10f0820f125fc37a8cf7b1097d7ce2eb7ca2e7b52",
+    "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_v7_reacher_matched_warm_cem_dev_20261104_codex_manifest.json": "d289e1457b3ef8429c9e8da4ee0e75d02ac92e5c03c099a45e53f6469ee0f1af",
+    "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_v7_reacher_matched_warm_cem_dev_20261104_codex_physical_replay.json": "9afca345e8acbce4a445f90b77b21535d76e2b62c7dca3e25fad7fec22aa3067",
+    "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_v7_reacher_matched_warm_cem_dev_20261104_codex_prediction_replay.json": "3eca70520f30a265c589cc14fcccc8f9d4f20d45a6351398143620c5e6adbb42",
+    "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_v7_reacher_matched_warm_cem_dev_20261104_codex_smooth_cem_execution.json": "030ed565fb60f44401e1fc95295a5ef9317498c1a13060da349a36d0d51e4bec",
+    "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_v7_reacher_rgb_live_dev_20261104_codex_audit.json": "14bddb7587351b65cd97a5298d82d3861b7de5cf228edcd7b1b0fafa3fc30a93",
+    "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_v7_reacher_rgb_live_dev_20261104_codex_manifest.json": "cd7fbcc99a1a11350e948ab4a8699909cbf2a2e1360cabb495a399332241f1fd",
+    "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_v7_reacher_rgb_live_dev_20261104_codex_physical_replay.json": "aa91db22a22283d0cda44ed0c443ca76ed7cca9d81de897ee766d124eb15664f",
+    "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_v7_reacher_rgb_live_dev_20261104_codex_prediction_replay.json": "377e0b95aadf78b5567be352841dd016437ae810fe89056ed397f76bca931f25",
+    "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_v7_reacher_rgb_live_dev_20261104_codex_response_execution.json": "7b6c2ca53596ed182d76efb2a7e24b061a9c08e11fc667a312a3927faaccb37d"
+  },
+  "final_distance_difference_v7_minus_cem": 0.00513201734788904,
+  "scope": "one exposed development root; separate feedback trajectories",
+  "shared_initial_arrays": [
+    "frames",
+    "root",
+    "goal",
+    "history"
+  ],
+  "v7_distances": [
+    1.0035004008304682,
+    0.9833956923749212,
+    0.971308722067434,
+    0.5608065901837395
+  ]
+}

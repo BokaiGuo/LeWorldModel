@@ -1,0 +1,66 @@
+{
+  "dependencies": {
+    "schema": "pc_v3_declared_dependency_seal_v1",
+    "modules": [
+      "experiments.spectral_reachability.pc_response_temporal_feedback_v3",
+      "experiments.spectral_reachability.pc_response_temporal_feedback_v1",
+      "experiments.spectral_reachability.pc_response_temporal_search_v1",
+      "experiments.spectral_reachability.pc_response_temporal_warm_cem_v1",
+      "experiments.spectral_reachability.pc_response_temporal_v3_reacher_adapter",
+      "experiments.pc_budget_allocation_20261103_codex",
+      "experiments.pc_equal_resource_dev_20261103_codex"
+    ],
+    "files": {
+      "/home/gbk/code/LeWorldModel/docs/PC_JEPA_V13_SYNTHETIC_ISOLATION_SMOKE_PROTOCOL_20261104_CODEX.md": "18248deee79552504a3a648d02375922f0717ced04129739a7bb5599645c397d",
+      "/home/gbk/code/LeWorldModel/le-wm-main/data/jepa_wm_checkpoints/jepa_wm_pusht.pth.tar": "9beca3eafe0739c3b3adb5d734fa435ccbda0fea8a65d53d4cccec176aaaa0eb",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/pc_budget_allocation_20261103_codex.py": "bfc31378f15c2e7ba912d3a9ec1f4127ff9baf060f2e0071a7125f6ba75656fb",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/pc_equal_resource_dev_20261103_codex.py": "1d9f6d50cc7ecaa61c2c6937ce796bf10afb4567ad1d5f52ba0f455b56e45423",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/pc_jepa_v13_contact_feedback_worker_20261104_codex.py": "46ab19c8e4a6ced31dd2c6789d88b43687cc71648878f31b2881bec789ba0d5b",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/pc_jepa_v13_synthetic_smoke_20261104_codex.py": "c472f043c812bf90b9ac2ee95aa79ed9003fcc7d9a083c34d84f95f61e84dd2c",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/pc_jepa_v13_synthetic_smoke_launch_20261104_codex.py": "018787e778ea9d9da36350cc119e13b34e9eb4e410ae25f66579236d0b39b379",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/pc_recursive_response_v12.py": "387ae5db4ec8c051f6b53d8aba005c53cb5ac15dd34232f389a559fd42ba22a6",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/pc_recursive_response_v13.py": "ac3cffd2728441200c11c5cd90e46d29bb7d79673629f67ec1951dd3d4a5634b",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/pc_response_temporal_feedback_v1.py": "11990f86de155a717540336f34a021819b7ae1ec9523921b1ffce186f08082cc",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/pc_response_temporal_feedback_v3.py": "8d84769cc70e993d1e5baf9f835c042a167da41fae4d4e50e28938872896e722",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/pc_response_temporal_search_v1.py": "b7274d368c5530979e561c666c03aec5fca7054fe04829820f217d8a061ea509",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/pc_response_temporal_v3_reacher_adapter.py": "9e2e8d315316e05fabe097dbb1fbd394b759027ed7c6bfba4404c734a41f8222",
+      "/home/gbk/code/LeWorldModel/le-wm-main/experiments/spectral_reachability/pc_response_temporal_warm_cem_v1.py": "355e8560d383906822b0186b384af420c9f390b62626289e584e20f4c14b1c1b",
+      "/home/gbk/code/LeWorldModel/le-wm-main/results/pc_jepa_v7_isolated_input_dev_20261104_codex/input/model_metadata.json": "bcad70c087b74eb267ed18594283400054b18e235349f50195584526a1c6952e"
+    },
+    "environment_closure_complete": false
+  },
+  "cases": [
+    {
+      "arm": "response",
+      "step": 0,
+      "input_sha256": "8decf3e90c23076a37352e4efd334dbb090dee030f157d953269ecfd8d19b3b3"
+    },
+    {
+      "arm": "cem",
+      "step": 0,
+      "input_sha256": "8decf3e90c23076a37352e4efd334dbb090dee030f157d953269ecfd8d19b3b3"
+    },
+    {
+      "arm": "response",
+      "step": 1,
+      "input_sha256": "b54c9aef9666d90561ce490b64786489baf27b5beea3f96a0ea672754b6103d8"
+    },
+    {
+      "arm": "cem",
+      "step": 1,
+      "input_sha256": "b54c9aef9666d90561ce490b64786489baf27b5beea3f96a0ea672754b6103d8"
+    },
+    {
+      "arm": "response",
+      "step": 2,
+      "input_sha256": "b4133ab84ff601e721f39c4bb864e774e22abb0964ebf73e62f2fbd5b1584454"
+    },
+    {
+      "arm": "cem",
+      "step": 2,
+      "input_sha256": "b4133ab84ff601e721f39c4bb864e774e22abb0964ebf73e62f2fbd5b1584454"
+    }
+  ],
+  "seed": 2029132200,
+  "scope": "synthetic inputs only; no physical observations or actions"
+}

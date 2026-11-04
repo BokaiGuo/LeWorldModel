@@ -1,0 +1,133 @@
+{
+  "status": "saved_data_audit_passed",
+  "summary_sha256": "c5f8e0abeb4c1a03440f2fb94a4a57aa5dadbf7dc34731e71d7bbb70abcad1e4",
+  "journal_events": 296,
+  "arms": {
+    "response": {
+      "decisions": [
+        {
+          "step": 0,
+          "horizon": 15,
+          "token": 1920,
+          "samples": 744,
+          "full_horizon_samples": 484,
+          "selected_score": 0.5536543130874634,
+          "incumbent_min_pre_pair": 0.5536543130874634,
+          "incumbent_pair_score": 0.5536543130874634,
+          "incumbent_rescore_drift": 0.0
+        },
+        {
+          "step": 1,
+          "horizon": 10,
+          "token": 1920,
+          "samples": 986,
+          "full_horizon_samples": 934,
+          "selected_score": 0.5269501805305481,
+          "incumbent_min_pre_pair": 0.5269502401351929,
+          "incumbent_pair_score": 0.5269501805305481,
+          "incumbent_rescore_drift": -5.960464477539063e-08
+        },
+        {
+          "step": 2,
+          "horizon": 5,
+          "token": 1920,
+          "samples": 1920,
+          "full_horizon_samples": 1920,
+          "selected_score": 0.5134386420249939,
+          "incumbent_min_pre_pair": 0.5134386420249939,
+          "incumbent_pair_score": 0.5134386420249939,
+          "incumbent_rescore_drift": 0.0
+        }
+      ],
+      "boundary_metrics": [
+        {
+          "agent_error": 321.679420046389,
+          "object_error": 44.70403246349883,
+          "angle_error_radians": 0.4473724365234375,
+          "joint_xy_error": 324.7708419792003,
+          "success": false
+        },
+        {
+          "agent_error": 437.56325899680076,
+          "object_error": 44.719211341653434,
+          "angle_error_radians": 0.4472346305847168,
+          "joint_xy_error": 439.84248713251975,
+          "success": false
+        },
+        {
+          "agent_error": 610.7551117974311,
+          "object_error": 44.71986280141573,
+          "angle_error_radians": 0.44722890853881836,
+          "joint_xy_error": 612.3901311383701,
+          "success": false
+        },
+        {
+          "agent_error": 569.9540578388164,
+          "object_error": 44.71988262432016,
+          "angle_error_radians": 0.44722867012023926,
+          "joint_xy_error": 571.7057774317711,
+          "success": false
+        }
+      ]
+    },
+    "cem": {
+      "decisions": [
+        {
+          "step": 0,
+          "horizon": 15,
+          "token": 1920,
+          "samples": 640,
+          "full_horizon_samples": 640,
+          "selected_score": 0.598973274230957
+        },
+        {
+          "step": 1,
+          "horizon": 10,
+          "token": 1920,
+          "samples": 960,
+          "full_horizon_samples": 960,
+          "selected_score": 0.606467068195343
+        },
+        {
+          "step": 2,
+          "horizon": 5,
+          "token": 1920,
+          "samples": 1920,
+          "full_horizon_samples": 1920,
+          "selected_score": 0.5975787043571472
+        }
+      ],
+      "boundary_metrics": [
+        {
+          "agent_error": 321.679420046389,
+          "object_error": 44.70403246349883,
+          "angle_error_radians": 0.4473724365234375,
+          "joint_xy_error": 324.7708419792003,
+          "success": false
+        },
+        {
+          "agent_error": 252.82407252262394,
+          "object_error": 44.719211341653434,
+          "angle_error_radians": 0.4472346305847168,
+          "joint_xy_error": 256.748553082475,
+          "success": false
+        },
+        {
+          "agent_error": 217.91845687725183,
+          "object_error": 44.71986280141573,
+          "angle_error_radians": 0.44722890853881836,
+          "joint_xy_error": 222.45970416401283,
+          "success": false
+        },
+        {
+          "agent_error": 204.48720763200262,
+          "object_error": 44.71988262432016,
+          "angle_error_radians": 0.44722867012023926,
+          "joint_xy_error": 209.32005634211626,
+          "success": false
+        }
+      ]
+    }
+  },
+  "scope": "saved-data arithmetic and bindings only; no independent physics or neural replay"
+}

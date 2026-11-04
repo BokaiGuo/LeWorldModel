@@ -1,0 +1,43 @@
+{
+  "runs_sha256": "8438a876faa8255e88e2b06685408520cd4faf99a6772262613669905c568b75",
+  "audit_sha256": "3c571bcd958d50f0f371b185e57d396f88a41b6de960bbf92b30aa731c09196c",
+  "rows": [
+    {
+      "arm": "response",
+      "step": 0,
+      "status": "passed",
+      "pair_choice": 0
+    },
+    {
+      "arm": "cem",
+      "step": 0,
+      "status": "passed",
+      "pair_choice": 0
+    },
+    {
+      "arm": "response",
+      "step": 1,
+      "status": "passed",
+      "pair_choice": 0
+    },
+    {
+      "arm": "cem",
+      "step": 1,
+      "status": "passed",
+      "pair_choice": 0
+    },
+    {
+      "arm": "response",
+      "step": 2,
+      "status": "passed",
+      "pair_choice": 0
+    },
+    {
+      "arm": "cem",
+      "step": 2,
+      "status": "passed",
+      "pair_choice": 0
+    }
+  ],
+  "scope": "saved synthetic interface decisions; no physical control"
+}

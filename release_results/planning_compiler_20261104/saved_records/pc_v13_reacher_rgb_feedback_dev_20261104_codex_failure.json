@@ -1,0 +1,4 @@
+{
+  "error": "Traceback (most recent call last):\n  File \"/home/gbk/code/LeWorldModel/le-wm-main/experiments/pc_v13_reacher_rgb_feedback_dev_20261104_codex.py\", line 228, in <module>\n    main()\n  File \"/home/gbk/code/LeWorldModel/le-wm-main/experiments/pc_v13_reacher_rgb_feedback_dev_20261104_codex.py\", line 116, in main\n    allocation = require_cuda_allocation(\"cuda:0\")\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/gbk/code/LeWorldModel/le-wm-main/experiments/gpu_preflight.py\", line 80, in require_cuda_allocation\n    raise RuntimeError(\nRuntimeError: CUDA was requested but no NVIDIA device nodes are visible to this process. The host may have a working GPU, but this sandbox does not expose /dev/nvidia*. Run from a host terminal or map the NVIDIA device nodes into the sandbox and restart the app.\n",
+  "scope": "stopped run; partial artifacts retained"
+}

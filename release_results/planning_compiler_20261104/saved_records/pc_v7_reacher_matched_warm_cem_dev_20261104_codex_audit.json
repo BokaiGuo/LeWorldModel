@@ -1,0 +1,43 @@
+{
+  "limitations": [
+    "recorded model predictions not independently recomputed",
+    "physical snapshots not independently replayed",
+    "one exposed root"
+  ],
+  "manifest_sha256": "d289e1457b3ef8429c9e8da4ee0e75d02ac92e5c03c099a45e53f6469ee0f1af",
+  "rows": [
+    {
+      "arm": "smooth_cem",
+      "distances": [
+        1.0035004008304682,
+        1.0913270992988284,
+        0.9929840546842997,
+        0.5556745728358504
+      ],
+      "execution_sha256": "030ed565fb60f44401e1fc95295a5ef9317498c1a13060da349a36d0d51e4bec",
+      "steps": [
+        {
+          "abstained": null,
+          "prediction_calls": 55,
+          "selected_score": 0.7875255346298218,
+          "step": 0,
+          "tokens": 1920
+        },
+        {
+          "abstained": null,
+          "prediction_calls": 81,
+          "selected_score": 0.7817848920822144,
+          "step": 1,
+          "tokens": 1920
+        },
+        {
+          "abstained": null,
+          "prediction_calls": 161,
+          "selected_score": 0.7712157964706421,
+          "step": 2,
+          "tokens": 1920
+        }
+      ]
+    }
+  ]
+}

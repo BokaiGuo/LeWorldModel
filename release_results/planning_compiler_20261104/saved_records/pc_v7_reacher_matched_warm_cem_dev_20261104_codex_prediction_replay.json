@@ -1,0 +1,61 @@
+{
+  "audit_sha256": "13039ee32ccc3a4ded9157e10f0820f125fc37a8cf7b1097d7ce2eb7ca2e7b52",
+  "cuda_allocation": {
+    "allocation_sum": 4.0,
+    "device": "cuda:0",
+    "index": 0,
+    "name": "NVIDIA GeForce RTX 5060 Ti",
+    "torch_cuda": "13.0",
+    "torch_version": "2.12.0+cu130",
+    "visible_nvidia_nodes": [
+      "/dev/nvidia0",
+      "/dev/nvidiactl",
+      "/dev/nvidia-uvm",
+      "/dev/nvidia-uvm-tools",
+      "/dev/nvidia-modeset"
+    ]
+  },
+  "manifest_sha256": "d289e1457b3ef8429c9e8da4ee0e75d02ac92e5c03c099a45e53f6469ee0f1af",
+  "model_parameter_hash": "3ec019f167066551122f2df0016c629394cb30efa72ba84e74488daa78484da6",
+  "protocol_sha256": "eab2f3663caa14cc41e4e192042c22cdc62c5e9d1e4ca816a98b1cfd8410bd2c",
+  "rows": [
+    {
+      "action_max_abs_error": 1.7881393432617188e-07,
+      "arm": "smooth_cem",
+      "batches": 55,
+      "chart_max_abs_error": 0.0,
+      "decision_sha256": "c94ca47146aba25d38bf5e4f2498275e090885424e05b1ed0e7043555a5bb633",
+      "position_max_abs_error": 4.291534423828125e-06,
+      "samples": 640,
+      "score_max_abs_error": 4.76837158203125e-07,
+      "step": 0,
+      "target_max_abs_error": 0.0
+    },
+    {
+      "action_max_abs_error": 1.7881393432617188e-07,
+      "arm": "smooth_cem",
+      "batches": 81,
+      "chart_max_abs_error": 0.0,
+      "decision_sha256": "8ea5f20b372528746738f4ed03509a48e7a705838539f43c71238f2960b2f09a",
+      "position_max_abs_error": 2.86102294921875e-06,
+      "samples": 960,
+      "score_max_abs_error": 4.76837158203125e-07,
+      "step": 1,
+      "target_max_abs_error": 0.0
+    },
+    {
+      "action_max_abs_error": 2.384185791015625e-07,
+      "arm": "smooth_cem",
+      "batches": 161,
+      "chart_max_abs_error": 0.0,
+      "decision_sha256": "eaef751e3cdd1637f8fb262027633f2b78bde7a81444bd59135919163771ef5a",
+      "position_max_abs_error": 2.9802322387695312e-06,
+      "samples": 1920,
+      "score_max_abs_error": 3.5762786865234375e-07,
+      "step": 2,
+      "target_max_abs_error": 0.0
+    }
+  ],
+  "scope": "same frozen model, preprocessing and GPU; reference rollout, not independent data",
+  "script_sha256": "8b529a4aeed92690a66d31fe08c7a7267a0c4fa720e64a2b72460385f050047a"
+}

@@ -1,0 +1,54 @@
+{
+  "runs_sha256": "8438a876faa8255e88e2b06685408520cd4faf99a6772262613669905c568b75",
+  "rows": [
+    {
+      "arm": "response",
+      "step": 0,
+      "status": "passed",
+      "tokens": 1920,
+      "score": 6.187577247619629,
+      "bank_samples": 65
+    },
+    {
+      "arm": "cem",
+      "step": 0,
+      "status": "passed",
+      "tokens": 1920,
+      "score": 6.116715908050537,
+      "bank_samples": 65
+    },
+    {
+      "arm": "response",
+      "step": 1,
+      "status": "passed",
+      "tokens": 1920,
+      "score": 5.757236003875732,
+      "bank_samples": 66
+    },
+    {
+      "arm": "cem",
+      "step": 1,
+      "status": "passed",
+      "tokens": 1920,
+      "score": 5.7118988037109375,
+      "bank_samples": 66
+    },
+    {
+      "arm": "response",
+      "step": 2,
+      "status": "passed",
+      "tokens": 1920,
+      "score": 4.9961748123168945,
+      "bank_samples": 66
+    },
+    {
+      "arm": "cem",
+      "step": 2,
+      "status": "passed",
+      "tokens": 1920,
+      "score": 4.9946794509887695,
+      "bank_samples": 66
+    }
+  ],
+  "scope": "synthetic interface check, not physical control or scientific evidence"
+}

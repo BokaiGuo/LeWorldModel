@@ -1,0 +1,10 @@
+{
+  "status": "passed",
+  "count": 64,
+  "result_sha256": "8df65b98f3eaeb39c9b36c6a3262c9433b35dee1763b2d96cf9d60130f1ad5e8",
+  "report_sha256": "7d7613bd4e9020899eb2a7db1eff855af41f41d8c52dbe78ced109e3829b775d",
+  "distinct_object_poses": 4,
+  "witness_predicted_score": 0.16052517294883728,
+  "planner_slice_predicted_min": 0.5582724809646606,
+  "scope": "same-backend replay and independent rank arithmetic; no neural replay"
+}

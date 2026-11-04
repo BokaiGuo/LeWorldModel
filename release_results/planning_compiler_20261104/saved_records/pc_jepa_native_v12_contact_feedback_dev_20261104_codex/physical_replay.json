@@ -1,0 +1,541 @@
+{
+  "status": "exact",
+  "manifest_sha256": "8a67c1debe8eab957c8d202b2326ae92c9b8c0a86ab4d72d5cab9912b5b8a4ea",
+  "summary_sha256": "c5f8e0abeb4c1a03440f2fb94a4a57aa5dadbf7dc34731e71d7bbb70abcad1e4",
+  "audit_sha256": "7829ea9e5514408bfaca716a7c09f1865a3a33e493efb055f9e3b5e5128c0f27",
+  "arms": {
+    "response": {
+      "status": "exact",
+      "frames": [
+        {
+          "frame": 0,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 1,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 2,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 3,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 4,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 5,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 6,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 7,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 8,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 9,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 10,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 11,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 12,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 13,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 14,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 15,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 16,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 17,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 18,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 19,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 20,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 21,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 22,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 23,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 24,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 25,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        }
+      ],
+      "error": null
+    },
+    "cem": {
+      "status": "exact",
+      "frames": [
+        {
+          "frame": 0,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 1,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 2,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 3,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 4,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 5,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 6,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 7,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 8,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 9,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 10,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 11,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 12,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 13,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 14,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 15,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 16,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 17,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 18,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 19,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 20,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 21,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 22,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 23,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 24,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        },
+        {
+          "frame": 25,
+          "exact": {
+            "rgb": true,
+            "state": true,
+            "proprio": true,
+            "public": true,
+            "transition": true
+          }
+        }
+      ],
+      "error": null
+    }
+  },
+  "scope": "same native backend physical replay; private solver caches are not independently captured"
+}

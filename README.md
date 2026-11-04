@@ -1,5 +1,15 @@
 # LeWorldModel: transfer-sufficient diagnostics for frozen visual world models
 
+## Planning Compiler development update (2026-11-04)
+
+The [development snapshot](release_results/planning_compiler_20261104/README.md)
+collects the recent recursive compiler, feedback adapters, tests, protocols,
+reports and compact saved evidence. It includes the limited v13 mechanism
+witness, v14 controls, real v12 contact feedback, and separately labeled
+infrastructure failures and synthetic smoke checks. It does not establish
+PC0–PC5 passage or independent planning advantage. Large raw artifacts and
+external dependencies are not included; see the snapshot manifest and limits.
+
 This repository contains the reproducible research code and curated evidence
 for a study of finite-horizon transfer in learned visual world models. It
 extends the original [LeWorldModel](https://github.com/galilai-group/le-wm)
