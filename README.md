@@ -10,6 +10,14 @@ infrastructure failures and synthetic smoke checks. It does not establish
 PC0–PC5 passage or independent planning advantage. Large raw artifacts and
 external dependencies are not included; see the snapshot manifest and limits.
 
+> Planning Compiler baseline note (2026-11-02): the official Anchored
+> Planning (AP) source is already present locally at
+> `external/anchored-planning-984327424ca7/`. The earlier download failure is
+> historical, not its current status. See
+> [AP source availability and verification](docs/AP_OFFICIAL_SOURCE_AVAILABILITY.md)
+> for the recorded revision, hashes, and limits of the local reproduction.
+> Local presence does not imply the source has been committed or uploaded.
+
 This repository contains the reproducible research code and curated evidence
 for a study of finite-horizon transfer in learned visual world models. It
 extends the original [LeWorldModel](https://github.com/galilai-group/le-wm)
@@ -26,6 +34,55 @@ The project-level research interpretation and its current evidence boundary are
 recorded in [PROJECT_UNDERSTANDING_FROM_USER_20261014.md](docs/PROJECT_UNDERSTANDING_FROM_USER_20261014.md).
 This is a positioning and reasoning record, not a replacement for the
 reproducible experiment artifacts.
+
+The user-provided research conversation is archived and indexed in
+[Research plan from the critique conversation (2026-11-03)](docs/RESEARCH_PLAN_FROM_CRITIQUE_CONVERSATION_20261103.md).
+It records the separate training-free Planning Compiler and GDD-OPD
+distillation proposals, their experimental requirements, and the source's
+historical stage labels. This documentation does not change existing gates
+or certify any proposed result.
+
+## Unified research question and two method lines
+
+The repository organizes the research around one question:
+
+> Does the world model retain information sufficient for decision making; if so,
+> how can it be used effectively, and if not, how can the deficiency be
+> identified and repaired through an independent training line?
+
+The shared evidence foundation evaluates action-to-task transfer, action-effect
+descriptions, and realized control benefit. It supports two separate method
+lines:
+
+1. frozen-model Planning Compiler: diagnose, compile, search, and execute action
+   programs without training a new representation;
+2. GDD-OPD: train constrained decision geometry when the frozen model's
+   decision information is insufficient.
+
+Controlled diagnostics are shared evidence methods, not a third method line.
+Their physical truth may be used on the evaluator side, but it cannot leak into
+the frozen planner. The two lines share infrastructure but not scientific
+credit, model fingerprints, source claims, budgets, or gate outcomes.
+
+See the [research-system map](docs/RESEARCH_SYSTEM_MAP_20261104.md) for the
+shared foundation, gate boundaries, implementation order, and final deliverable
+structure.
+
+## Planning Compiler research extension: action-effect signatures
+
+The [research-system map](docs/RESEARCH_SYSTEM_MAP_20261104.md) organizes the
+shared transfer/diagnostic evidence foundation and the separate frozen
+Planning Compiler and trainable GDD-OPD method lines.
+
+The proposed [controlled-diagnostics and frozen-planning integration](docs/PC_ACTION_EFFECT_RESEARCH_INTEGRATION_20261104.md)
+connects visual-score diagnosis and reconfiguration search through one
+action-effect description. Controlled interventions are evaluator-only;
+the planner uses legal observations and frozen-model predictions, with all
+queries charged. The document specifies hypotheses, held-out suffix validation,
+lookahead and cost controls, engineering reuse, and PC0–PC5 evidence mapping.
+It is a research design, not an implemented method, a preregistered experiment,
+or a passed gate. Training a new representation remains a separate workstream.
+Historical protocols and sealed results are unchanged.
 
 ## What is established
 
