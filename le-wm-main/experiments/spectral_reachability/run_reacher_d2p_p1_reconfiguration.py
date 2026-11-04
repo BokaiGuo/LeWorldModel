@@ -338,6 +338,14 @@ def _mechanism_gate_name(observability: str) -> str:
     raise ValueError(f"unknown P1 mechanism observability: {observability}")
 
 
+def _require_true_gates(gates: Any, required: tuple[str, ...], *, context: str) -> None:
+    """Reject absent, incomplete, non-boolean and failed integrity gates."""
+    if not isinstance(gates, dict) or any(gates.get(key) is not True for key in required):
+        raise ValueError(f"{context} contains missing or failed required gates")
+    if any(value is not True for value in gates.values()):
+        raise ValueError(f"{context} contains a failed gate")
+
+
 def _validate_preflight(
     path: Path, *, args: argparse.Namespace, qpos_binding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -354,8 +362,15 @@ def _validate_preflight(
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if report.get("schema") != "d2p_reacher_p1_reconfiguration_preflight.v1" or report.get("status") != "pass":
         raise ValueError("P1 physical runner requires a passing P1 CUDA plumbing preflight")
-    if not all(report.get("gates", {}).values()):
-        raise ValueError("P1 plumbing preflight contains a failed gate")
+    _require_true_gates(report.get("gates"), (
+        "cuda_only", "upstream_p0_admission_verified", "frozen_parameter_hash_unchanged",
+        "at_least_declared_model_selected_non_greedy_reconfiguration_witnesses",
+        "every_selected_chunk_improves_declared_recompiled_future_score",
+        "every_selected_chunk_is_immediately_non_greedy_in_frozen_goal_cost",
+        "observed_successor_recompiled_with_nonzero_fd_validated_jacobian",
+        "root_and_successor_execution_rgb_identity_verified",
+        "all_raw_actions_within_environment_box",
+    ), context="P1 plumbing preflight")
     inputs = report.get("inputs", {})
     expected_inputs = {
         "weights_sha256": _sha256_file(args.policy / "weights.pt"),
@@ -390,6 +405,9 @@ def _validate_preflight(
         "source_index_seed": args.source_index_seed if is_state_conditioned(args.proposal_distribution) else None,
         "source_index_batch_size": args.source_index_batch_size if is_state_conditioned(args.proposal_distribution) else None,
         "damping": args.damping,
+        "non_greedy_margin": args.non_greedy_margin,
+        "max_non_greedy_margin": args.max_non_greedy_margin,
+        "robustness_perturbation": args.robustness_perturbation,
         "max_relative_reachability_improvement": args.max_relative_reachability_improvement,
         "min_second_to_first_singular_ratio": args.min_second_to_first_singular_ratio,
         "warmup_policy": _runtime_warmup_policy(args),
@@ -484,8 +502,14 @@ def _validate_outcome_calibration(
     report = json.loads(path.read_text(encoding="utf-8"))
     if report.get("schema") != "d2p_reacher_p1_reconfiguration.v1" or report.get("status") != "calibration_only":
         raise ValueError("outcome-only requires a passing P1 calibration-only receipt")
-    if not all(report.get("gates", {}).values()) or not report.get("protocol", {}).get("calibration_only"):
-        raise ValueError("P1 calibration receipt has a failed gate or is not calibration-only")
+    if report.get("protocol", {}).get("calibration_only") is not True:
+        raise ValueError("P1 calibration receipt is not calibration-only")
+    observability = getattr(args, "mechanism_observability", "qpos_distance")
+    _require_true_gates(
+        report.get("gates"),
+        (*p1.stage_admission.P1_INTEGRITY_KEYS, _mechanism_gate_name(observability)),
+        context="P1 calibration receipt",
+    )
     if report.get("inputs", {}).get("runner_sha256") != _sha256_file(Path(__file__)):
         raise ValueError("P1 outcome runner differs from the calibration runner")
     if report.get("inputs", {}).get("selector_sha256") != _sha256_file(Path(p1.__file__)):
@@ -503,6 +527,7 @@ def _validate_outcome_calibration(
         "damping": args.damping,
         "non_greedy_margin": args.non_greedy_margin,
         "max_non_greedy_margin": args.max_non_greedy_margin,
+        "robustness_perturbation": args.robustness_perturbation,
         "max_relative_reachability_improvement": args.max_relative_reachability_improvement,
         "min_second_to_first_singular_ratio": args.min_second_to_first_singular_ratio,
         "min_eligible_calibration_roots": args.min_eligible_calibration_roots,
@@ -567,6 +592,10 @@ def _two_stage(
     progress_horizon: int,
     damping: float,
     device: torch.device,
+    progress_solver: str = "dls",
+    cem_samples: int = 64,
+    cem_steps: int = 8,
+    cem_elite: int = 8,
 ) -> dict[str, Any]:
     """Execute a first chunk, observe its root, and compile the progress suffix."""
 
@@ -616,15 +645,32 @@ def _two_stage(
     if observed_coordinate != zero_coordinate:
         raise RuntimeError("P1 actual-successor control and candidate used different goal coordinates")
     started = time.perf_counter()
-    suffix, suffix_receipt = p1._bounded_single_step_dls_program(
-        model, successor_pixels, successor_goal, successor_history,
-        future_horizon=progress_horizon, action_lower=lower, action_upper=upper,
-        damping=damping,
-    )
+    if progress_solver == "dls":
+        suffix, suffix_receipt = p1._bounded_single_step_dls_program(
+            model, successor_pixels, successor_goal, successor_history,
+            future_horizon=progress_horizon, action_lower=lower, action_upper=upper,
+            damping=damping,
+        )
+    elif progress_solver == "cem":
+        suffix, suffix_receipt = p0._cem(
+            model, successor_pixels, successor_goal, successor_history,
+            future_horizon=progress_horizon, action_lower=lower, action_upper=upper,
+            samples=cem_samples, steps=cem_steps, elite=cem_elite, seed=seed + 5000,
+        )
+        suffix_receipt = {
+            **suffix_receipt,
+            "program_type": "observed_successor_cem_suffix",
+            "progress_solver": "cem",
+            "selection_input": "observed successor RGB and actual action history",
+        }
+    else:
+        raise ValueError(f"unknown progress solver: {progress_solver}")
     suffix_seconds = time.perf_counter() - started
     suffix_raw, suffix_normalized = p0._to_raw_actions(suffix, mean, std, lower, upper, env.action_space.low, env.action_space.high)
+    suffix_execution = {}
     suffix_physical, successor_identity = p0._execute(
         env, seed, suffix_raw, expected_frame=advanced["root_frame"], expected_goal=advanced["goal"], execution_snapshot=advanced["execution_snapshot"],
+        execution_receipt=suffix_execution,
     )
     if abs(float(suffix_physical["initial_qpos_distance"]) - float(intermediate_distance)) > 1.0e-8:
         raise RuntimeError(f"{name}: successor snapshot qpos does not match observed reconfiguration root")
@@ -637,6 +683,19 @@ def _two_stage(
         "zero_prefix_action_witness_normalized": zero_normalized.tolist(),
         "first_receipt": first_receipt,
         "suffix_receipt": suffix_receipt,
+        # advance_executed_context returns only after every requested step;
+        # its helper raises on any termination/truncation, including the last.
+        "first_physical_execution": {
+            "requested_steps": len(first_raw), "returned_steps": len(first_raw),
+            "terminated": False, "truncated": False, "status": "completed",
+            "count_basis": "advance_executed_context_full_return",
+        },
+        "zero_prefix_physical_execution": {
+            "requested_steps": len(zero_raw), "returned_steps": len(zero_raw),
+            "terminated": False, "truncated": False, "status": "completed",
+            "count_basis": "advance_executed_context_full_return",
+        },
+        "suffix_physical_execution": suffix_execution,
         "planner_wall_seconds": first_seconds + suffix_seconds,
         "execution_identity": {"initial": initial_identity, "zero_prefix": zero_identity, "successor": successor_identity},
         "observed_successor_context": {key: advanced[key] for key in ("context_mode", "root_rgb_sha256", "goal_rgb_sha256", "advanced_action_sha256")},
@@ -759,6 +818,10 @@ def main() -> None:
     parser.add_argument("--action-block", type=int, default=5)
     parser.add_argument("--reconfiguration-horizon", type=int, default=1)
     parser.add_argument("--progress-horizon", type=int, default=2)
+    parser.add_argument(
+        "--progress-solver", choices=("dls", "cem"), default="dls",
+        help="Common suffix compiler used after every physically executed prefix.",
+    )
     parser.add_argument("--proposals", type=int, default=p1.DEFAULT_RECONFIGURATION_PROPOSALS)
     parser.add_argument(
         "--proposal-distribution", choices=p1.RECONFIGURATION_PROPOSAL_DISTRIBUTIONS,
@@ -789,6 +852,10 @@ def main() -> None:
             "Together with --non-greedy-margin this defines a model-only "
             "calibration-frozen admissibility band."
         ),
+    )
+    parser.add_argument(
+        "--robustness-perturbation", type=float, default=0.0,
+        help="Symmetric frozen-parameter perturbation used for robust prefix ranking.",
     )
     parser.add_argument(
         "--max-relative-reachability-improvement", type=float, default=None,
@@ -824,6 +891,8 @@ def main() -> None:
         raise ValueError("invalid P1 protocol dimensions")
     if args.calibration_only and args.outcome_only:
         raise ValueError("calibration-only and outcome-only are mutually exclusive")
+    if args.progress_solver == "cem" and not args.calibration_only:
+        raise ValueError("CEM suffix is calibration-only until prefix selection and budget contracts match")
     if args.margin_band_selection_evidence is not None and not args.calibration_only:
         raise ValueError("margin-band selection evidence is accepted only for a fresh calibration-only run")
     if args.calibration_only and args.roots < args.min_eligible_calibration_roots:
@@ -838,6 +907,8 @@ def main() -> None:
         raise ValueError("P1 damping must be positive and non-greedy margin non-negative")
     if args.max_non_greedy_margin is not None and args.max_non_greedy_margin < args.non_greedy_margin:
         raise ValueError("P1 maximum non-greedy margin must not be below its minimum")
+    if args.robustness_perturbation < 0.0:
+        raise ValueError("P1 robustness perturbation must be non-negative")
     if args.max_relative_reachability_improvement is not None and not 0.0 < args.max_relative_reachability_improvement <= 1.0:
         raise ValueError("P1 maximum relative reachability improvement must lie in (0, 1]")
     if args.min_second_to_first_singular_ratio is not None and not 0.0 < args.min_second_to_first_singular_ratio <= 1.0:
@@ -897,6 +968,41 @@ def main() -> None:
     checkpoint_block = p0._validate_reacher_action_protocol(model, mean, std, action_dim=action_dim, action_block=args.action_block)
     normalized_low, normalized_high = _normalized_action_bounds(mean, std, env.action_space.low, env.action_space.high)
     lower, upper = torch.as_tensor(normalized_low, device=device), torch.as_tensor(normalized_high, device=device)
+    def fresh_execution_env() -> gym.Env:
+        """Create an isolated MuJoCo instance for one physical method branch.
+
+        Planning is shared and remains RGB/action-history only.  Physical
+        branches use the same sealed evaluator snapshot but must not share
+        renderer, solver warm-start, or wrapper state across reconfiguration,
+        zero, greedy, and CEM controls.
+        """
+
+        return ReacherGoalImageWrapper(
+            gym.make("swm/ReacherDMControl-v0", render_mode="rgb_array"),
+            target_delta=args.target_delta,
+        )
+
+    def run_isolated_two_stage(**kwargs: Any) -> dict[str, Any]:
+        branch_env = fresh_execution_env()
+        try:
+            return _two_stage(env=branch_env, **kwargs)
+        finally:
+            branch_env.close()
+
+    def run_isolated_cem(
+        *, raw_actions: np.ndarray, seed: int, expected_frame: np.ndarray,
+        expected_goal: np.ndarray, execution_snapshot: dict[str, Any] | None,
+        execution_receipt: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        branch_env = fresh_execution_env()
+        try:
+            return p0._execute(
+                branch_env, seed, raw_actions,
+                expected_frame=expected_frame, expected_goal=expected_goal,
+                execution_snapshot=execution_snapshot, execution_receipt=execution_receipt,
+            )
+        finally:
+            branch_env.close()
     rows: list[dict[str, Any]] = []
     started = time.time()
     try:
@@ -935,6 +1041,7 @@ def main() -> None:
                     future_horizon=args.progress_horizon, action_lower=lower, action_upper=upper,
                     damping=args.damping, proposals=args.proposals, non_greedy_margin=args.non_greedy_margin,
                     max_non_greedy_margin=args.max_non_greedy_margin,
+                    robustness_perturbation=args.robustness_perturbation,
                     max_relative_reachability_improvement=args.max_relative_reachability_improvement,
                     min_second_to_first_singular_ratio=args.min_second_to_first_singular_ratio,
                     reachability_margin=1.0e-6, seed=root_seed,
@@ -1001,17 +1108,46 @@ def main() -> None:
                     "backward_vjp_rows": 0,
                 }
 
-            recon = _two_stage(name="reconfiguration", first_program=reconfiguration_first, env=env, seed=seed, context=context, preprocessor=preprocessor, model=model, mean=mean, std=std, lower=lower, upper=upper, action_block=args.action_block, progress_horizon=args.progress_horizon, damping=args.damping, device=device)
-            zero = _two_stage(name="zero_prefix_two_stage_d2p", first_program=zero_first, env=env, seed=seed, context=context, preprocessor=preprocessor, model=model, mean=mean, std=std, lower=lower, upper=upper, action_block=args.action_block, progress_horizon=args.progress_horizon, damping=args.damping, device=device)
-            greedy = _two_stage(name="greedy_two_stage_d2p", first_program=greedy_first, env=env, seed=seed, context=context, preprocessor=preprocessor, model=model, mean=mean, std=std, lower=lower, upper=upper, action_block=args.action_block, progress_horizon=args.progress_horizon, damping=args.damping, device=device)
-            source_matched_greedy = None if proposal_bank is None else _two_stage(name="source_matched_greedy_two_stage_d2p", first_program=source_matched_greedy_first, env=env, seed=seed, context=context, preprocessor=preprocessor, model=model, mean=mean, std=std, lower=lower, upper=upper, action_block=args.action_block, progress_horizon=args.progress_horizon, damping=args.damping, device=device)
+            common_two_stage_kwargs = {
+                "seed": seed, "context": context, "preprocessor": preprocessor,
+                "model": model, "mean": mean, "std": std, "lower": lower,
+                "upper": upper, "action_block": args.action_block,
+                "progress_horizon": args.progress_horizon, "damping": args.damping,
+                "progress_solver": args.progress_solver,
+                "cem_samples": args.cem_samples, "cem_steps": args.cem_steps,
+                "cem_elite": args.cem_elite,
+                "device": device,
+            }
+            recon = run_isolated_two_stage(
+                name="reconfiguration", first_program=reconfiguration_first,
+                **common_two_stage_kwargs,
+            )
+            zero = run_isolated_two_stage(
+                name="zero_prefix_two_stage_d2p", first_program=zero_first,
+                **common_two_stage_kwargs,
+            )
+            greedy = run_isolated_two_stage(
+                name="greedy_two_stage_d2p", first_program=greedy_first,
+                **common_two_stage_kwargs,
+            )
+            source_matched_greedy = None if proposal_bank is None else run_isolated_two_stage(
+                name="source_matched_greedy_two_stage_d2p",
+                first_program=source_matched_greedy_first,
+                **common_two_stage_kwargs,
+            )
             pixels, goal, history = p0._prepare(preprocessor, context["frames"], context["root_frame"], context["goal"], np.asarray(context["history_action_blocks"], dtype=np.float32), device)
             started_cem = time.perf_counter()
             cem_params, cem_receipt = p0._cem(model, pixels, goal, history, future_horizon=args.reconfiguration_horizon + args.progress_horizon, action_lower=lower, action_upper=upper, samples=args.cem_samples, steps=args.cem_steps, elite=args.cem_elite, seed=seed + 6000)
             cem_receipt["planner_wall_seconds"] = time.perf_counter() - started_cem
             cem_raw, cem_normalized = p0._to_raw_actions(cem_params, mean, std, lower, upper, env.action_space.low, env.action_space.high)
-            cem_physical, cem_identity = p0._execute(env, seed, cem_raw, expected_frame=context["root_frame"], expected_goal=context["goal"], execution_snapshot=context["execution_snapshot"])
+            cem_execution = {}
+            cem_physical, cem_identity = run_isolated_cem(
+                raw_actions=cem_raw, seed=seed,
+                expected_frame=context["root_frame"], expected_goal=context["goal"],
+                execution_snapshot=context["execution_snapshot"], execution_receipt=cem_execution,
+            )
             methods = {"reconfiguration": recon, "zero_prefix_two_stage_d2p": zero, "greedy_two_stage_d2p": greedy, "cem_full_horizon": {"action_witness_raw": cem_raw.tolist(), "action_witness_normalized": cem_normalized.tolist(), "receipt": cem_receipt, "execution_identity": cem_identity, "physical": cem_physical}}
+            methods["cem_full_horizon"]["physical_execution"] = cem_execution
             if source_matched_greedy is not None:
                 methods["source_matched_greedy_two_stage_d2p"] = source_matched_greedy
             rows.append({"seed": seed, "split": "calibration" if args.calibration_only else "outcome", "executed_context": {**{key: context[key] for key in ("context_mode", "warmup_policy", "root_rgb_sha256", "goal_rgb_sha256", "warmup_actions_sha256")}, "context_support": _runtime_context_support(args), "contiguous_warmup_sequence_index": None if proposal_support is None else proposal_support["contiguous_warmup_sequence_index"]}, "methods": methods})
@@ -1077,18 +1213,32 @@ def main() -> None:
         calibration_only=bool(args.calibration_only), eligible_roots=len(eligible_rows),
         min_eligible_roots=args.min_eligible_outcome_roots, implementation_gates=gates,
         required_comparisons=required_comparisons, mechanism_gate=mechanism_gate)
+    if args.progress_solver != "dls":
+        # Prefix selection scores a DLS suffix. A different deployed optimizer
+        # is an exploratory intervention, not selection-equivalent evidence.
+        p2_unlocked = False
+        p2_reason = "exploratory suffix solver differs from the DLS prefix-selection objective"
     method_names = ["reconfiguration", "zero_prefix_two_stage_d2p", "greedy_two_stage_d2p", "cem_full_horizon"]
     if proposal_bank is not None:
         method_names.append("source_matched_greedy_two_stage_d2p")
-    report = {"schema": "d2p_reacher_p1_reconfiguration.v1", "status": "calibration_only" if args.calibration_only else "completed_without_efficacy_verdict", "scope": "fresh root-paired physical P1; P1 efficacy requires a separate root-disjoint outcome receipt", "cuda_host": {"name": torch.cuda.get_device_name(device), "torch": torch.__version__, "cuda": torch.version.cuda, "python": platform.python_version()}, "protocol": {"calibration_only": bool(args.calibration_only), "outcome_only": bool(args.outcome_only), "reconfiguration_horizon": args.reconfiguration_horizon, "recompiled_progress_horizon": args.progress_horizon, "total_executed_action_tokens": args.reconfiguration_horizon + args.progress_horizon, "action_block": args.action_block, "checkpoint_action_block": checkpoint_block, "warmup_policy": WARMUP_POLICY, "target_delta": list(args.target_delta), "proposals": args.proposals, "proposal_distribution": args.proposal_distribution, "selection_metric": args.selection_metric, "damping": args.damping, "non_greedy_margin": args.non_greedy_margin, "max_non_greedy_margin": args.max_non_greedy_margin, "min_model_witness_roots": args.min_model_witness_roots, "min_eligible_calibration_roots": args.min_eligible_calibration_roots, "min_eligible_outcome_roots": args.min_eligible_outcome_roots, "methods": method_names, "runtime_input": "RGB/action history and rendered goal only; qpos is evaluator-only", "reconfiguration_selection": "bounded nonlinear DLS suffix terminal cost plus a calibration-frozen non-greedy immediate-cost margin band", "physical_mechanism_requirement": "every model-eligible first chunk must be no more goal-greedy than the same-length physical zero-prefix control before its later qpos outcome can support a reconfiguration claim", "eligibility": "a root is primary-analysis eligible only when frozen RGB dynamics produce a non-greedy reachability witness before physical execution; otherwise it executes an explicit neutral-prefix fallback with the same token budget", "calibration_binding": calibration_binding}, "evidence": {"p0": p0_evidence, "p1_preflight": preflight_evidence}, "inputs": {"checkpoint": str(args.policy.resolve()), "weights_sha256": _sha256_file(args.policy / "weights.pt"), "adapter_artifact": str(args.adapter_artifact.resolve()), "adapter_sha256": _sha256_file(args.adapter_artifact), "runner_sha256": _sha256_file(Path(__file__))}, "parameter_hash_before": hash_before, "parameter_hash_after": hash_after, "gates": gates, "eligibility": {"eligible_root_count": len(eligible_rows), "physically_non_greedy_eligible_root_count": len(physical_non_greedy), "ineligible_root_count": len(rows) - len(eligible_rows), "eligible_root_seeds": [row["seed"] for row in eligible_rows], "minimum_required_for_calibration": args.min_eligible_calibration_roots, "minimum_required_for_outcome": args.min_eligible_outcome_roots}, "comparisons_outcome_only": comparisons, "stage_gate": {"criterion": "P2 opens only if a root-disjoint P1 outcome panel has the predeclared minimum number of model-eligible roots, every model-eligible first chunk is no more goal-greedy than its same-length physical zero-prefix control, and reconfiguration-minus-zero-prefix, reconfiguration-minus-greedy, and reconfiguration-minus-CEM paired 95% intervals all favor reconfiguration", "p2_unlocked": p2_unlocked}, "rows": rows, "elapsed_seconds": time.time() - started, "claim_boundary": "This runner makes a physical P1 comparison possible. Calibration receipts have no efficacy claim; an outcome receipt needs root-disjoint calibration binding before any mechanism conclusion."}
+    report = {"schema": "d2p_reacher_p1_reconfiguration.v1", "status": "calibration_only" if args.calibration_only else "completed_without_efficacy_verdict", "scope": "fresh root-paired physical P1; P1 efficacy requires a separate root-disjoint outcome receipt", "cuda_host": {"name": torch.cuda.get_device_name(device), "torch": torch.__version__, "cuda": torch.version.cuda, "python": platform.python_version()}, "protocol": {"calibration_only": bool(args.calibration_only), "outcome_only": bool(args.outcome_only), "reconfiguration_horizon": args.reconfiguration_horizon, "recompiled_progress_horizon": args.progress_horizon, "total_executed_action_tokens": args.reconfiguration_horizon + args.progress_horizon, "action_block": args.action_block, "checkpoint_action_block": checkpoint_block, "warmup_policy": WARMUP_POLICY, "target_delta": list(args.target_delta), "proposals": args.proposals, "proposal_distribution": args.proposal_distribution, "selection_metric": args.selection_metric, "damping": args.damping, "non_greedy_margin": args.non_greedy_margin, "max_non_greedy_margin": args.max_non_greedy_margin, "robustness_perturbation": args.robustness_perturbation, "min_model_witness_roots": args.min_model_witness_roots, "min_eligible_calibration_roots": args.min_eligible_calibration_roots, "min_eligible_outcome_roots": args.min_eligible_outcome_roots, "methods": method_names, "runtime_input": "RGB/action history and rendered goal only; qpos is evaluator-only", "reconfiguration_selection": "bounded nonlinear DLS suffix terminal cost plus a calibration-frozen non-greedy immediate-cost margin band", "physical_mechanism_requirement": "every model-eligible first chunk must be no more goal-greedy than the same-length physical zero-prefix control before its later qpos outcome can support a reconfiguration claim", "eligibility": "a root is primary-analysis eligible only when frozen RGB dynamics produce a non-greedy reachability witness before physical execution; otherwise it executes an explicit neutral-prefix fallback with the same token budget", "calibration_binding": calibration_binding}, "evidence": {"p0": p0_evidence, "p1_preflight": preflight_evidence}, "inputs": {"checkpoint": str(args.policy.resolve()), "weights_sha256": _sha256_file(args.policy / "weights.pt"), "adapter_artifact": str(args.adapter_artifact.resolve()), "adapter_sha256": _sha256_file(args.adapter_artifact), "runner_sha256": _sha256_file(Path(__file__))}, "parameter_hash_before": hash_before, "parameter_hash_after": hash_after, "gates": gates, "eligibility": {"eligible_root_count": len(eligible_rows), "physically_non_greedy_eligible_root_count": len(physical_non_greedy), "ineligible_root_count": len(rows) - len(eligible_rows), "eligible_root_seeds": [row["seed"] for row in eligible_rows], "minimum_required_for_calibration": args.min_eligible_calibration_roots, "minimum_required_for_outcome": args.min_eligible_outcome_roots}, "comparisons_outcome_only": comparisons, "stage_gate": {"criterion": "P2 opens only if a root-disjoint P1 outcome panel has the predeclared minimum number of model-eligible roots, every model-eligible first chunk is no more goal-greedy than its same-length physical zero-prefix control, and reconfiguration-minus-zero-prefix, reconfiguration-minus-greedy, and reconfiguration-minus-CEM paired 95% intervals all favor reconfiguration", "p2_unlocked": p2_unlocked}, "rows": rows, "elapsed_seconds": time.time() - started, "claim_boundary": "This runner makes a physical P1 comparison possible. Calibration receipts have no efficacy claim; an outcome receipt needs root-disjoint calibration binding before any mechanism conclusion."}
     report["protocol"]["max_relative_reachability_improvement"] = args.max_relative_reachability_improvement
     report["protocol"]["min_second_to_first_singular_ratio"] = args.min_second_to_first_singular_ratio
+    report["protocol"]["progress_solver"] = args.progress_solver
+    report["protocol"]["progress_solver_budget"] = {
+        "cem_samples": args.cem_samples,
+        "cem_steps": args.cem_steps,
+        "cem_elite": args.cem_elite,
+    }
     report["protocol"]["mechanism_observability"] = args.mechanism_observability
     report["protocol"]["qpos_readout_binding"] = qpos_binding
     report["protocol"]["context_support"] = _runtime_context_support(args)
     report["protocol"]["warmup_policy"] = _runtime_warmup_policy(args)
     report["protocol"]["future_reference"] = args.future_reference
-    report["protocol"]["recompiled_suffix_solver"] = p1.SUFFIX_SOLVER
+    report["protocol"]["recompiled_suffix_solver"] = (
+        p1.SUFFIX_SOLVER if args.progress_solver == "dls"
+        else "observed_successor_cem_exploratory"
+    )
     report["inputs"]["selector_sha256"] = _sha256_file(Path(p1.__file__))
     report["inputs"]["stage_admission_sha256"] = _sha256_file(Path(p1.stage_admission.__file__))
     report["stage_gate"]["reason"] = p2_reason

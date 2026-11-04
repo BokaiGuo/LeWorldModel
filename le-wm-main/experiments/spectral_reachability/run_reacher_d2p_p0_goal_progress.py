@@ -765,7 +765,17 @@ def _execute(
     expected_frame: np.ndarray,
     expected_goal: np.ndarray,
     execution_snapshot: dict[str, Any] | None,
+    execution_receipt: dict[str, Any] | None = None,
 ) -> tuple[dict[str, float], dict[str, str]]:
+    """Execute the complete witness or raise; optional receipt preserves the old ABI."""
+    raw_actions = np.asarray(actions, dtype=np.float32)
+    if raw_actions.ndim != 2 or raw_actions.shape[0] == 0 or raw_actions.shape[1] == 0 or not np.isfinite(raw_actions).all():
+        raise ValueError("physical execution requires a nonempty finite action matrix")
+    if execution_receipt is not None and (type(execution_receipt) is not dict or execution_receipt):
+        raise ValueError("execution receipt must be an empty dict")
+    receipt = execution_receipt if execution_receipt is not None else {}
+    receipt.update(requested_steps=int(raw_actions.shape[0]), attempted_steps=0,
+                   returned_steps=0, terminated=False, truncated=False, status="incomplete")
     if execution_snapshot is None:
         raise RuntimeError("Reacher execution requires an evaluator-only observed-root snapshot")
     reset_frame, reset_goal = restore_execution_snapshot(
@@ -779,12 +789,30 @@ def _execute(
     target = np.asarray(raw.env.task.target_qpos, dtype=np.float64).copy()
     initial_distance = _qpos_distance(initial, target)
     min_distance = initial_distance
-    for action in np.asarray(actions, dtype=np.float32):
-        _, _, terminated, truncated, _ = env.step(action)
+    for action in raw_actions:
+        receipt["attempted_steps"] += 1
+        try:
+            _, _, terminated, truncated, _ = env.step(action)
+        except BaseException:
+            receipt["status"] = "step_error"
+            raise
+        receipt["returned_steps"] += 1
+        receipt["terminated"] = bool(terminated)
+        receipt["truncated"] = bool(truncated)
         current = np.asarray(raw.env.physics.data.qpos, dtype=np.float64)
         min_distance = min(min_distance, _qpos_distance(current, target))
         if terminated or truncated:
+            if receipt["returned_steps"] != receipt["requested_steps"]:
+                receipt["status"] = "early_termination"
+                raise RuntimeError(
+                    "physical execution ended before all requested steps: "
+                    f"returned={receipt['returned_steps']} requested={receipt['requested_steps']} "
+                    f"terminated={receipt['terminated']} truncated={receipt['truncated']}"
+                )
             break
+    if receipt["returned_steps"] != receipt["requested_steps"]:
+        raise RuntimeError("physical execution step count mismatch")
+    receipt["status"] = "completed"
     final = np.asarray(raw.env.physics.data.qpos, dtype=np.float64)
     return (
         {
@@ -1064,6 +1092,7 @@ def main() -> None:
                 actions, normalized_actions = _to_raw_actions(
                     params, mean, std, action_lower, action_upper, env.action_space.low, env.action_space.high,
                 )
+                physical_execution = {}
                 physical, execution_identity = _execute(
                     env,
                     seed,
@@ -1071,6 +1100,7 @@ def main() -> None:
                     expected_frame=context["root_frame"],
                     expected_goal=goal,
                     execution_snapshot=context["execution_snapshot"],
+                    execution_receipt=physical_execution,
                 )
                 predicted_cost = float(_cost_fn(model, pixels, goal_tensor, history, params, action_lower=action_lower, action_upper=action_upper)[0].detach()) if name != "random" else None
                 method_rows[name] = {
@@ -1078,6 +1108,7 @@ def main() -> None:
                     "action_witness_raw": actions.tolist(),
                     "physical": physical,
                     "execution_identity": execution_identity,
+                    "physical_execution": physical_execution,
                     "predicted_terminal_cost": predicted_cost,
                     "receipt": receipt,
                 }

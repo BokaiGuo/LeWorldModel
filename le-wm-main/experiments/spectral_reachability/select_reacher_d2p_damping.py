@@ -24,6 +24,12 @@ def select(reports: list[dict[str, Any]]) -> dict[str, Any]:
 
     if len(reports) < 2:
         raise ValueError("need at least two calibration receipts")
+    # Calibration-only panels intentionally contain no outcome rows.  The
+    # cross-method predict-sample matching gate is therefore not meaningful
+    # at this stage and is emitted as False by the P0 runner.  It must still
+    # be enforced on the later outcome-only panel by
+    # ``validate_p0_admission_report``; exempting it here does not open P1.
+    calibration_exempt_gates = {"actual_planning_predict_samples_matched_to_cem"}
     failures: list[str] = []
     common: dict[str, Any] | None = None
     candidates: list[dict[str, Any]] = []
@@ -32,7 +38,17 @@ def select(reports: list[dict[str, Any]]) -> dict[str, Any]:
         if report.get("schema") != "d2p_reacher_p0_goal_progress.v1" or report.get("status") != "calibration_only" or not protocol.get("calibration_only"):
             failures.append(f"report {index} is not calibration-only")
             continue
-        if not all(report.get("gates", {}).values()) or not rows or any(row.get("split") != "calibration" for row in rows):
+        gates = report.get("gates", {})
+        if (
+            not isinstance(gates, dict)
+            or any(
+                value is not True
+                for key, value in gates.items()
+                if key not in calibration_exempt_gates
+            )
+            or not rows
+            or any(row.get("split") != "calibration" for row in rows)
+        ):
             failures.append(f"report {index} has a failed gate or non-calibration row")
             continue
         fingerprint = {

@@ -434,6 +434,7 @@ def _compile_reconfiguration(
     reachability_margin: float,
     seed: int,
     max_non_greedy_margin: float | None = None,
+    robustness_perturbation: float = 0.0,
     max_relative_reachability_improvement: float | None = None,
     min_second_to_first_singular_ratio: float | None = None,
     proposal_distribution: str = DEFAULT_RECONFIGURATION_PROPOSAL_DISTRIBUTION,
@@ -449,6 +450,8 @@ def _compile_reconfiguration(
         raise ValueError("reconfiguration proposals and horizons must be positive")
     if non_greedy_margin < 0.0 or (max_non_greedy_margin is not None and max_non_greedy_margin < non_greedy_margin):
         raise ValueError("reconfiguration non-greedy margin band is invalid")
+    if robustness_perturbation < 0.0:
+        raise ValueError("robustness perturbation must be non-negative")
     if max_relative_reachability_improvement is not None and not 0.0 < max_relative_reachability_improvement <= 1.0:
         raise ValueError("maximum relative reachability improvement must lie in (0, 1]")
     if min_second_to_first_singular_ratio is not None and not 0.0 < min_second_to_first_singular_ratio <= 1.0:
@@ -527,7 +530,45 @@ def _compile_reconfiguration(
             **reference_receipt,
             "reason": "no proposal satisfies the frozen non-greedy bands and declared future-reference improvement",
         }
-    selected = min(eligible, key=lambda row: (row[selected_score], row["proposal_index"]))
+    if robustness_perturbation > 0.0:
+        for row in eligible:
+            params = bank[row["proposal_index"]:row["proposal_index"] + 1]
+            robust_scores = []
+            for sign in (-1.0, 1.0):
+                perturbed = params + float(sign) * float(robustness_perturbation)
+                state = _state_after_prefix(
+                    model, pixels, history, perturbed,
+                    action_lower=action_lower, action_upper=action_upper,
+                )
+                robust = _reachability_value(
+                    model, goal_latent, *state, future_horizon=future_horizon,
+                    action_lower=action_lower, action_upper=action_upper, damping=damping,
+                )
+                # Account for the perturbed prefix and its complete suffix
+                # analysis; otherwise robust ranking appears artificially cheap.
+                reference_receipt["forward_rollout_evaluations"] += (
+                    1 + int(robust["forward_rollout_evaluations"])
+                )
+                reference_receipt["model_predict_sample_evaluations"] += (
+                    int(reconfiguration_horizon) + int(robust["model_predict_sample_evaluations"])
+                )
+                reference_receipt["backward_vjp_rows"] += int(robust["backward_vjp_rows"])
+                robust_scores.append(float(robust[selected_score]))
+            row["robust_future_score"] = float(max(robust_scores))
+            row["robust_future_score_margin"] = float(
+                reference[selected_score] - row["robust_future_score"]
+            )
+        selected = min(eligible, key=lambda row: (row["robust_future_score"], row["proposal_index"]))
+        selection_rule = (
+            "minimum worst-case frozen future score under symmetric parameter "
+            "perturbation among non-greedy candidates"
+        )
+    else:
+        selected = min(eligible, key=lambda row: (row[selected_score], row["proposal_index"]))
+        selection_rule = (
+            "minimum declared future score among chunks in frozen non-greedy bands "
+            "that improve zero-prefix and, when requested, the same-bank greedy future reference"
+        )
     return bank[selected["proposal_index"]:selected["proposal_index"] + 1].detach(), {
         "program_type": "reconfiguration_by_recompiled_local_reachability",
         "proposal_distribution": proposal_distribution,
@@ -537,7 +578,8 @@ def _compile_reconfiguration(
         "non_greedy_witness_found": True,
         **reference_receipt,
         "future_reference_score_improvement": float(reference[selected_score] - selected[selected_score]),
-        "selection_rule": "minimum declared future score among chunks in frozen non-greedy bands that improve zero-prefix and, when requested, the same-bank greedy future reference",
+        "selection_rule": selection_rule,
+        "robustness_perturbation": float(robustness_perturbation),
         "non_greedy_model_margin": float(selected["immediate_goal_cost"] - zero["immediate_goal_cost"]),
         "min_non_greedy_margin": float(non_greedy_margin),
         "max_non_greedy_margin": None if max_non_greedy_margin is None else float(max_non_greedy_margin),
@@ -626,6 +668,14 @@ def main() -> None:
     )
     parser.add_argument("--damping", type=float, default=0.01)
     parser.add_argument("--non-greedy-margin", type=float, default=1.0e-6)
+    parser.add_argument(
+        "--max-non-greedy-margin", type=float, default=None,
+        help="Optional model-only upper bound on immediate frozen goal-cost increase.",
+    )
+    parser.add_argument(
+        "--robustness-perturbation", type=float, default=0.0,
+        help="Symmetric frozen-parameter perturbation used for worst-case candidate ranking.",
+    )
     parser.add_argument("--future-reference", choices=FUTURE_REFERENCES, default="same_bank_greedy",
                         help="Require a model-side future gain over same-bank greedy; use zero_prefix only to reproduce the legacy contract.")
     parser.add_argument(
@@ -649,6 +699,10 @@ def main() -> None:
         raise ValueError("preflight minimum model witness roots must lie in [1, roots]")
     if args.damping <= 0 or args.non_greedy_margin < 0 or args.reachability_margin < 0:
         raise ValueError("damping must be positive and margins non-negative")
+    if args.max_non_greedy_margin is not None and args.max_non_greedy_margin < args.non_greedy_margin:
+        raise ValueError("maximum non-greedy margin must not be below the minimum margin")
+    if args.robustness_perturbation < 0.0:
+        raise ValueError("robustness perturbation must be non-negative")
     if args.max_relative_reachability_improvement is not None and not 0.0 < args.max_relative_reachability_improvement <= 1.0:
         raise ValueError("maximum relative reachability improvement must lie in (0, 1]")
     if args.min_second_to_first_singular_ratio is not None and not 0.0 < args.min_second_to_first_singular_ratio <= 1.0:
@@ -726,7 +780,10 @@ def main() -> None:
                 model, pixels, goal, history, reconfiguration_horizon=args.reconfiguration_horizon,
                 future_horizon=args.future_horizon, action_lower=lower, action_upper=upper,
                 damping=args.damping, proposals=args.proposals,
-                non_greedy_margin=args.non_greedy_margin, reachability_margin=args.reachability_margin,
+                non_greedy_margin=args.non_greedy_margin,
+                max_non_greedy_margin=args.max_non_greedy_margin,
+                robustness_perturbation=args.robustness_perturbation,
+                reachability_margin=args.reachability_margin,
                 seed=seed, max_relative_reachability_improvement=args.max_relative_reachability_improvement,
                 min_second_to_first_singular_ratio=args.min_second_to_first_singular_ratio,
                 proposal_distribution=args.proposal_distribution,
@@ -837,6 +894,9 @@ def main() -> None:
             ),
             "target_delta": list(args.target_delta),
             "damping": args.damping,
+            "non_greedy_margin": args.non_greedy_margin,
+            "max_non_greedy_margin": args.max_non_greedy_margin,
+            "robustness_perturbation": args.robustness_perturbation,
             "proposals": args.proposals,
             "proposal_distribution": args.proposal_distribution,
             "selection_metric": args.selection_metric,

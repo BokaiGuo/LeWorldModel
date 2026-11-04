@@ -404,13 +404,22 @@ def test_p1_preflight_validation_accepts_only_the_same_frozen_planning_contract(
     digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
     report = directory / "report.json"
     report.write_text(json.dumps({
-        "schema": "d2p_reacher_p1_reconfiguration_preflight.v1", "status": "pass", "gates": {"cuda_only": True},
+        "schema": "d2p_reacher_p1_reconfiguration_preflight.v1", "status": "pass",
+        "gates": {key: True for key in (
+            "cuda_only", "upstream_p0_admission_verified", "frozen_parameter_hash_unchanged",
+            "at_least_declared_model_selected_non_greedy_reconfiguration_witnesses",
+            "every_selected_chunk_improves_declared_recompiled_future_score",
+            "every_selected_chunk_is_immediately_non_greedy_in_frozen_goal_cost",
+            "observed_successor_recompiled_with_nonzero_fd_validated_jacobian",
+            "root_and_successor_execution_rgb_identity_verified", "all_raw_actions_within_environment_box",
+        )},
         "protocol": {
             "history_len": 3, "min_model_witness_roots": p1.p1.DEFAULT_MIN_MODEL_WITNESS_ROOTS,
             "recompiled_suffix_solver": p1.p1.SUFFIX_SOLVER,
             "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2,
             "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform",
             "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 10.0,
+            "non_greedy_margin": 1e-6, "max_non_greedy_margin": None, "robustness_perturbation": 0.0,
             "max_relative_reachability_improvement": None, "min_second_to_first_singular_ratio": None,
             "warmup_policy": WARMUP_POLICY, "target_delta": [0.65, -0.65],
         },
@@ -425,6 +434,7 @@ def test_p1_preflight_validation_accepts_only_the_same_frozen_planning_contract(
         policy=checkpoint, adapter_artifact=adapter, p0_evidence=p0_evidence,
         reconfiguration_horizon=1, progress_horizon=2, action_block=5, proposals=128,
         proposal_distribution="physical_uniform", selection_metric="bounded_dls_suffix_goal_cost", damping=10.0,
+        non_greedy_margin=1e-6, max_non_greedy_margin=None, robustness_perturbation=0.0,
         max_relative_reachability_improvement=None, min_second_to_first_singular_ratio=None,
         target_delta=(0.65, -0.65),
     )
@@ -545,10 +555,11 @@ def test_p1_outcome_rejects_overlapping_calibration_roots(tmp_path):
     receipt = tmp_path / "calibration.json"
     receipt.write_text(json.dumps({
         "schema": "d2p_reacher_p1_reconfiguration.v1", "status": "calibration_only",
-        "gates": {"ok": True}, "protocol": {"recompiled_suffix_solver": p1.p1.SUFFIX_SOLVER, "calibration_only": True, "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 1.0e-6, "max_non_greedy_margin": None, "min_eligible_calibration_roots": 4, "warmup_policy": WARMUP_POLICY, "target_delta": [0.65, -0.65]},
+        "gates": {key: True for key in (*p1.p1.stage_admission.P1_INTEGRITY_KEYS, p1._mechanism_gate_name("qpos_distance"))}, "protocol": {"recompiled_suffix_solver": p1.p1.SUFFIX_SOLVER, "calibration_only": True, "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 1.0e-6, "max_non_greedy_margin": None, "robustness_perturbation": 0.0, "min_eligible_calibration_roots": 4, "warmup_policy": WARMUP_POLICY, "target_delta": [0.65, -0.65]},
         "inputs": {"runner_sha256": p1._sha256_file(p1.Path(p1.__file__)), "selector_sha256": p1._sha256_file(p1.Path(p1.p1.__file__)), "context_module_sha256": p1._sha256_file(p1.Path(p1.context_runtime.__file__))}, "rows": [{"seed": 10}, {"seed": 11}],
     }), encoding="utf-8")
     args = type("Args", (), {"reconfiguration_horizon": 1, "progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 1.0e-6, "max_non_greedy_margin": None, "max_relative_reachability_improvement": None, "min_second_to_first_singular_ratio": None, "min_eligible_calibration_roots": 4, "target_delta": (0.65, -0.65)})()
+    args.robustness_perturbation = 0.0
     with pytest.raises(ValueError, match="disjoint"):
         p1._validate_outcome_calibration(receipt, args=args, outcome_seeds={11, 12})
     assert p1._validate_outcome_calibration(receipt, args=args, outcome_seeds={12, 13})
@@ -575,9 +586,10 @@ def test_p1_outcome_rejects_calibration_with_different_nongreedy_margin(tmp_path
     receipt = tmp_path / "calibration.json"
     receipt.write_text(json.dumps({
         "schema": "d2p_reacher_p1_reconfiguration.v1", "status": "calibration_only",
-        "gates": {"ok": True}, "protocol": {"calibration_only": True, "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 0.05, "max_non_greedy_margin": None, "min_eligible_calibration_roots": 4, "warmup_policy": WARMUP_POLICY, "target_delta": [0.65, -0.65]},
+        "gates": {key: True for key in (*p1.p1.stage_admission.P1_INTEGRITY_KEYS, p1._mechanism_gate_name("qpos_distance"))}, "protocol": {"calibration_only": True, "reconfiguration_horizon": 1, "recompiled_progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 0.05, "max_non_greedy_margin": None, "robustness_perturbation": 0.0, "min_eligible_calibration_roots": 4, "warmup_policy": WARMUP_POLICY, "target_delta": [0.65, -0.65]},
         "inputs": {"runner_sha256": p1._sha256_file(p1.Path(p1.__file__)), "selector_sha256": p1._sha256_file(p1.Path(p1.p1.__file__)), "context_module_sha256": p1._sha256_file(p1.Path(p1.context_runtime.__file__))}, "rows": [{"seed": 10}, {"seed": 11}],
     }), encoding="utf-8")
     args = type("Args", (), {"reconfiguration_horizon": 1, "progress_horizon": 2, "action_block": 5, "proposals": 128, "proposal_distribution": "physical_uniform", "selection_metric": "bounded_dls_suffix_goal_cost", "damping": 0.01, "non_greedy_margin": 1.0e-6, "max_non_greedy_margin": None, "max_relative_reachability_improvement": None, "min_second_to_first_singular_ratio": None, "min_eligible_calibration_roots": 4, "target_delta": (0.65, -0.65)})()
+    args.robustness_perturbation = 0.0
     with pytest.raises(ValueError, match="configuration differs"):
         p1._validate_outcome_calibration(receipt, args=args, outcome_seeds={12, 13})
