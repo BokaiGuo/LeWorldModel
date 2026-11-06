@@ -1,0 +1,225 @@
+"""Bounded prefix conditioning with optional full-pool counterfactual audit."""
+from __future__ import annotations
+
+import json
+
+import torch
+from stable_worldmodel.solver.utils import prepare_init_action
+
+from experiments.pc_native_internal_response_20261105_codex import NativeInternalResponse
+from experiments.pc_bounded_cem_20261105_codex import normalized_bounds
+
+
+def candidate_set_difference(left, right, atol=1e-6):
+    """Count candidates without a matching action in the opposite unordered set."""
+    distances = (left[:, :, None] - right[:, None, :]).abs().flatten(3).amax(-1)
+    return (distances > atol).all(dim=2), (distances > atol).all(dim=1)
+
+
+class PrefixNovelSameRefinement(NativeInternalResponse):
+    def __init__(self, *args, action_mean, action_scale, counterfactual_audit=True,
+                 mode="conditional", prefix_steps=2, **kwargs):
+        if mode not in ("conditional", "shared"):
+            raise ValueError("invalid conditional mode")
+        super().__init__(*args, mode="response", **kwargs)
+        self.mode = mode
+        self.prefix_steps = prefix_steps
+        self.action_mean = list(action_mean)
+        self.action_scale = list(action_scale)
+        self.counterfactual_audit = counterfactual_audit
+        self.refinement_gen = torch.Generator(device=self.device).manual_seed(
+            int(kwargs.get("seed", 1234)) + 3000007
+        )
+        if prefix_steps < 1:
+            raise ValueError("prefix must not be empty")
+
+    @torch.inference_mode()
+    def solve(self, info_dict, init_action=None):
+        if self.prefix_steps >= self.horizon or self.callbacks:
+            raise ValueError("invalid prefix horizon or unsupported callbacks")
+        total = len(next(iter(info_dict.values())))
+        initial = prepare_init_action(self.model, info_dict, init_action, self.horizon,
+                                      n_envs=total, action_dim=self.action_dim)
+        mean, var = self.init_action_distrib(total, initial)
+        mean, var = mean.to(self.device), var.to(self.device)
+        low, high = normalized_bounds(self.action_mean, self.action_scale, self.action_dim,
+                                      device=self.device, dtype=self.dtype)
+        mean = mean.clamp(min=low, max=high)
+        final_costs, audit, best_pairs = [], [], {}
+        for start in range(0, total, self.batch_size):
+            end = min(start + self.batch_size, total)
+            size = end - start
+            batch_mean, batch_var = mean[start:end], var[start:end]
+            for step in range(self.n_steps):
+                noise = torch.randn(size, self.num_samples, self.horizon, self.action_dim,
+                                    generator=self.torch_gen, device=self.device, dtype=self.dtype)
+                candidates = noise * batch_var[:, None] + batch_mean[:, None]
+                candidates[:, 0] = batch_mean
+                candidates = candidates.clamp(min=low, max=high)
+                sign_disagreements = [0] * size
+                set_audit = None
+                if step == 0:
+                    costs = self._cost(self._infos(info_dict, start, end, self.num_samples), candidates)
+                else:
+                    parents = batch_mean[:, None].repeat(1, 2, 1, 1)
+                    parents[:, 1, :self.prefix_steps] = candidates[:, 1, :self.prefix_steps]
+                    dirs = torch.randn(size, 2, self.horizon, self.action_dim,
+                                       generator=self.direction_gen, device=self.device, dtype=self.dtype)
+                    dirs[:, :, :self.prefix_steps] = 0
+                    dirs = dirs / dirs.flatten(2).norm(dim=-1).clamp_min(1e-12)[:, :, None, None]
+                    offsets = torch.cat((dirs, -dirs), dim=1)
+                    probes = (parents[:, :, None] + self.amplitude * offsets[:, None]).reshape(
+                        size, 8, self.horizon, self.action_dim).clamp(min=low, max=high)
+                    partial = torch.cat((candidates[:, :self.num_samples - 12], probes), dim=1)
+                    partial_cost = self._cost(
+                        self._infos(info_dict, start, end, self.num_samples - 4), partial)
+                    probe_cost = partial_cost[:, -8:].reshape(size, 2, 4)
+                    raw_signs = torch.where(probe_cost[:, :, 2:] < probe_cost[:, :, :2], -1.0, 1.0)
+                    sign_disagreements = (raw_signs[:, 0] != raw_signs[:, 1]).sum(1).cpu().tolist()
+                    signs = raw_signs.clone()
+                    if self.mode == "shared":
+                        signs[:, 1] = signs[:, 0]
+                    signed = signs[:, :, :, None, None] * dirs[:, None]
+                    vectors = torch.stack((signed[:, :, 0] + signed[:, :, 1],
+                                           signed[:, :, 0] - signed[:, :, 1]), dim=2)
+                    vectors = vectors / vectors.flatten(3).norm(dim=-1).clamp_min(1e-12)[..., None, None]
+                    proposals = (parents[:, :, None] + self.amplitude * vectors).reshape(
+                        size, 4, self.horizon, self.action_dim).clamp(min=low, max=high)
+                    # Construct both counterfactual sets from exactly the same parents
+                    # and directions. They are not scored unless selected by `mode`.
+                    conditional_signed = raw_signs[:, :, :, None, None] * dirs[:, None]
+                    shared_signs = raw_signs.clone()
+                    shared_signs[:, 1] = shared_signs[:, 0]
+                    shared_signed = shared_signs[:, :, :, None, None] * dirs[:, None]
+
+                    def make_set(signed_dirs):
+                        vectors = torch.stack((signed_dirs[:, :, 0] + signed_dirs[:, :, 1],
+                                               signed_dirs[:, :, 0] - signed_dirs[:, :, 1]), dim=2)
+                        vectors = vectors / vectors.flatten(3).norm(dim=-1).clamp_min(1e-12)[..., None, None]
+                        return (parents[:, :, None] + self.amplitude * vectors).reshape(
+                            size, 4, self.horizon, self.action_dim).clamp(min=low, max=high)
+
+                    conditional_set, shared_set = make_set(conditional_signed), make_set(shared_signed)
+                    conditional_new, shared_new = candidate_set_difference(conditional_set, shared_set)
+                    set_audit = {
+                        "conditional_only": conditional_new.sum(1).cpu().tolist(),
+                        "shared_only": shared_new.sum(1).cpu().tolist(),
+                        "conditional_only_mask": conditional_new.cpu().tolist(),
+                        "shared_only_mask": shared_new.cpu().tolist(),
+                    }
+                    proposal_cost = self._cost(self._infos(info_dict, start, end, 4), proposals)
+                    candidates = torch.cat((partial, proposals), dim=1)
+                    costs = torch.cat((partial_cost, proposal_cost), dim=1)
+                values, indices = torch.topk(costs, k=self.topk, dim=1, largest=False)
+                batch_indices = torch.arange(size, device=self.device)[:, None].expand(-1, self.topk)
+                elite = candidates[batch_indices, indices]
+                full_pool_audit = None
+                if step and self.counterfactual_audit:
+                    # Audit scoring happens only after the actual elite is fixed.
+                    # It never enters candidate selection or the distribution update.
+                    other_set = shared_set if self.mode == "conditional" else conditional_set
+                    other_cost = self._cost(self._infos(info_dict, start, end, 4), other_set)
+                    pool = torch.cat((partial, other_set), dim=1)
+                    pool_cost = torch.cat((partial_cost, other_cost), dim=1)
+                    unique, _ = candidate_set_difference(proposals, pool)
+                    pool_best_cost, pool_best_idx = pool_cost.min(1)
+                    pool_best = pool[torch.arange(size, device=self.device), pool_best_idx]
+                    proposal_elite = (indices[..., None] ==
+                                      torch.arange(self.num_samples - 4, self.num_samples,
+                                                   device=self.device)).any(1)
+                    records = []
+                    for row in range(size):
+                        unique_indices = torch.nonzero(unique[row], as_tuple=False).flatten()
+                        best_novel = None
+                        if unique_indices.numel():
+                            local = proposal_cost[row, unique_indices].argmin()
+                            k = int(unique_indices[local])
+                            best_novel = {"index": k, "cost": float(proposal_cost[row, k]),
+                                          "cost_minus_pool_best": float(proposal_cost[row, k] - pool_best_cost[row]),
+                                          "actions": proposals[row, k].cpu().tolist()}
+                        records.append({
+                            "unique_mask": unique[row].cpu().tolist(),
+                            "proposal_elite_mask": proposal_elite[row].cpu().tolist(),
+                            "proposal_costs": proposal_cost[row].cpu().tolist(),
+                            "pool_best_cost": float(pool_best_cost[row]),
+                            "pool_best_actions": pool_best[row].cpu().tolist(),
+                            "best_unique": best_novel,
+                        })
+                        if self.solve_index == 0 and best_novel is not None:
+                            index = start + row
+                            previous = best_pairs.get(index)
+                            if previous is None or best_novel["cost_minus_pool_best"] < previous["gap"]:
+                                best_pairs[index] = {
+                                    "gap": best_novel["cost_minus_pool_best"],
+                                    "novel_cost": best_novel["cost"],
+                                    "novel_actions": best_novel["actions"],
+                                    "common_cost": float(pool_best_cost[row]),
+                                    "common_actions": pool_best[row].cpu().tolist(),
+                                    "step": step,
+                                }
+                    full_pool_audit = {"additional_full_chain_scores_per_environment": 4,
+                                       "records": records}
+                if self.audit_path is not None:
+                    audit.append({
+                        "batch_start": start, "batch_end": end, "step": step,
+                        "scored_per_environment": int(costs.shape[1]),
+                        "sign_disagreements": sign_disagreements,
+                        "paired_set_comparison": set_audit,
+                        "full_pool_audit": full_pool_audit,
+                        "probe_elites": ((indices >= self.num_samples - 12) &
+                                         (indices < self.num_samples - 4)).sum(1).cpu().tolist()
+                            if step else [0] * size,
+                        "proposal_elites": (indices >= self.num_samples - 4).sum(1).cpu().tolist()
+                            if step else [0] * size,
+                    })
+                batch_mean, batch_var = elite.mean(dim=1), elite.std(dim=1)
+            mean[start:end], var[start:end] = batch_mean, batch_var
+            final_costs.extend(values.mean(1).cpu().tolist())
+        refinement = []
+        if self.solve_index == 0 and self.counterfactual_audit:
+            for index in range(total):
+                if index not in best_pairs:
+                    refinement.append({"index": index, "no_novel_candidate": True})
+                    continue
+                pair = best_pairs[index]
+                original = torch.as_tensor([pair["novel_actions"], pair["common_actions"]],
+                                           device=self.device, dtype=self.dtype)
+                distribution_mean = original.clone()
+                distribution_std = torch.full_like(distribution_mean, 0.25)
+                best_chain = original.clone()
+                best_cost = torch.tensor([pair["novel_cost"], pair["common_cost"]],
+                                         device=self.device, dtype=self.dtype)
+                projected = 0
+                for _ in range(3):
+                    noise = torch.randn(1, 32, self.horizon, self.action_dim,
+                                        generator=self.refinement_gen,
+                                        device=self.device, dtype=self.dtype)
+                    raw = distribution_mean[:, None] + distribution_std[:, None] * noise
+                    raw[:, 0] = distribution_mean
+                    candidate = raw.clamp(min=low, max=high)
+                    projected += int((candidate != raw).flatten(2).any(-1).sum())
+                    scored = self._cost(self._infos(info_dict, index, index + 1, 64),
+                                        candidate.reshape(1, 64, self.horizon, self.action_dim)).reshape(2, 32)
+                    values, indices = torch.topk(scored, 4, dim=1, largest=False)
+                    elite = torch.gather(candidate, 1, indices[..., None, None].expand(
+                        -1, -1, self.horizon, self.action_dim))
+                    improves = values[:, 0] < best_cost
+                    best_chain = torch.where(improves[:, None, None], elite[:, 0], best_chain)
+                    best_cost = torch.minimum(best_cost, values[:, 0])
+                    distribution_mean, distribution_std = elite.mean(1), elite.std(1)
+                refinement.append({
+                    "index": index, "no_novel_candidate": False,
+                    "source_step": pair["step"], "original_costs": [pair["novel_cost"], pair["common_cost"]],
+                    "original_actions": [pair["novel_actions"], pair["common_actions"]],
+                    "refined_costs": best_cost.cpu().tolist(), "refined_actions": best_chain.cpu().tolist(),
+                    "additional_full_chain_scores": 192, "projected_candidates": projected,
+                })
+        if self.audit_path is not None:
+            with self.audit_path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"solve": self.solve_index, "mode": self.mode,
+                                         "iterations": audit, "returned_actions": mean.cpu().tolist(),
+                                         "refinement": refinement},
+                                        allow_nan=False) + "\n")
+        self.solve_index += 1
+        return {"actions": mean.cpu(), "mean": [mean.cpu()], "var": [var.cpu()],
+                "costs": final_costs}

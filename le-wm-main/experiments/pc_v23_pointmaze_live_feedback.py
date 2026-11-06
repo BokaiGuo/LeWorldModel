@@ -10,6 +10,7 @@ import torch
 
 from experiments import pc_unified_rgb_live_integration_20261103_codex as bridge
 from experiments import pc_durable_rgb_dispatch as journal
+from experiments import pc_prediction_journal_v1 as prediction_journal
 from experiments import pc_v23_pointmaze_feedback_adapter as feedback
 from experiments.pointmaze_action_history_unroll_20261103 import unroll_with_action_history
 
@@ -33,7 +34,8 @@ def dependencies(contract_path):
         if old.prior.sha(Path(path)) != digest:
             raise ValueError("frozen model replay dependency drift")
     files = (Path(__file__), PROTOCOL, contract_path, Path(bridge.__file__), bridge.REPLAY,
-             Path(feedback.__file__), Path(journal.__file__), Path(feedback.compiler.__file__),
+             Path(feedback.__file__), Path(journal.__file__), Path(prediction_journal.__file__),
+             Path(feedback.compiler.__file__),
              Path(feedback.compiler.core.__file__), Path(feedback.timed.__file__),
              Path(feedback.timed.pc_global_shared_cem_v23.__file__),
              Path(feedback.timed.pc_global_shared_cem_v23.cem.__file__),
@@ -41,6 +43,16 @@ def dependencies(contract_path):
              Path(unroll_with_action_history.__code__.co_filename))
     return {**prior_replay["dependencies"],
             **{str(p.resolve()): old.prior.sha(p) for p in files}}
+
+
+def durable_predictor(directory, meter, raw_predict, binding, cap):
+    """Persist each attempted prediction before invoking the metered model."""
+    directory = Path(directory)
+    recorded = prediction_journal.PredictionJournal(
+        directory, lambda actions: meter.predict(actions, raw_predict),
+        action_dim=2, packet_length=5, token_cap=cap)
+    journal.write_json(directory / "binding.json", binding)
+    return recorded
 
 
 def validate_contract(contract, expected_goal):
@@ -149,24 +161,26 @@ def main():
                     meter = bridge.runner.base.Meter(feedback.CAP)
                     trace = []
 
+                    def raw(batch):
+                        count, length, _ = batch.shape
+                        packets = ((torch.as_tensor(batch, dtype=torch.float32, device=device)-mean)/std)
+                        packets = packets.reshape(count, length//5, 10).transpose(0, 1)
+                        with torch.no_grad():
+                            out = unroll_with_action_history(model, ctx, history.expand(2, count, 10),
+                                                             packets, 3)["proprio"][-1]
+                            features = out.reshape(count, 256, 16)
+                            pos = (features.mean(1) @ pinv.T)[:, :2] * pos_std
+                            score = h.projected_cost(features, target, pinv, pos_std)
+                            torch.cuda.synchronize()
+                        return pos.cpu().numpy(), score.cpu().numpy()
+
+                    recorded_predict = durable_predictor(
+                        journal_dir / f"prediction_step{step}", meter, raw, binding, feedback.CAP)
+
                     def predict(chains):
                         requested = np.asarray(chains, dtype=float)
                         converted = requested.astype(np.float32)
-
-                        def raw(batch):
-                            count, length, _ = batch.shape
-                            packets = ((torch.as_tensor(batch, dtype=torch.float32, device=device)-mean)/std)
-                            packets = packets.reshape(count, length//5, 10).transpose(0, 1)
-                            with torch.no_grad():
-                                out = unroll_with_action_history(model, ctx, history.expand(2, count, 10),
-                                                                 packets, 3)["proprio"][-1]
-                                features = out.reshape(count, 256, 16)
-                                pos = (features.mean(1) @ pinv.T)[:, :2] * pos_std
-                                score = h.projected_cost(features, target, pinv, pos_std)
-                                torch.cuda.synchronize()
-                            return pos.cpu().numpy(), score.cpu().numpy()
-
-                        positions, scores = meter.predict(converted, raw)
+                        positions, scores = recorded_predict(converted)
                         trace.append({"requested": requested.tolist(), "raw": converted.tolist(),
                                       "positions": positions.tolist(), "scores": scores.tolist(),
                                       "tokens": len(converted) * converted.shape[1] // 5})
@@ -174,6 +188,9 @@ def main():
 
                     planning_at = time.monotonic()
                     result = feedback.decide(arm, root_id, step, goal_position, predict, meter, carry)
+                    if (recorded_predict.tokens != meter.token_samples
+                            or recorded_predict.calls != meter.calls):
+                        raise ValueError("prediction journal and meter disagree")
                     selected = np.asarray(result["selected"]["chain"], dtype=float)
                     dispatched = selected[:5].astype(np.float32).tolist()
                     if selected.shape != (15 - 5 * step, 2) or meter.token_samples > feedback.CAP:

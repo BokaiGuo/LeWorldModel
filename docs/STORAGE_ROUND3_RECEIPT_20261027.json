@@ -1,0 +1,23 @@
+{
+  "deleted_files": 64344,
+  "exclusive_blocks": 717017088,
+  "removed_dirs": 7383,
+  "errors": [],
+  "protected_system_services": [
+    {
+      "pid": "3955",
+      "executable": "/usr/lib/systemd/systemd",
+      "limitation": "cmdline checked; maps/fds unavailable"
+    },
+    {
+      "pid": "3961",
+      "executable": "(sd-pam)",
+      "limitation": "cmdline checked; maps/fds unavailable"
+    },
+    {
+      "pid": "3890940",
+      "executable": "/usr/sbin/tailscaled",
+      "limitation": "cmdline checked; maps/fds unavailable"
+    }
+  ]
+}
