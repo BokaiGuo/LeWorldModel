@@ -1,5 +1,13 @@
 # LeWorldModel: transfer-sufficient diagnostics for frozen visual world models
 
+## Source and research reports update (2026-11-08)
+
+The [publication scope and checks](docs/RESEARCH_UPLOAD_20261108.md) describe the
+latest merged experiment implementations, tests, protocols, result reports, and
+figures. Raw datasets, training/counterfactual pools, bulk experiment arrays,
+trajectories, and model weights are **not uploaded** in this publication.
+This update does not change scientific gate status or claim a complete backup.
+
 ## Planning Compiler development update (2026-11-04)
 
 The [development snapshot](release_results/planning_compiler_20261104/README.md)

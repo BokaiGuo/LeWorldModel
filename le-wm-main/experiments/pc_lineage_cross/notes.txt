@@ -1,0 +1,23 @@
+2026-11-07: Pair-preserving crossed-query version.
+Evidence basis: the stopped 8x32 construction discarded complete nominal witnesses.
+New bank: 16 full nominal chains, paired 16x17 support including hold.
+Pay and retain all 16 originals. Total budget stays 128 for every arm.
+Compare descriptor, shared-information controls, uniform/random pair allocation,
+whole-program random sampling and a same-nominal warm-started full-chain CEM.
+
+This is exposed exact-state development, not RGB-only or independent confirmation.
+Do not change thresholds after outcomes. Information and deployment exits are separate.
+Run: OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 .venv/bin/python -m experiments.pc_lineage_cross.run all
+
+Completed 2026-11-08 Asia/Shanghai (protocol version remains 20261107):
+All 48 runs x 11 arms completed; 528 plans audited.
+Paid original nominees: 21/48 successes. Shared queries: 23/48.
+Full 272-chain pool: 23/48, achieved pointwise by selected cross-interaction plans.
+Cross/additive/shuffled/uniform lookahead/warm CEM: 23/48 each.
+Whole-waypoint random: 24/48. No deployment increment.
+Information MSE wins against additive and shuffled: 24/24 tasks each.
+Engineering lineage invariant passed; frozen deployment exit failed.
+Stop this configuration; do not expand or promote gates.
+38 targeted tests passed. Independent score/scalar trajectory errors zero.
+Two PNG/PDF/SVG figures were generated and visually inspected.
+The complete Planning Compiler research goal remains active and incomplete.

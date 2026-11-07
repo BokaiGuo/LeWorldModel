@@ -1,0 +1,11 @@
+{
+  "audit_sha256": "8cdbb5d04f288656ec838f6a718ee0a4bfa5291654933508a144bb348262b0b0",
+  "illustrative_example": {
+    "repeat": 0,
+    "root": 1,
+    "rule": "first improved run in root/repeat order; not a performance subset"
+  },
+  "plot_source_sha256": "73ef0992a4b8efc41e0964ac498414f443a21d9a8ad104a941b96812b347e219",
+  "scope": "exposed exact-state development, 128 queries, 15 steps; not RGB or descriptor evidence",
+  "summary_sha256": "f2d173541f08cffcadc8d17128ba30ca8083ecc227a8a3c0ce82fea4f0815f5c"
+}

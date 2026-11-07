@@ -1,4 +1,5 @@
 # Action-opportunity descriptor ranking audit
+
 日期：2026-11-04。性质：对既有精确动力学 Stage-1/Stage-1b 输出的独立统计重算；不重跑模型查询，不修改历史 `result.json`，不是独立确认，也不是 PC1–PC3 通过证据。
 
 审计入口：

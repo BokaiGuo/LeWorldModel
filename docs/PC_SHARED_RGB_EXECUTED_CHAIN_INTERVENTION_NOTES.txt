@@ -1,0 +1,7 @@
+Experiment: PC_SHARED_RGB_EXECUTED_CHAIN_INTERVENTION_20261107_CODEX
+Role: small exposed-development same-tail intervention on actual RGB feedback actions.
+Protocol was written before scoring and physical evaluation.
+GPU scoring: 3 tasks x 2 conditions x 32 candidates = 192 complete-chain scores.
+Physical comparison: original, zero, random, greedy and lookahead prefix; one common tail.
+Limitations: fixed-tail lookahead uses an evaluator-provided actual future tail;
+not a deployable planner, not equal-budget tail reoptimization, not independent tasks.

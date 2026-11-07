@@ -1,0 +1,37 @@
+2026-11-07 DINO implementation continuation
+
+Read prior causal residual, camera normalization, fixed-bank retention and layer
+audit reports. Do not reopen stopped empirical constructions or rename them.
+Selected implementation fidelity repair: old HF positional interpolation was
+not equivalent to the pinned source convention. Fidelity is not selected by
+physical performance.
+
+v1: parameter-identity tests passed. 64 encoder cases passed declared tolerance,
+but root1836 shifted full rollout exceeded the original elementwise bound
+(6 elements, max_abs 0.0009741783). Preserve v1 artifacts and failure JSON.
+No threshold changes.
+
+v2: fused QKV projection matches pinned source arithmetic using existing
+parameter objects. All 64 encoder cases and all 32-root/two-view complete
+rollouts, goal encodings and costs matched elementwise on this runtime.
+All 192 horizon decisions re-audited from saved arrays, score error 0.
+384 candidate rollouts / 1920 packets including source comparator; 704 actual
+single-image evaluation encodings. Reused synced physical trajectories.
+
+Regret changed nonuniformly. Shifted25 mean 0.309070 -> 0.162855, 5 improved,
+3 worsened, descriptive root-bootstrap interval for change includes zero.
+Canonical10 regret worsened. Cross-view predictor error remains large.
+State-assisted only. No gate promotion, no complete new planner admission.
+
+38 targeted/regression tests passed. Figures first exposed a plotting issue:
+setting a shared y-limit before the second panel clipped its larger errors.
+Corrected plots in docs/figures/pc1_dino_source_repair_20261107_v2; original
+previews retained, not final evidence. Inspect final images before handoff.
+
+Main report: docs/PC1_DINO_SOURCE_COMPATIBILITY_REPAIR_RESULT_20261107_CODEX.md
+Research goal remains active; bounded implementation repair is not full closure.
+
+Final checks: both corrected PNGs inspected; larger shifted-camera errors and
+all regret intervals visible. Reusable state-assisted loader reproduced sealed
+visual/proprio predictions exactly on GPU. --verify-only verified all stages
+inside the sandbox without CUDA model loading. Regression rerun: 38 passed.

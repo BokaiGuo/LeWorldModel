@@ -1,0 +1,44 @@
+2026-11-07 PC1 layer action-equivalence audit
+
+Protocol: docs/PC1_FULL_TOKEN_ORTHOGONAL_PUSHT_PROTOCOL_20261107_CODEX.md.
+Completed RGB PushT re-encoding on 32 exposed geometries. Saved all 25
+representation summaries, maps/ranks, per-root metrics and provenance.
+Native final success denominator retained: 0/384 appearance/action records.
+
+Protocol: docs/PC1_CAMERA_LAYER_TRANSFER_PROTOCOL_20261107_CODEX.md.
+Exact archive parity failed before predictions. Saved frame comparison.
+Single/dual camera renderers matched; six repeated frames matched.
+Old grid worker/source and archive state hashes matched previous records.
+Sandbox/external execution produced distinct EGL outputs.
+
+Protocol: docs/PC1_CAMERA_LAYER_TRANSFER_RENDERED_V2_PROTOCOL_20261107_CODEX.md.
+Prepared in sandbox, model prediction required external GPU. Replay rejected
+initial image mismatch. Preserve artifacts; do not use for final evaluation.
+
+Protocol: docs/PC1_CAMERA_RUNTIME_BOUND_PROTOCOL_20261107_CODEX.md.
+All stages executed externally on one GPU-visible environment. Separate render
+sim gives synchronized images without changing the dynamics sim.
+32 roots, 3 actions, 2 views, horizons 5/10/25. Cross-view trace difference=0.
+Geometry cache lag detected on all roots, maximum 0.05059258026432234.
+All 32 initial frames match archive exactly; goal parity remains uncertified.
+
+Evaluation batch repair: batch22 vs batch1 goal had one failed element out of
+98304 at ~1.4079e-4 difference. Preserved predictions/physics, re-encoded all
+actual observations singly instead of relaxing tolerance. Goal max error=0.
+All-layer real hidden tokens are never substituted into the predictor.
+
+Paired rendering comparison reuses the exact predictions and physical traces.
+This measures evaluation repair, not improved planner control.
+
+Output diagrams are newly drawn editable SVG/PDF with PNG previews.
+No mapping is deployed; no gate promoted; source independence not inferred
+from new root IDs. The active full-research goal remains open.
+
+Final verification: 25 tests passed (metrics, camera, completed-artifact,
+reporting and versioned input permissions). Unified runner resumed by checking
+all sealed stages and figures; no completed GPU stage reran.
+Four PNG previews inspected. Theory panel arrows were removed because separate
+conditional propositions do not unconditionally imply one another.
+Pairing repair preserved physical trajectories exactly. On 16 evaluation roots
+at five steps, cached/synchronized visual-score choices changed for 4 canonical
+and 5 shifted roots. This does not change the already sealed model choices.

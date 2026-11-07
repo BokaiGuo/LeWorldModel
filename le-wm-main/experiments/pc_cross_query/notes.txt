@@ -1,0 +1,28 @@
+2026-11-07
+Hypothesis: current-task crossed queries preserve action-conditioned interaction
+information better than raw-action nearest neighbors, and improve actually queried
+legal plans. Fixed exact-state development panel, not RGB evidence.
+
+Protocol: docs/PC_CROSS_QUERY_INTERACTION_PROTOCOL_20261107_CODEX.md
+Run from le-wm-main:
+OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 .venv/bin/python -m experiments.pc_cross_query.exact_run all
+
+All source dependencies are sealed. Completed stages validate then skip. Evaluation
+of the full pool follows sealed plans and a raw-trace audit; no evaluation truth is
+passed to the allocator. Report actual runner calls separately from deployment cost.
+
+Implementation tests are not scientific evidence. Do not relax the frozen exits
+after seeing outcomes. A zero success count triggers checks, not result alteration.
+
+Completed 2026-11-07:
+24 exposed tasks x 2 streams, 11 arms, 128 complete queries per arm.
+Information: cross-interaction MSE better than additive and shuffled on 24/24 tasks.
+Execution: cross 16/48, additive 13/48, shuffled 15/48, waypoint random 24/48.
+Frozen information exit passed; deployment exit failed. Do not expand this configuration.
+Audit: 528 selected plans; score and scalar-trajectory replay error zero.
+Posthoc failure decomposition: success 16, pool coverage failure 30, proposal miss 2,
+selection loss 0. Generated-but-unqueried original nominal chains explain coverage
+loss on 8 runs (4 also have successful original prefix-source chains).
+Those posthoc replays are evaluator-only and do not change deployed results.
+27 targeted tests passed. Two PNG/PDF/SVG figures generated and visually checked.
+Full Planning Compiler goal and RGB-only gates remain incomplete.

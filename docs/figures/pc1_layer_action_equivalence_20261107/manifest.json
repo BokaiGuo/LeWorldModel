@@ -1,0 +1,19 @@
+{
+  "artifacts": {
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_1_PC1_protocol.pdf": "32907c344338cb8febcdb6d298c81cf83932e40e42d24454e9da6166d2cf15ec",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_1_PC1_protocol.png": "94704013134136332c6d078de2648637b40dfef64612e6e4972543793c5e4178",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_1_PC1_protocol.svg": "0fd1ae7db9dcfcdf66efb316de34b7ac5ce99861a31718685b06795b6bd7b0e4",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_2_layer_theory.pdf": "552f1a6b496d3c645581d16105ca24b424a727cd354ea005a64598a4c9d3b2ca",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_2_layer_theory.png": "78e8d785af732f189c7a4d1e065867f5b67e412c460630f499922764fcef887c",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_2_layer_theory.svg": "d846599a9445cbb9d0a5a1e7d015faf4f51b5838a95703617b29d30099735f43",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_3_PushT_layers.pdf": "46d5d3f1873d8e05fd841a06e09602355e61abfb2af2e3f800b55dd8dfef1cb8",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_3_PushT_layers.png": "27cb6726a8519e9161f795535fd68e8b21832fda863c2a4838e21ad879d34817",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_3_PushT_layers.svg": "b93937223acb0333d7303b4ba6a4b4d38ffb38b554300a456748ad685261bf69",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_4_PointMaze_transfer.pdf": "b83f2ef06e6a5b9166a1f24177d81d7a09aa57b1f025ea322c280077afadfd41",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_4_PointMaze_transfer.png": "2f946f921b2b9bbf8029873ffb9eecee969b6cf8004029ce5864113e7811ccbe",
+    "/home/gbk/code/LeWorldModel/docs/figures/pc1_layer_action_equivalence_20261107/Figure_4_PointMaze_transfer.svg": "87818d93b40ec2dc288ad496af86e3e95fb279c529a2a1f413addc1d46dcd707"
+  },
+  "code_sha256": "c4a513267d5aa8168497db47b495d2c9eae861b55921d2432b823c15a613adbd",
+  "scope": "new editable diagrams based on user text, not reproduction of inaccessible linked SVGs",
+  "summary_sha256": "d8f8a038d18d650eb70b04ff918b371b9f8a599c812c7fd9a7ccd5b3e59c4cbc"
+}

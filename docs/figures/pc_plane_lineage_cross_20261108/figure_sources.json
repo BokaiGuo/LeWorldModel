@@ -1,0 +1,6 @@
+{
+  "plot_source_sha256": "042225be8a30cc2efafd66fe913f3920255166cca2e3eac98629e10ab814377b",
+  "pool_audit_sha256": "e187c73a0cbad4a13331480512db7d180fdac69c43766b06d623656addc905a1",
+  "scope": "exposed exact-state development; task-clustered; no RGB or gate promotion",
+  "summary_sha256": "14057fe85763375fba5596bc0654842b143eb67159a603a9fd1ced31c877b93d"
+}

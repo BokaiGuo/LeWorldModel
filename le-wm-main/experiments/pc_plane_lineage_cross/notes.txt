@@ -1,0 +1,28 @@
+2026-11-08: New single-factor generator-support transfer protocol.
+Keep the stopped one-dimensional lineage-cross results unchanged.
+Use the same two-dimensional nominal source as the verified geometry experiment.
+Do not change allocator, rcond, nominal retention, query budget or success predicate.
+11 arms, 24 exposed tasks x 2 streams, 128 queries and 15 physical steps.
+The whole-plane comparator must reproduce the previous sealed 2D results.
+Two exits: heldout information and real component-utilization increment.
+Neither exit is Full Planning Compiler admission or RGB-only evidence.
+All plans precede exhaustive pool evaluation; scalar and source audits precede evaluation.
+Run: OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 .venv/bin/python -m experiments.pc_plane_lineage_cross.run all
+
+Completed 2026-11-08:
+All 48 runs x 11 arms sealed, audited and evaluated.
+Cross, additive, parent, row mean, probe-min, shuffled, random missing,
+uniform lookahead and random pairs: 27/48 with identical success identities.
+Whole 2D waypoint: 48/48, exactly matching prior geometry actions and costs.
+Nominal warm CEM: 31/48.
+Information MSE beats additive and shuffled on 24/24 task means each.
+Component-utilization exit failed; stop this two-dimensional cross configuration.
+16 paid nominals, shared observations, full 272-cell pool, and selected cross
+plans all cover the same 27/48 runs. No new successful run from the entire pool.
+Query audit: 67584 scalar replays, trajectory and score errors 0.
+Cross formula independent-lstsq discrepancy: 3.9968028886505635e-15.
+Full-pool audit: 13056 scalar and 13056 split-prefix/tail replays, errors 0.
+50 targeted tests passed. Full research objective is still active and incomplete.
+Do not relabel the successful generator-only baseline as descriptor or RGB evidence.
+Two SVG/PDF/300DPI PNG figures were rendered and visually checked.
+Main and all-pool-audit resume commands verified source bindings and skipped completed work.

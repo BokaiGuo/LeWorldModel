@@ -1,0 +1,5 @@
+{
+  "plot_source_sha256": "e70106e62933d04806f850624b4fc8588070128e70d1d25b8c51e8d7fa3bb4f4",
+  "scope": "evaluator-only exhaustive synchronous splices; no deployed planner",
+  "summary_sha256": "86a48a7a38b89b04ea200421e2a44a27c0496e9defc0b7964c5767e69b7641dc"
+}
